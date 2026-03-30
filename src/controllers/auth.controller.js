@@ -221,7 +221,7 @@ exports.forgotPassword = async (req, res) => {
     const { sendEmail } = require('../config/email');
     
     const newPassword = Math.random().toString(36).slice(-8); 
-    const hash = await require('bcrypt').hash(newPassword, 10);
+    const hash = await require('bcryptjs').hash(newPassword, 10);
     
     await user.update({ password: hash });
 
