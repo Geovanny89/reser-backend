@@ -217,20 +217,50 @@ exports.forgotPassword = async (req, res) => {
       return res.status(404).json({ error: 'No existe un usuario con ese correo electrónico' });
     }
 
+    // Verificar que NO sea un cliente (solo admin, superadmin o employee)
+    if (user.role === 'client') {
+      return res.status(403).json({ error: 'Acceso denegado para cuentas de cliente' });
+    }
+
     // Enviar email con la contraseña (esto es lo que pidió el usuario específicamente)
     const { sendEmail } = require('../config/email');
     
-    const newPassword = Math.random().toString(36).slice(-8); 
-    const hash = await require('bcryptjs').hash(newPassword, 10);
+    // Generar una contraseña temporal aleatoria
+    const tempPassword = Math.random().toString(36).slice(-8); 
+    const hash = await require('bcryptjs').hash(tempPassword, 10);
     
+    // Actualizar la contraseña en la base de datos inmediatamente
     await user.update({ password: hash });
 
+    // Enviar email con la NUEVA contraseña temporal
+    const { sendEmail } = require('../config/email');
     await sendEmail(user.email, 'forgotPassword', {
       name: user.name,
-      password: newPassword
+      password: tempPassword
     });
 
-    res.json({ message: 'Se ha enviado una nueva contraseña a tu correo electrónico' });
+    res.json({ message: 'Se ha enviado una nueva contraseña temporal a tu correo electrónico' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.changePassword = async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user.id;
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const bcrypt = require('bcryptjs');
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await user.update({ password: hash });
+
+    res.json({ message: 'Contraseña actualizada correctamente' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

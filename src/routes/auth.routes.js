@@ -115,6 +115,27 @@ router.post('/forgot-password', require('../controllers/auth.controller').forgot
 
 /**
  * @swagger
+ * /auth/change-password:
+ *   patch:
+ *     summary: Cambiar contraseña (autenticado)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [oldPassword, newPassword]
+ *             properties:
+ *               oldPassword: { type: string }
+ *               newPassword: { type: string }
+ */
+router.patch('/change-password', auth, require('../controllers/auth.controller').changePassword);
+
+/**
+ * @swagger
  * /auth/me:
  *   get:
  *     summary: Obtener perfil del usuario autenticado
