@@ -15,16 +15,20 @@ const createTransporter = () => {
   }
 
   if (service) {
-    return nodemailer.createTransport({ service, auth: { user, pass } });
+    return nodemailer.createTransport({ 
+      service, 
+      auth: { user, pass },
+      tls: { rejectUnauthorized: false }
+    });
   }
 
   return nodemailer.createTransport({
-  host: process.env.EMAIL_HOST || "smtp.hostinger.com",
-  port: parseInt(process.env.EMAIL_PORT || "465"),
-  secure: true,
-  auth: { user, pass },
-  tls: { rejectUnauthorized: false },
-});
+    host: host || "smtp.hostinger.com",
+    port: port || 465,
+    secure: port === 465,
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
+  });
 };
 
 const transporter = createTransporter();
