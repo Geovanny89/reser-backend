@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { User, Business } = require('../models');
 const { JWT_SECRET, JWT_EXPIRES } = require('../config/jwt');
+const { sendEmail } = require('../config/email');
 
 exports.register = async (req, res) => {
   try {
@@ -222,18 +223,14 @@ exports.forgotPassword = async (req, res) => {
       return res.status(403).json({ error: 'Acceso denegado para cuentas de cliente' });
     }
 
-    // Enviar email con la contraseña (esto es lo que pidió el usuario específicamente)
-    const { sendEmail } = require('../config/email');
-    
     // Generar una contraseña temporal aleatoria
     const tempPassword = Math.random().toString(36).slice(-8); 
-    const hash = await require('bcryptjs').hash(tempPassword, 10);
+    const hash = await bcrypt.hash(tempPassword, 10);
     
     // Actualizar la contraseña en la base de datos inmediatamente
     await user.update({ password: hash });
 
     // Enviar email con la NUEVA contraseña temporal
-    const { sendEmail } = require('../config/email');
     await sendEmail(user.email, 'forgotPassword', {
       name: user.name,
       password: tempPassword
