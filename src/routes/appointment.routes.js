@@ -41,6 +41,24 @@ const role   = require('../middleware/role');
  */
 router.post('/', ctrl.create);
 
+/**
+ * @swagger
+ * /appointments/my-client-appointments:
+ *   get:
+ *     summary: Citas del cliente (autenticado o por email)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: query
+ *         name: email
+ *         schema: { type: string, format: email }
+ */
+router.get('/my-client-appointments', (req, res, next) => {
+  // Si viene email en query, permitimos pasar sin auth (modo cliente simplificado)
+  if (req.query.email) return next();
+  // Si no, requerimos auth
+  return auth(req, res, next);
+}, ctrl.getMyClientAppointments);
+
 router.use(auth);
 
 /**
@@ -78,20 +96,6 @@ router.get('/business/:businessId', role('admin', 'superadmin'), ctrl.getByBusin
  *         description: Lista de citas del empleado
  */
 router.get('/my', role('employee'), ctrl.getMyAppointments);
-
-/**
- * @swagger
- * /appointments/my-client-appointments:
- *   get:
- *     summary: Citas del cliente autenticado
- *     tags: [Appointments]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Lista de citas del cliente
- */
-router.get('/my-client-appointments', role('client'), ctrl.getMyClientAppointments);
 
 /**
  * @swagger

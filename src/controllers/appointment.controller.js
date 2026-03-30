@@ -49,8 +49,21 @@ exports.getMyAppointments = async (req, res) => {
 
 exports.getMyClientAppointments = async (req, res) => {
   try {
+    const { email } = req.query;
+    let clientId = req.user?.id;
+
+    // Si no hay clientId (por el token) pero viene un email (modo cliente simplificado en APK)
+    const where = {};
+    if (clientId) {
+      where.clientId = clientId;
+    } else if (email) {
+      where.clientEmail = email;
+    } else {
+      return res.status(400).json({ error: 'Se requiere identificación de cliente' });
+    }
+
     const appointments = await Appointment.findAll({
-      where: { clientId: req.user.id },
+      where,
       include: [
         { model: Service },
         { model: Business, attributes: ['name', 'slug'] },

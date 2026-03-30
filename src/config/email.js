@@ -91,6 +91,23 @@ const baseTemplate = (content, businessName = 'KDice POS') => `
 
 const templates = {
 
+  // Recuperación de contraseña
+  forgotPassword: ({ name, password }) => ({
+    subject: `🔑 Recuperación de contraseña - KDice POS`,
+    html: baseTemplate(`
+      <h2>Hola ${name},</h2>
+      <p>Has solicitado la recuperación de tu contraseña para acceder al sistema KDice POS.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Tu contraseña actual es:</span>
+          <span class="info-value" style="background: #f1f5f9; padding: 4px 10px; border-radius: 4px; border: 1px dashed #4f46e5; font-family: monospace; font-size: 18px;">${password}</span>
+        </div>
+      </div>
+      <p>Te recomendamos cambiar tu contraseña una vez que hayas ingresado al sistema para mayor seguridad.</p>
+      <a href="${process.env.FRONTEND_URL}/login" class="btn">Ir al Login</a>
+    `)
+  }),
+
   // Confirmación de cita para el cliente
   appointmentConfirmation: ({ clientName, businessName, serviceName, employeeName, startTime, price }) => ({
     subject: `✅ Cita confirmada en ${businessName}`,

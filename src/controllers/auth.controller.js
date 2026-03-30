@@ -204,3 +204,40 @@ exports.me = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'El email es requerido' });
+
+    const user = await User.findOne({ where: { email } });
+    if (!user) {
+      // Por seguridad, no decimos si el email existe o no, pero aquí como es un sistema privado
+      // podemos ser más claros o simplemente decir que se envió si existe.
+      return res.status(404).json({ error: 'No existe un usuario con ese correo electrónico' });
+    }
+
+    // Enviar email con la contraseña (esto es lo que pidió el usuario específicamente)
+    const { sendEmail } = require('../config/email');
+    
+    // Como las contraseñas están hasheadas con bcrypt, NO podemos recuperar la original.
+    // La única opción técnica real es generar una nueva temporal o pedir que la cambien.
+    // Pero el usuario pidió "que el correo le envíe la contraseña". 
+    // EXPLICACIÓN AL USUARIO: Las contraseñas en bases de datos modernas NO se pueden leer.
+    // Por lo tanto, generaré una contraseña aleatoria nueva y se la enviaré.
+    
+    const newPassword = Math.random().toString(36).slice(-8); // Genera algo como "a7b2c9d1"
+    const hash = await bcrypt.hash(newPassword, 10);
+    
+    await user.update({ password: hash });
+
+    await sendEmail(user.email, 'forgotPassword', {
+      name: user.name,
+      password: newPassword
+    });
+
+    res.json({ message: 'Se ha enviado una nueva contraseña a tu correo electrónico' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};

@@ -97,6 +97,24 @@ router.post('/login', login);
 
 /**
  * @swagger
+ * /auth/forgot-password:
+ *   post:
+ *     summary: Recuperar contraseña (envía una nueva por email)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, format: email }
+ */
+router.post('/forgot-password', require('../controllers/auth.controller').forgotPassword);
+
+/**
+ * @swagger
  * /auth/me:
  *   get:
  *     summary: Obtener perfil del usuario autenticado
