@@ -19,10 +19,14 @@ if (process.env.DB_DIALECT === 'sqlite') {
       port: process.env.DB_PORT,
       dialect: 'postgres',
       logging: false,
-      // Configuración para manejar ENUM correctamente
       typeValidation: true,
     }
   );
 }
+
+// Probar la conexión inmediatamente
+sequelize.authenticate()
+  .then(() => console.log('🚀 Base de datos conectada correctamente'))
+  .catch(err => console.error('❌ Error conectando a la base de datos:', err));
 
 module.exports = sequelize;

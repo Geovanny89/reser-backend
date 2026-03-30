@@ -292,8 +292,13 @@ exports.updateSubscription = async (req, res) => {
   try {
     const b = await Business.findByPk(req.params.id);
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
-    const { subscriptionStatus, lastPaymentDate } = req.body;
-    await b.update({ subscriptionStatus, lastPaymentDate });
+    const { subscriptionStatus, lastPaymentDate, subscriptionStartDate, subscriptionEndDate } = req.body;
+    await b.update({ 
+      subscriptionStatus, 
+      lastPaymentDate,
+      subscriptionStartDate,
+      subscriptionEndDate
+    });
     res.json(b);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -307,8 +312,19 @@ exports.uploadPaymentScreenshot = async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
     
     const paymentScreenshot = `/uploads/${req.file.filename}`;
-    await b.update({ paymentScreenshot, subscriptionStatus: 'pending' });
-    res.json({ message: 'Comprobante subido correctamente', business: b });
+    
+    // Al subir comprobante, el estado pasa a pending y si estaba bloqueado por falta de pago, se mantiene bloqueado
+    // hasta que el SuperAdmin lo apruebe, O puedes decidir desbloquearlo automáticamente aquí.
+    // Según tu solicitud: "se debe bloquear automáticamente hasta que se envie" implica que el envío es el disparador.
+    // Vamos a desbloquearlo automáticamente al enviar el comprobante para mejorar la experiencia de usuario.
+    
+    await b.update({ 
+      paymentScreenshot, 
+      subscriptionStatus: 'pending',
+      status: 'active' // Desbloqueo automático al enviar comprobante
+    });
+    
+    res.json({ message: 'Comprobante subido correctamente y negocio activado', business: b });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -1,8 +1,9 @@
 require('dotenv').config();
 const app = require('./app');
-const { sequelize, BusinessType, User } = require('./models');
+const { sequelize, BusinessType, User, Business } = require('./models');
 const bcrypt = require('bcryptjs');
 const { startReminderService } = require('./services/reminderService');
+const { Op } = require('sequelize');
 const PORT = process.env.PORT || 4000;
 
 const DEFAULT_TYPES = [
@@ -52,12 +53,52 @@ async function seedSuperAdmin() {
   }
 }
 
+/**
+ * Tarea programada para verificar vencimientos de suscripción (cada 24 horas)
+ */
+function startSubscriptionCheck() {
+  console.log('🛡️  Iniciando monitor de suscripciones automáticas');
+  
+  // Ejecutar inmediatamente al iniciar
+  checkExpiringSubscriptions();
+  
+  // Y luego cada 24 horas
+  setInterval(checkExpiringSubscriptions, 24 * 60 * 60 * 1000);
+}
+
+async function checkExpiringSubscriptions() {
+  try {
+    const now = new Date();
+    
+    // Buscar negocios cuya suscripción haya vencido y no estén bloqueados aún
+    const expired = await Business.findAll({
+      where: {
+        subscriptionEndDate: { [Op.lt]: now },
+        status: 'active'
+      }
+    });
+
+    for (const biz of expired) {
+      console.log(`🚫 Bloqueando negocio vencido: ${biz.name} (Venció: ${biz.subscriptionEndDate})`);
+      await biz.update({ 
+        status: 'blocked',
+        subscriptionStatus: 'overdue'
+      });
+    }
+
+    if (expired.length > 0) {
+      console.log(`✅ Se bloquearon ${expired.length} negocios por falta de pago.`);
+    }
+  } catch (err) {
+    console.error('❌ Error en el chequeo de suscripciones:', err);
+  }
+}
+
 async function start() {
   try {
     await sequelize.authenticate();
     console.log('✅  Conexión a base de datos establecida');
     await sequelize.sync({ alter: false });
-    console.log('✅  Modelos sincronizados');
     await seedBusinessTypes();
     await seedSuperAdmin();
     app.listen(PORT, () => {
@@ -65,6 +106,10 @@ async function start() {
       console.log(`📚  Documentación Swagger: http://localhost:${PORT}/api/docs`);
       // Iniciar servicio de recordatorios automáticos (1 hora antes de cada cita)
       startReminderService();
+      console.log('⏰  Servicio de recordatorios automáticos iniciado');
+      
+      // Iniciar monitor de suscripciones
+      startSubscriptionCheck();
     });
   } catch (err) {
     console.error('❌  Error al iniciar:', err);

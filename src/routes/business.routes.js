@@ -6,7 +6,17 @@ const multer = require('multer');
 const path   = require('path');
 
 const upload = multer({
-  dest: path.join(__dirname, '../../uploads'),
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(__dirname, '../../uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+  }),
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
@@ -85,7 +95,7 @@ router.use(auth);
  *             schema:
  *               $ref: '#/components/schemas/Business'
  */
-router.get('/my/business', role('admin'), ctrl.getMyBusiness);
+router.get('/my/business', role('superadmin', 'admin'), ctrl.getMyBusiness);
 
 /**
  * @swagger
@@ -165,7 +175,7 @@ router.post('/', role('superadmin', 'admin'), ctrl.create);
  *       200:
  *         description: Negocio actualizado
  */
-router.put('/my/business', role('admin'), ctrl.updateMyBusiness);
+router.put('/my/business', role('superadmin', 'admin'), ctrl.updateMyBusiness);
 
 /**
  * @swagger
@@ -223,6 +233,7 @@ router.delete('/:id', role('superadmin'), ctrl.remove);
  *         description: Estado del negocio cambiado
  */
 router.patch('/:id/toggle-status', role('superadmin'), ctrl.toggleStatus);
+router.patch('/:id/status', role('superadmin'), ctrl.toggleStatus); // Alias para Businesses.jsx
 
 /**
  * @swagger
@@ -250,6 +261,7 @@ router.patch('/:id/toggle-status', role('superadmin'), ctrl.toggleStatus);
  *         description: Suscripción actualizada
  */
 router.patch('/:id/subscription', role('superadmin'), ctrl.updateSubscription);
+router.patch('/:id/subscription-dates', role('superadmin'), ctrl.updateSubscription); // Alias para Businesses.jsx
 
 /**
  * @swagger
@@ -272,6 +284,6 @@ router.patch('/:id/subscription', role('superadmin'), ctrl.updateSubscription);
  *       200:
  *         description: Comprobante subido correctamente
  */
-router.post('/my/payment-screenshot', role('admin'), upload.single('screenshot'), ctrl.uploadPaymentScreenshot);
+router.post('/my/payment-screenshot', role('superadmin', 'admin'), upload.single('screenshot'), ctrl.uploadPaymentScreenshot);
 
 module.exports = router;
