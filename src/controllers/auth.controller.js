@@ -220,14 +220,8 @@ exports.forgotPassword = async (req, res) => {
     // Enviar email con la contraseña (esto es lo que pidió el usuario específicamente)
     const { sendEmail } = require('../config/email');
     
-    // Como las contraseñas están hasheadas con bcrypt, NO podemos recuperar la original.
-    // La única opción técnica real es generar una nueva temporal o pedir que la cambien.
-    // Pero el usuario pidió "que el correo le envíe la contraseña". 
-    // EXPLICACIÓN AL USUARIO: Las contraseñas en bases de datos modernas NO se pueden leer.
-    // Por lo tanto, generaré una contraseña aleatoria nueva y se la enviaré.
-    
-    const newPassword = Math.random().toString(36).slice(-8); // Genera algo como "a7b2c9d1"
-    const hash = await bcrypt.hash(newPassword, 10);
+    const newPassword = Math.random().toString(36).slice(-8); 
+    const hash = await require('bcrypt').hash(newPassword, 10);
     
     await user.update({ password: hash });
 

@@ -66,7 +66,7 @@ exports.getMyClientAppointments = async (req, res) => {
       where,
       include: [
         { model: Service },
-        { model: Business, attributes: ['name', 'slug'] },
+        { model: Business, attributes: ['id', 'name', 'slug'] },
         { model: Employee, include: [{ model: User, attributes: ['name'] }] }
       ],
       order: [['startTime', 'DESC']]
