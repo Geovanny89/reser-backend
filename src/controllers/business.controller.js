@@ -201,8 +201,9 @@ exports.getAvailability = async (req, res) => {
             const slotStart = colombiaDateTimeToUTC(date, timeStr);
             const slotEnd   = new Date(slotStart.getTime() + duration * 60000);
 
-            // No mostrar slots en el pasado
-            if (slotStart.getTime() > nowColombia.getTime()) {
+            // No mostrar slots en el pasado (con un margen de 5 minutos para permitir reservar citas muy cercanas)
+            const MARGIN_MS = 5 * 60 * 1000;
+            if (slotStart.getTime() > (nowColombia.getTime() - MARGIN_MS)) {
               // Verificar conflicto con citas existentes
               const conflict = await Appointment.findOne({
                 where: {

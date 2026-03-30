@@ -98,12 +98,21 @@ async function start() {
   try {
     await sequelize.authenticate();
     console.log('✅  Conexión a base de datos establecida');
-    await sequelize.sync({ alter: false });
+    
+    try {
+      await sequelize.sync({ alter: false });
+      console.log('✅  Modelos sincronizados con la base de datos');
+    } catch (syncErr) {
+      console.error('⚠️  Error al sincronizar modelos (puede ser normal en PostgreSQL con ENUMs):', syncErr.message);
+      console.log('💡 Intenta ejecutar las migraciones manuales si es necesario.');
+    }
+
     await seedBusinessTypes();
     await seedSuperAdmin();
-    app.listen(PORT, () => {
-      console.log(`🚀  Backend corriendo en http://localhost:${PORT}`);
-      console.log(`📚  Documentación Swagger: http://localhost:${PORT}/api/docs`);
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀  Backend corriendo en http://0.0.0.0:${PORT}`);
+      console.log(`📚  Documentación Swagger: http://tu-ip-vps:${PORT}/api/docs`);
       // Iniciar servicio de recordatorios automáticos (1 hora antes de cada cita)
       startReminderService();
       console.log('⏰  Servicio de recordatorios automáticos iniciado');
