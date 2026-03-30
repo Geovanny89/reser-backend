@@ -294,12 +294,20 @@ exports.updateSubscription = async (req, res) => {
     const b = await Business.findByPk(req.params.id);
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
     const { subscriptionStatus, lastPaymentDate, subscriptionStartDate, subscriptionEndDate } = req.body;
-    await b.update({ 
+    
+    const updates = { 
       subscriptionStatus, 
       lastPaymentDate,
       subscriptionStartDate,
       subscriptionEndDate
-    });
+    };
+
+    // Si el SuperAdmin marca como "paid", eliminamos el comprobante para que no salga el aviso
+    if (subscriptionStatus === 'paid') {
+      updates.paymentScreenshot = null;
+    }
+
+    await b.update(updates);
     res.json(b);
   } catch (e) {
     res.status(500).json({ error: e.message });
