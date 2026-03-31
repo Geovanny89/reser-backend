@@ -4,7 +4,7 @@ const { User, Employee, Business, Appointment, Service } = require('../models');
 // Enviar resumen de pago a un empleado
 exports.sendPaymentSummary = async (req, res) => {
   try {
-    const { businessId, employeeName, month, totalEarned, appointmentsCount } = req.body;
+    const { businessId, employeeName, month, totalEarned, appointmentsCount, pdfBase64 } = req.body;
 
     if (!businessId || !employeeName || !month) {
       return res.status(400).json({ error: 'businessId, employeeName y month son requeridos' });
@@ -12,12 +12,6 @@ exports.sendPaymentSummary = async (req, res) => {
 
     const business = await Business.findByPk(businessId);
     if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
-
-    // Buscar el empleado por nombre para obtener su email
-    const employee = await Employee.findOne({
-      where: { businessId },
-      include: [{ model: User, where: {}, attributes: ['name', 'email'] }],
-    });
 
     // Buscar todos los empleados del negocio y filtrar por nombre
     const employees = await Employee.findAll({
@@ -28,13 +22,23 @@ exports.sendPaymentSummary = async (req, res) => {
     const emp = employees.find(e => e.User?.name === employeeName);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
 
+    // Preparar adjuntos si se envió PDF
+    const attachments = [];
+    if (pdfBase64) {
+      attachments.push({
+        filename: `reporte-pagos-${month}.pdf`,
+        content: pdfBase64,
+        encoding: 'base64'
+      });
+    }
+
     await sendEmail(emp.User.email, 'paymentSummary', {
       employeeName,
       businessName: business.name,
       month,
       totalEarned: parseFloat(totalEarned),
       appointmentsCount: parseInt(appointmentsCount),
-    });
+    }, attachments);
 
     res.json({ success: true, message: `Resumen enviado a ${emp.User.email}` });
   } catch (e) {

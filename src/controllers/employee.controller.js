@@ -213,13 +213,17 @@ exports.getEmployeeInfo = async (req, res) => {
 };
 
 const startOfMonth = (monthStr) => {
-  const d = new Date(monthStr + '-01');
-  d.setDate(1); d.setHours(0, 0, 0, 0);
+  // Crear fecha en zona horaria Colombia (UTC-5)
+  const d = new Date(monthStr + '-01T00:00:00-05:00');
   return d;
 };
+
 const endOfMonth = (monthStr) => {
-  const d = new Date(monthStr + '-01');
-  d.setMonth(d.getMonth() + 1); d.setDate(0); d.setHours(23, 59, 59, 999);
+  // Crear fecha en zona horaria Colombia (UTC-5)
+  const d = new Date(monthStr + '-01T00:00:00-05:00');
+  d.setMonth(d.getMonth() + 1);
+  d.setDate(0);
+  d.setHours(23, 59, 59, 999);
   return d;
 };
 
@@ -227,8 +231,14 @@ exports.getCommissionReport = async (req, res) => {
   try {
     const businessId = req.query.businessId || req.params.businessId;
     const { month } = req.query;
+    console.log('🔍 Backend recibió month:', month); // DEBUG
+    
     if (!businessId || !month)
       return res.status(400).json({ error: 'businessId y month (YYYY-MM) son requeridos' });
+
+    const start = startOfMonth(month);
+    const end = endOfMonth(month);
+    console.log('🔍 Buscando citas entre:', start, 'y', end); // DEBUG
 
     const appointments = await Appointment.findAll({
       where: {

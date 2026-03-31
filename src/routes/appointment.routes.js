@@ -194,13 +194,4 @@ router.post('/:id/send-receipt', role('admin', 'superadmin'), ctrl.sendReceipt);
  */
 router.get('/availability', role('admin', 'superadmin'), ctrl.getAvailability);
 
-// Endpoint de prueba para disponibilidad
-router.get('/test-availability', (req, res) => {
-  console.log('Endpoint de prueba alcanzado');
-  res.json({ 
-    message: 'Endpoint de prueba funcionando',
-    availableSlots: ['08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30']
-  });
-});
-
 module.exports = router;

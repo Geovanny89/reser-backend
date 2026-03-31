@@ -41,15 +41,12 @@ async function seedSuperAdmin() {
     });
     console.log('✅  Usuario SuperAdmin creado (admin@admin.com)');
   } else {
-    // Opcional: Asegurar que el rol sea superadmin y la contraseña sea la solicitada
-    // por si el usuario fue creado previamente con otros datos
-    const hash = await bcrypt.hash('Jose2021*', 10);
+    // Solo asegurar que sea superadmin y esté activo, NO resetear contraseña
     await exists.update({ 
       role: 'superadmin',
-      password: hash,
       status: 'active'
     });
-    console.log('✅  Usuario SuperAdmin verificado/actualizado');
+    console.log('✅  Usuario SuperAdmin verificado (contraseña preservada)');
   }
 }
 

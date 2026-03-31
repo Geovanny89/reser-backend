@@ -3,6 +3,39 @@ const { Op } = require('sequelize');
 const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
 
+// Zona horaria Colombia: UTC-5 (no cambia con horario de verano)
+const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
+
+/**
+ * Dado un string de fecha "YYYY-MM-DD", construye un objeto Date que representa
+ * la medianoche en Colombia (UTC-5), sin importar la zona del servidor.
+ */
+function colombiaDateFromString(dateStr) {
+  // dateStr = "2026-03-24"
+  // Medianoche Colombia = 05:00 UTC del mismo día
+  return new Date(dateStr + 'T00:00:00-05:00');
+}
+
+/**
+ * Construye un Date UTC a partir de una fecha "YYYY-MM-DD" y hora "HH:MM"
+ * interpretados en zona horaria Colombia (UTC-5).
+ */
+function colombiaDateTimeToUTC(dateStr, timeStr) {
+  return new Date(`${dateStr}T${timeStr}:00-05:00`);
+}
+
+/**
+ * Obtiene el día de la semana en Colombia para una fecha dada.
+ * 0=Domingo, 1=Lunes, ..., 6=Sábado
+ */
+function getDayOfWeekColombia(dateStr) {
+  const d = colombiaDateFromString(dateStr);
+  // Ajustamos al offset de Colombia para obtener el día local
+  const localMs = d.getTime() + COLOMBIA_OFFSET_MS;
+  const localDate = new Date(localMs);
+  return localDate.getUTCDay();
+}
+
 exports.getByBusiness = async (req, res) => {
   try {
     const businessId = req.query.businessId || req.params.businessId;
@@ -90,7 +123,7 @@ exports.create = async (req, res) => {
     const conflict = await Appointment.findOne({
       where: {
         employeeId,
-        status: { [Op.in]: ['pending', 'confirmed', 'attention'] },
+        status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] }, // Bloquear por cualquier cita que NO esté cancelada
         startTime: { [Op.lt]: end },
         endTime: { [Op.gt]: start },
       }
@@ -283,67 +316,116 @@ exports.getAvailability = async (req, res) => {
   try {
     const { date, employeeId, serviceId, businessId } = req.query;
     
-    console.log('Parámetros recibidos:', { date, employeeId, serviceId, businessId });
-    
     if (!date || !employeeId || !serviceId || !businessId) {
-      console.log('Faltan parámetros:', { date, employeeId, serviceId, businessId });
       return res.status(400).json({ error: 'Faltan parámetros requeridos' });
     }
 
-    // Obtener el servicio para calcular duración
+    const { Appointment, Schedule } = require('../models');
+    const { Op } = require('sequelize');
+
     const service = await Service.findByPk(serviceId);
-    if (!service) {
-      console.log('Servicio no encontrado:', serviceId);
-      return res.status(404).json({ error: 'Servicio no encontrado' });
+    if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    const duration = service.durationMin || 60;
+    const nowColombia = new Date();
+    const dayOfWeek = getDayOfWeekColombia(date);
+
+    // Obtener horarios (trabajo, almuerzo, bloqueos)
+    const empSchedules = await Schedule.findAll({
+      where: { employeeId, dayOfWeek, active: true }
+    });
+
+    const workSchedules = empSchedules.filter(s => {
+      const type = (s.type || 'work').trim().toLowerCase();
+      return type === 'work';
+    });
+    if (workSchedules.length === 0) {
+      return res.json({ availableSlots: [] });
     }
 
-    console.log('Duración del servicio:', service.durationMin, 'minutos');
+    const lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch').map(s => ({
+      start: s.startTime,
+      end: s.endTime
+    }));
+    const blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked').map(s => ({
+      start: s.startTime,
+      end: s.endTime
+    }));
 
-    // Obtener citas existentes para ese empleado en esa fecha
-    const startOfDay = new Date(date + 'T00:00:00');
-    const endOfDay = new Date(date + 'T23:59:59');
-
-    console.log('Buscando citas entre:', startOfDay, 'y', endOfDay);
+    const startOfDay = colombiaDateFromString(date);
+    const endOfDay   = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const existingAppointments = await Appointment.findAll({
       where: {
         employeeId,
         businessId,
-        status: { [Op.in]: ['pending', 'confirmed', 'attention'] },
-        startTime: { [Op.between]: [startOfDay, endOfDay] }
-      },
-      include: [{ model: Service }]
+        status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] },
+        startTime: { [Op.lt]: endOfDay },
+        endTime:   { [Op.gt]: startOfDay }
+      }
     });
 
-    console.log('Citas existentes encontradas:', existingAppointments.length);
+    /**
+     * Convierte un horario HH:MM a minutos desde medianoche.
+     */
+    const toMinutes = (timeStr) => {
+      if (!timeStr) return 0;
+      const cleanTime = String(timeStr).trim();
+      const [h, m] = cleanTime.split(':').map(Number);
+      return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+    };
 
-    // Generar slots disponibles (ejemplo: cada 30 minutos de 8am a 6pm)
+    /**
+     * Verifica si el intervalo [slotStart, slotEnd) se solapa con [blockStart, blockEnd).
+     */
+    const overlaps = (slotStart, slotEnd, blockStart, blockEnd) => {
+      const bStart = toMinutes(blockStart);
+      const bEnd = toMinutes(blockEnd);
+      return slotStart < bEnd && slotEnd > bStart;
+    };
+
     const availableSlots = [];
-    const startHour = 8;
-    const endHour = 18;
-    const slotDuration = 30; // minutos
 
-    for (let hour = startHour; hour < endHour; hour++) {
-      for (let minute = 0; minute < 60; minute += slotDuration) {
-        const slotTime = new Date(date);
-        slotTime.setHours(hour, minute, 0, 0);
-        
-        const slotEndTime = new Date(slotTime.getTime() + service.durationMin * 60000);
-        
-        // Verificar si el slot está disponible
-        const isAvailable = !existingAppointments.some(apt => {
-          const aptStart = new Date(apt.startTime);
-          const aptEnd = new Date(apt.endTime);
-          return (slotTime < aptEnd && slotEndTime > aptStart);
-        });
+    for (const sched of workSchedules) {
+      const workStart = toMinutes(sched.startTime);
+      const workEnd = toMinutes(sched.endTime);
+      let current = workStart;
 
-        if (slotTime > new Date() && isAvailable) {
-          availableSlots.push(`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
+      const safeDuration = (duration && duration > 0) ? duration : 30;
+
+      while (current + safeDuration <= workEnd) {
+        const slotEndMin = current + safeDuration;
+
+        // Preparar timeStr primero
+        const hh = String(Math.floor(current / 60)).padStart(2, '0');
+        const mm = String(current % 60).padStart(2, '0');
+        const timeStr = `${hh}:${mm}`;
+
+        // 1. Verificar Almuerzo
+        const isLunch = lunchRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
+        // 2. Verificar Bloqueos
+        const isBlocked = isLunch || blockedRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
+
+        if (!isBlocked) {
+          const slotTime = colombiaDateTimeToUTC(date, timeStr);
+          const slotEndTime = new Date(slotTime.getTime() + safeDuration * 60000);
+          
+          // 3. Verificar Citas Existentes
+          const hasConflict = existingAppointments.some(appt => {
+            const apptStart = new Date(appt.startTime).getTime();
+            const apptEnd   = new Date(appt.endTime).getTime();
+            return apptStart < slotEndTime.getTime() && apptEnd > slotTime.getTime();
+          });
+
+          // 4. Verificar que no sea en el pasado
+          const MARGIN_MS = 5 * 60 * 1000;
+          if (slotTime.getTime() > (Date.now() - MARGIN_MS) && !hasConflict) {
+            availableSlots.push(timeStr);
+          }
         }
+        current += 30; // Intervalos de 30 min para generar opciones
       }
     }
-
-    console.log('Slots generados:', availableSlots);
 
     res.json({ availableSlots });
   } catch (e) {

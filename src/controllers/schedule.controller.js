@@ -27,8 +27,16 @@ exports.getByBusiness = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { employeeId, businessId, dayOfWeek, startTime, endTime } = req.body;
-    const schedule = await Schedule.create({ employeeId, businessId, dayOfWeek, startTime, endTime });
+    const { employeeId, businessId, dayOfWeek, startTime, endTime, type, description } = req.body;
+    const schedule = await Schedule.create({ 
+      employeeId, 
+      businessId, 
+      dayOfWeek, 
+      startTime, 
+      endTime,
+      type: type || 'work',
+      description: description || null
+    });
     res.status(201).json(schedule);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -39,7 +47,18 @@ exports.update = async (req, res) => {
   try {
     const schedule = await Schedule.findByPk(req.params.id);
     if (!schedule) return res.status(404).json({ error: 'Horario no encontrado' });
-    await schedule.update(req.body);
+    
+    const { employeeId, businessId, dayOfWeek, startTime, endTime, type, description, active } = req.body;
+    await schedule.update({ 
+      employeeId, 
+      businessId, 
+      dayOfWeek, 
+      startTime, 
+      endTime,
+      type,
+      description,
+      active
+    });
     res.json(schedule);
   } catch (e) {
     res.status(400).json({ error: e.message });

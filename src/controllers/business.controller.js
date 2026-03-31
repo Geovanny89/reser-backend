@@ -128,12 +128,24 @@ exports.getAvailability = async (req, res) => {
     const duration = service ? service.durationMin : 60;
 
     // Hora actual en Colombia para no mostrar slots pasados
-    const nowUTC = Date.now();
-    const nowColombia = new Date(nowUTC);
+    const nowColombia = new Date();
 
     // Obtener todos los horarios del empleado para el día (incluyendo almuerzos y bloqueos)
     const allSchedules = await Schedule.findAll({
       where: { businessId: biz.id, dayOfWeek, active: true }
+    });
+
+    // Obtener todas las citas del negocio para ese día para evitar consultas en el bucle
+    const startOfDay = colombiaDateFromString(date);
+    const endOfDay   = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+    const dayAppointments = await Appointment.findAll({
+      where: {
+        businessId: biz.id,
+        status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] },
+        startTime: { [Op.lt]: endOfDay },
+        endTime:   { [Op.gt]: startOfDay }
+      }
     });
 
     // Agrupar por empleado: work = jornada, lunch = almuerzo, blocked = permiso/bloqueo
@@ -142,8 +154,9 @@ exports.getAvailability = async (req, res) => {
       if (!schedulesByEmployee[sched.employeeId]) {
         schedulesByEmployee[sched.employeeId] = { work: [], lunch: [], blocked: [] };
       }
-      // Normalizar: si el tipo no es reconocido, tratar como 'work'
-      const tipo = ['work', 'lunch', 'blocked'].includes(sched.type) ? sched.type : 'work';
+      // Normalizar y limpiar tipo
+      const rawType = (sched.type || 'work').trim().toLowerCase();
+      const tipo = ['work', 'lunch', 'blocked'].includes(rawType) ? rawType : 'work';
       schedulesByEmployee[sched.employeeId][tipo].push(sched);
     }
 
@@ -151,13 +164,14 @@ exports.getAvailability = async (req, res) => {
      * Convierte un horario HH:MM a minutos desde medianoche.
      */
     const toMinutes = (timeStr) => {
-      const [h, m] = timeStr.split(':').map(Number);
-      return h * 60 + m;
+      if (!timeStr) return 0;
+      const cleanTime = String(timeStr).trim();
+      const [h, m] = cleanTime.split(':').map(Number);
+      return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
     };
 
     /**
      * Verifica si el intervalo [slotStart, slotEnd) se solapa con [blockStart, blockEnd).
-     * Solapamiento ocurre cuando: slotStart < blockEnd && slotEnd > blockStart
      */
     const overlaps = (slotStart, slotEnd, blockStart, blockEnd) => {
       return slotStart < blockEnd && slotEnd > blockStart;
@@ -166,6 +180,7 @@ exports.getAvailability = async (req, res) => {
     const slots = [];
     for (const emp of employees) {
       const empSchedules = schedulesByEmployee[emp.id] || { work: [], lunch: [], blocked: [] };
+      const empAppointments = dayAppointments.filter(a => a.employeeId === emp.id);
 
       // Pre-calcular rangos de almuerzo y bloqueo en minutos para este empleado
       const lunchRanges = empSchedules.lunch.map(s => ({
@@ -183,38 +198,38 @@ exports.getAvailability = async (req, res) => {
         const workEnd   = toMinutes(sched.endTime);
         let current = workStart;
 
-        while (current + duration <= workEnd) {
-          const slotEndMin = current + duration;
+        // Si el servicio dura 0 o es inválido, usar 30 min por defecto
+        const safeDuration = (duration && duration > 0) ? duration : 30;
+
+        while (current + safeDuration <= workEnd) {
+          const slotEndMin = current + safeDuration;
 
           // Verificar si el slot se solapa con CUALQUIER almuerzo
           const isLunch = lunchRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
 
           // Verificar si el slot se solapa con CUALQUIER bloqueo/permiso
-          const isBlocked = !isLunch && blockedRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
+          const isBlocked = isLunch || blockedRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
 
-          if (!isLunch && !isBlocked) {
+          if (!isBlocked) {
             const hh = String(Math.floor(current / 60)).padStart(2, '0');
             const mm = String(current % 60).padStart(2, '0');
             const timeStr = `${hh}:${mm}`;
 
             // Construir fechas UTC correctas para Colombia
             const slotStart = colombiaDateTimeToUTC(date, timeStr);
-            const slotEnd   = new Date(slotStart.getTime() + duration * 60000);
+            const slotEnd   = new Date(slotStart.getTime() + safeDuration * 60000);
 
             // No mostrar slots en el pasado (con un margen de 5 minutos para permitir reservar citas muy cercanas)
             const MARGIN_MS = 5 * 60 * 1000;
-            if (slotStart.getTime() > (nowColombia.getTime() - MARGIN_MS)) {
-              // Verificar conflicto con citas existentes
-              const conflict = await Appointment.findOne({
-                where: {
-                  employeeId: emp.id,
-                  status: { [Op.in]: ['pending', 'confirmed', 'attention'] },
-                  startTime: { [Op.lt]: slotEnd },
-                  endTime:   { [Op.gt]: slotStart },
-                }
+            if (slotStart.getTime() > (Date.now() - MARGIN_MS)) {
+              // Verificar conflicto con citas existentes en memoria
+              const hasConflict = empAppointments.some(appt => {
+                const apptStart = new Date(appt.startTime).getTime();
+                const apptEnd   = new Date(appt.endTime).getTime();
+                return apptStart < slotEnd.getTime() && apptEnd > slotStart.getTime();
               });
 
-              if (!conflict) {
+              if (!hasConflict) {
                 slots.push({
                   employeeId:   emp.id,
                   employeeName: emp.User.name,
@@ -226,7 +241,7 @@ exports.getAvailability = async (req, res) => {
             }
           }
 
-          current += duration;
+          current += 30; // Siempre avanzar en intervalos de 30 minutos para ofrecer más opciones
         }
       }
     }
