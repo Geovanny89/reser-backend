@@ -96,19 +96,18 @@ const baseTemplate = (content, businessName = 'KDice POS') => `
 const templates = {
 
   // Recuperación de contraseña
-  forgotPassword: ({ name, password }) => ({
-    subject: `🔑 Recuperación de contraseña - KDice POS`,
+  forgotPassword: ({ name, resetUrl }) => ({
+    subject: `🔑 Restablecer contraseña - KDice POS`,
     html: baseTemplate(`
       <h2>Hola ${name},</h2>
-      <p>Has solicitado la recuperación de tu contraseña para acceder al sistema KDice POS.</p>
-      <div class="info-box">
-        <div class="info-row">
-          <span class="info-label">Tu contraseña actual es:</span>
-          <span class="info-value" style="background: #f1f5f9; padding: 4px 10px; border-radius: 4px; border: 1px dashed #4f46e5; font-family: monospace; font-size: 18px;">${password}</span>
-        </div>
+      <p>Has solicitado restablecer tu contraseña para acceder al sistema KDice POS.</p>
+      <p>Haz clic en el siguiente botón para crear una nueva contraseña. Este enlace expirará en 1 hora:</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${resetUrl}" class="btn" style="background: #4f46e5; color: #ffffff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Restablecer mi contraseña</a>
       </div>
-      <p>Te recomendamos cambiar tu contraseña una vez que hayas ingresado al sistema para mayor seguridad.</p>
-      <a href="${process.env.FRONTEND_URL}/login" class="btn">Ir al Login</a>
+      <p>Si no solicitaste este cambio, puedes ignorar este correo de forma segura.</p>
+      <p style="font-size: 12px; color: #64748b; margin-top: 20px;">Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+      <p style="font-size: 11px; color: #4f46e5; word-break: break-all;">${resetUrl}</p>
     `)
   }),
 

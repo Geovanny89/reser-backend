@@ -213,30 +213,62 @@ exports.forgotPassword = async (req, res) => {
 
     const user = await User.findOne({ where: { email } });
     if (!user) {
-      // Por seguridad, no decimos si el email existe o no, pero aquí como es un sistema privado
-      // podemos ser más claros o simplemente decir que se envió si existe.
       return res.status(404).json({ error: 'No existe un usuario con ese correo electrónico' });
     }
 
-    // Verificar que NO sea un cliente (solo admin, superadmin o employee)
     if (user.role === 'client') {
       return res.status(403).json({ error: 'Acceso denegado para cuentas de cliente' });
     }
 
-    // Generar una contraseña temporal aleatoria
-    const tempPassword = Math.random().toString(36).slice(-8); 
-    const hash = await bcrypt.hash(tempPassword, 10);
-    
-    // Actualizar la contraseña en la base de datos inmediatamente
-    await user.update({ password: hash });
+    // Generar un token de recuperación único
+    const resetToken = jwt.sign(
+      { id: user.id, purpose: 'password-reset' },
+      JWT_SECRET,
+      { expiresIn: '1h' } // El enlace expira en 1 hora
+    );
 
-    // Enviar email con la NUEVA contraseña temporal
+    // Construir la URL de recuperación (usando la variable de entorno FRONTEND_URL)
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
+
+    // Enviar email con el ENLACE para restablecer la contraseña
     await sendEmail(user.email, 'forgotPassword', {
       name: user.name,
-      password: tempPassword
+      resetUrl: resetUrl
     });
 
-    res.json({ message: 'Se ha enviado una nueva contraseña temporal a tu correo electrónico' });
+    res.json({ message: 'Se ha enviado un enlace para restablecer tu contraseña a tu correo electrónico' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token y nueva contraseña son requeridos' });
+    }
+
+    // Verificar el token
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'El enlace ha expirado o es inválido' });
+    }
+
+    if (decoded.purpose !== 'password-reset') {
+      return res.status(401).json({ error: 'Token inválido' });
+    }
+
+    const user = await User.findByPk(decoded.id);
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await user.update({ password: hash });
+
+    res.json({ message: 'Contraseña restablecida correctamente' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

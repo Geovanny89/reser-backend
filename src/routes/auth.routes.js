@@ -115,6 +115,25 @@ router.post('/forgot-password', require('../controllers/auth.controller').forgot
 
 /**
  * @swagger
+ * /auth/reset-password:
+ *   post:
+ *     summary: Restablecer contraseña con token
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, newPassword]
+ *             properties:
+ *               token: { type: string }
+ *               newPassword: { type: string }
+ */
+router.post('/reset-password', require('../controllers/auth.controller').resetPassword);
+
+/**
+ * @swagger
  * /auth/change-password:
  *   patch:
  *     summary: Cambiar contraseña (autenticado)
