@@ -427,7 +427,10 @@ exports.getAvailability = async (req, res) => {
       }
     }
 
-    res.json({ availableSlots });
+    // Eliminar duplicados de horarios (en caso de múltiples jornadas de trabajo solapadas)
+    const uniqueSlots = [...new Set(availableSlots)].sort();
+
+    res.json({ availableSlots: uniqueSlots });
   } catch (e) {
     console.error('Error en getAvailability:', e);
     res.status(500).json({ error: e.message });

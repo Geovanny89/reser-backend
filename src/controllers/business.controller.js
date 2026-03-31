@@ -249,7 +249,19 @@ exports.getAvailability = async (req, res) => {
     // Ordenar por hora
     slots.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-    res.json(slots);
+    // Eliminar duplicados exactos (mismo empleado y misma hora de inicio)
+    const uniqueSlots = [];
+    const seen = new Set();
+    
+    for (const slot of slots) {
+      const key = `${slot.employeeId}-${slot.localTime}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueSlots.push(slot);
+      }
+    }
+
+    res.json(uniqueSlots);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
