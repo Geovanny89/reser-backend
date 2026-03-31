@@ -246,24 +246,14 @@ exports.getCommissionReport = async (req, res) => {
       ]
     });
 
-    const report = appointments.map(appt => {
-      const price         = parseFloat(appt.Service.price);
-      const commissionPct = parseFloat(appt.Employee.commissionPct) || 0;
-      const ownerPct      = parseFloat(appt.Employee.ownerPct) || 100;
-      
-      const employeeEarns = (price * commissionPct / 100);
-      // Descontar de la ganancia del dueño el pago del empleado
-      const ownerEarns    = (price * ownerPct / 100) - employeeEarns;
-
-      return {
-        date:          appt.startTime,
-        service:       appt.Service.name,
-        price,
-        employee:      appt.Employee.User.name,
-        employeeEarns: employeeEarns.toFixed(2),
-        ownerEarns:    ownerEarns.toFixed(2),
-      };
-    });
+    const report = appointments.map(appt => ({
+      date:          appt.startTime,
+      service:       appt.Service.name,
+      price:         parseFloat(appt.Service.price),
+      employee:      appt.Employee.User.name,
+      employeeEarns: (parseFloat(appt.Service.price) * (parseFloat(appt.Employee.commissionPct) || 0) / 100).toFixed(2),
+      ownerEarns:    (parseFloat(appt.Service.price) * (parseFloat(appt.Employee.ownerPct) || 100) / 100).toFixed(2),
+    }));
 
     const totals = report.reduce((acc, r) => ({
       total:         acc.total + parseFloat(r.price),
