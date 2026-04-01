@@ -46,11 +46,9 @@ module.exports = (sequelize) => {
     b.slug = slug;
   });
 
-  Business.beforeUpdate((b) => {
-    if (b.changed('name')) {
-      b.slug = slugify(b.name, { lower: true, strict: true });
-    }
-  });
+  // El slug NO se regenera automáticamente al cambiar el nombre
+  // para mantener los enlaces existentes funcionando
+  // Si se necesita cambiar el slug, hacerlo manualmente
 
   return Business;
 };
