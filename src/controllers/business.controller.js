@@ -70,6 +70,20 @@ exports.getBySlug = async (req, res) => {
   }
 };
 
+// NUEVO: Obtener negocio por ID (público, para empleados)
+exports.getByIdPublic = async (req, res) => {
+  try {
+    const biz = await Business.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl', 'primaryColor', 'secondaryColor', 'whatsapp', 'instagram', 'facebook', 'tiktok', 'twitter', 'website', 'status']
+    });
+    if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
+    if (biz.status === 'blocked') return res.status(403).json({ error: 'Negocio bloqueado' });
+    res.json(biz);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
 // Zona horaria Colombia: UTC-5 (no cambia con horario de verano)
 const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
 
