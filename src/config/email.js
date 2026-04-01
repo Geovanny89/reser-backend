@@ -1,5 +1,26 @@
 const nodemailer = require('nodemailer');
 
+// Helper para formatear fecha en zona horaria de Colombia (UTC-5)
+const formatColombiaDate = (dateInput) => {
+  const date = new Date(dateInput);
+  
+  // Si no es una fecha válida, devolver el string original
+  if (isNaN(date.getTime())) return dateInput;
+
+  // En muchos entornos Node (como VPS), toLocaleString ignora el timeZone si falta la data ICU.
+  // Por eso ajustamos el offset manualmente: Colombia es UTC-5.
+  // Obtenemos el tiempo en UTC y le restamos 5 horas (18,000,000 ms)
+  const COLOMBIA_OFFSET = -5 * 60 * 60 * 1000;
+  const colombiaTime = new Date(date.getTime() + COLOMBIA_OFFSET);
+
+  // Formatear usando el locale es-CO pero forzando UTC para que no se aplique el offset local del servidor
+  return colombiaTime.toLocaleString('es-CO', { 
+    timeZone: 'UTC', 
+    dateStyle: 'full', 
+    timeStyle: 'short' 
+  });
+};
+
 // Crear transporter de Nodemailer
 // Soporta Gmail, SMTP genérico, Ethereal (pruebas)
 const createTransporter = () => {
@@ -132,7 +153,7 @@ const templates = {
         </div>
         <div class="info-row">
           <span class="info-label">Fecha y hora</span>
-          <span class="info-value">${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'full', timeStyle: 'short' })}</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Precio</span>
@@ -165,7 +186,7 @@ const templates = {
         </div>
         <div class="info-row">
           <span class="info-label">Fecha y hora</span>
-          <span class="info-value">${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'full', timeStyle: 'short' })}</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
         </div>
       </div>
       <p>Por favor llega 5 minutos antes de tu cita. Si necesitas cancelar, hazlo con anticipación.</p>
@@ -228,7 +249,7 @@ const templates = {
         </div>
         <div class="info-row">
           <span class="info-label">Fecha y hora</span>
-          <span class="info-value">${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'full', timeStyle: 'short' })}</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
         </div>
       </div>
       <span class="badge badge-info">📋 Pendiente de confirmación</span>
@@ -273,7 +294,7 @@ const templates = {
         </div>
         <div class="info-row">
           <span class="info-label">Fecha de atención</span>
-          <span class="info-value">${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'full', timeStyle: 'short' })}</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Monto pagado</span>

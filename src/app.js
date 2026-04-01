@@ -15,6 +15,9 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Servir archivos estáticos de descargas
 app.use('/downloads', express.static(path.join(__dirname, '../public/downloads')));
 
+// Servir la APK desde la carpeta estática del frontend (fuera de public para evitar peso extra)
+app.use('/apk', express.static(path.join(__dirname, '../../frontend/public-static/apk')));
+
 // Swagger UI
 const swaggerUi   = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
@@ -37,7 +40,6 @@ app.use('/api/appointments',  checkBusinessStatus, require('./routes/appointment
 app.use('/api/schedules',     checkBusinessStatus, require('./routes/schedule.routes'));
 app.use('/api/upload',        require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
-app.use('/api/apk',           require('./routes/apk.routes'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '3.0.0', timestamp: new Date() }));
 

@@ -2,8 +2,8 @@ const { Business } = require('../models');
 const fs = require('fs');
 const path = require('path');
 
-// Ruta de la APK universal (misma para todos los negocios)
-const UNIVERSAL_APK_PATH = path.join(__dirname, '../../uploads/kdice-app.apk');
+// Ruta de la APK universal (ahora apuntando a la carpeta sincronizada por Git en el frontend)
+const UNIVERSAL_APK_PATH = path.join(__dirname, '../../../frontend/public-static/apk/kdice-reservas.apk');
 
 // Función para obtener ruta de APK personalizada por negocio
 const getBusinessApkPath = (businessSlug) => path.join(__dirname, `../../uploads/kdice-${businessSlug}.apk`);

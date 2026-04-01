@@ -1,6 +1,22 @@
 const PDFDocument = require('pdfkit');
 
 /**
+ * Helper para formatear fecha en zona horaria de Colombia (UTC-5)
+ * Replicamos la lógica de email.js para consistencia y robustez en VPS.
+ */
+const formatColombiaDate = (dateInput, style = 'full') => {
+  const date = new Date(dateInput);
+  if (isNaN(date.getTime())) return dateInput;
+  const COLOMBIA_OFFSET = -5 * 60 * 60 * 1000;
+  const colombiaTime = new Date(date.getTime() + COLOMBIA_OFFSET);
+  return colombiaTime.toLocaleString('es-CO', { 
+    timeZone: 'UTC', 
+    dateStyle: style, 
+    timeStyle: 'short' 
+  });
+};
+
+/**
  * Genera un PDF comprobante de pago para una cita completada
  * @param {Object} appointmentData - Datos de la cita
  * @returns {Buffer} Buffer del PDF generado
@@ -77,7 +93,7 @@ const generatePaymentReceipt = (appointmentData) => {
     doc.fontSize(12)
        .font('Helvetica')
        .text(`Número de comprobante: #${appointmentData.id.substring(0, 8).toUpperCase()}`, 50, 265)
-       .text(`Fecha de emisión: ${new Date().toLocaleString('es-CO', { dateStyle: 'full', timeStyle: 'short' })}`, 50, 285)
+       .text(`Fecha de emisión: ${formatColombiaDate(new Date())}`, 50, 285)
        .text(`Cliente: ${appointmentData.clientName}`, 50, 305)
        .text(`Email cliente: ${appointmentData.clientEmail || 'No especificado'}`, 50, 325)
        .text(`Teléfono cliente: ${appointmentData.clientPhone || 'No especificado'}`, 50, 345);
@@ -120,10 +136,7 @@ const generatePaymentReceipt = (appointmentData) => {
     // Ajustar texto para que no se corte
     const serviceName = appointmentData.serviceName || 'Servicio';
     const employeeName = appointmentData.employeeName || 'Profesional';
-    const dateTime = new Date(appointmentData.startTime).toLocaleString('es-CO', { 
-      dateStyle: 'short', 
-      timeStyle: 'short' 
-    });
+    const dateTime = formatColombiaDate(appointmentData.startTime, 'short');
     const price = new Intl.NumberFormat('es-CO', { 
       style: 'currency', 
       currency: 'COP', 
