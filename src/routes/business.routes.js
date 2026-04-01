@@ -29,7 +29,7 @@ const upload = multer({
 
 /**
  * @swagger
- * /businesses/{id}/public:
+ * /businesses/by-id/{id}/public:
  *   get:
  *     summary: Obtener información pública de un negocio por ID
  *     tags: [Businesses]
@@ -44,7 +44,7 @@ const upload = multer({
  *       404:
  *         description: Negocio no encontrado
  */
-router.get('/:id/public', ctrl.getByIdPublic);
+router.get('/by-id/:id/public', ctrl.getByIdPublic);
 
 /**
  * @swagger
