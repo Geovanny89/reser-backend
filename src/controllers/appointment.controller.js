@@ -286,6 +286,18 @@ exports.cancel = async (req, res) => {
     const appt = await Appointment.findByPk(req.params.id);
     if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
     if (appt.status === 'done') return res.status(400).json({ error: 'No se puede cancelar una cita completada' });
+    if (appt.status === 'cancelled') return res.status(400).json({ error: 'La cita ya está cancelada' });
+    
+    // Verificar permisos: admin, empleado asignado, o cliente dueño de la cita
+    const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'superadmin');
+    const isEmployee = req.user && req.user.role === 'employee' && appt.employeeId === req.user.employeeId;
+    const isOwnerByEmail = req.body.clientEmail && appt.clientEmail === req.body.clientEmail.toLowerCase().trim();
+    const isOwnerByClientId = req.user && req.user.role === 'client' && appt.clientId === req.user.id;
+    
+    if (!isAdmin && !isEmployee && !isOwnerByEmail && !isOwnerByClientId) {
+      return res.status(403).json({ error: 'No tienes permiso para cancelar esta cita' });
+    }
+    
     await appt.update({ status: 'cancelled' });
     res.json({ message: 'Cita cancelada', appt });
   } catch (e) {

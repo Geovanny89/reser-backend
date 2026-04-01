@@ -140,7 +140,7 @@ router.patch('/:id/status', role('admin', 'superadmin', 'employee'), ctrl.update
  *       200:
  *         description: Cita cancelada
  */
-router.patch('/:id/cancel', ctrl.cancel);
+router.patch('/:id/cancel', auth, ctrl.cancel);
 
 /**
  * @swagger
