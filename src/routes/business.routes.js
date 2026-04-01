@@ -4,6 +4,7 @@ const auth   = require('../middleware/auth');
 const role   = require('../middleware/role');
 const multer = require('multer');
 const path   = require('path');
+const fs     = require('fs');
 
 const upload = multer({
   storage: multer.diskStorage({
