@@ -243,7 +243,7 @@ exports.getCommissionReport = async (req, res) => {
     const appointments = await Appointment.findAll({
       where: {
         businessId,
-        status: { [Op.in]: ['done', 'attention', 'confirmed', 'pending'] },
+        status: 'done', // Solo citas completadas generan ingresos
         startTime: { [Op.between]: [startOfMonth(month), endOfMonth(month)] }
       },
       include: [

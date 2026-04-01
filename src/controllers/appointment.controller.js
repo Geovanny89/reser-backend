@@ -90,7 +90,7 @@ exports.getMyClientAppointments = async (req, res) => {
     if (clientId) {
       where.clientId = clientId;
     } else if (email) {
-      where.clientEmail = email;
+      where.clientEmail = email.toLowerCase().trim();
     } else {
       return res.status(400).json({ error: 'Se requiere identificación de cliente' });
     }
@@ -132,7 +132,7 @@ exports.create = async (req, res) => {
 
     const appt = await Appointment.create({
       businessId, serviceId, employeeId, clientName, clientPhone,
-      clientEmail: clientEmail || null,
+      clientEmail: clientEmail ? clientEmail.toLowerCase().trim() : null,
       clientId: (req.user && req.user.role === 'client') ? req.user.id : (req.body.clientId || null),
       startTime: start, endTime: end, notes,
     });
