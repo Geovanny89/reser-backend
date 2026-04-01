@@ -379,3 +379,14 @@ exports.uploadPaymentScreenshot = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+exports.markScreenshotViewed = async (req, res) => {
+  try {
+    const b = await Business.findByPk(req.params.id);
+    if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
+    await b.update({ paymentScreenshotViewed: true });
+    res.json({ message: 'Comprobante marcado como visto', business: b });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};

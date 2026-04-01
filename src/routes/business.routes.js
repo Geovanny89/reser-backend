@@ -283,6 +283,9 @@ router.patch('/:id/status', role('superadmin'), ctrl.toggleStatus); // Alias par
 router.patch('/:id/subscription', role('superadmin'), ctrl.updateSubscription);
 router.patch('/:id/subscription-dates', role('superadmin'), ctrl.updateSubscription); // Alias para Businesses.jsx
 
+// Marcar comprobante como visto
+router.patch('/:id/screenshot-viewed', role('superadmin'), ctrl.markScreenshotViewed);
+
 /**
  * @swagger
  * /businesses/my/payment-screenshot:

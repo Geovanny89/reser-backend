@@ -18,6 +18,7 @@ module.exports = (sequelize) => {
     subscriptionEndDate: { type: DataTypes.DATE },
     lastPaymentDate: { type: DataTypes.DATE },
     paymentScreenshot: { type: DataTypes.STRING },
+    paymentScreenshotViewed: { type: DataTypes.BOOLEAN, defaultValue: false },
 
     // === CAMPOS DE PERSONALIZACIÓN DE PÁGINA PÚBLICA ===
     whatsapp:    { type: DataTypes.STRING },
