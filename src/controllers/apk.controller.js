@@ -7,14 +7,12 @@ const UNIVERSAL_APK_PATH = path.join(__dirname, '../../../frontend/public-static
 
 // Versión actual de la app - CAMBIAR ESTO cuando subas nueva APK
 const APP_VERSION = {
-  version: '1.0.0',
-  buildDate: '2026-04-01',
-  minVersion: '1.0.0', // Versión mínima requerida (para forzar actualizaciones críticas)
-  forceUpdate: false,  // true si es actualización obligatoria
+  version: '1.0.1',  // ← Cambia esto
+  buildDate: '2026-04-15',  // ← Fecha actual
+  forceUpdate: false,  // ← true = obligatoria
   releaseNotes: [
-    'Sistema de reservas inicial',
-    'Gestión de negocios',
-    'Panel de administración'
+    'Nuevo: Sistema de notificaciones',
+    'Fix: Mejoras de rendimiento'
   ],
   downloadUrl: 'https://reservas.k-dice.com/apk/kdice-reservas.apk'
 };
