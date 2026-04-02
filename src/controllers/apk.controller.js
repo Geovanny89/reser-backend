@@ -5,8 +5,47 @@ const path = require('path');
 // Ruta de la APK universal (ahora apuntando a la carpeta sincronizada por Git en el frontend)
 const UNIVERSAL_APK_PATH = path.join(__dirname, '../../../frontend/public-static/apk/kdice-reservas.apk');
 
+// Versión actual de la app - CAMBIAR ESTO cuando subas nueva APK
+const APP_VERSION = {
+  version: '1.0.0',
+  buildDate: '2026-04-01',
+  minVersion: '1.0.0', // Versión mínima requerida (para forzar actualizaciones críticas)
+  forceUpdate: false,  // true si es actualización obligatoria
+  releaseNotes: [
+    'Sistema de reservas inicial',
+    'Gestión de negocios',
+    'Panel de administración'
+  ],
+  downloadUrl: 'https://reservas.k-dice.com/apk/kdice-reservas.apk'
+};
+
 // Función para obtener ruta de APK personalizada por negocio
 const getBusinessApkPath = (businessSlug) => path.join(__dirname, `../../uploads/kdice-${businessSlug}.apk`);
+
+/**
+ * Obtener versión actual de la app
+ */
+exports.getAppVersion = async (req, res) => {
+  try {
+    // Obtener info del archivo APK si existe
+    let apkInfo = null;
+    if (fs.existsSync(UNIVERSAL_APK_PATH)) {
+      const stats = fs.statSync(UNIVERSAL_APK_PATH);
+      apkInfo = {
+        size: stats.size,
+        lastModified: stats.mtime.toISOString()
+      };
+    }
+
+    res.json({
+      ...APP_VERSION,
+      apkInfo,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
 
 /**
  * Generar/preparar APK universal KDice

@@ -5,6 +5,18 @@ const auth = require('../middleware/auth');
 
 /**
  * @swagger
+ * /apk/version:
+ *   get:
+ *     summary: Obtener versión actual de la app
+ *     tags: [APK]
+ *     responses:
+ *       200:
+ *         description: Información de la versión actual
+ */
+router.get('/version', apkController.getAppVersion);
+
+/**
+ * @swagger
  * /apk/generate-apk:
  *   post:
  *     summary: Generar APK personalizada para Android
