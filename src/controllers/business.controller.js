@@ -1,4 +1,5 @@
 const { Business, Service, Employee, User } = require('../models');
+const { deleteFromCloudinary } = require('../config/cloudinary');
 
 exports.getAll = async (req, res) => {
   try {
@@ -36,14 +37,25 @@ exports.updateMyBusiness = async (req, res) => {
   try {
     const biz = await Business.findOne({ where: { ownerId: req.user.id } });
     if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado' });
+    
     const allowed = [
       'name', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl',
       'whatsapp', 'instagram', 'facebook', 'tiktok', 'twitter', 'website',
       'gallery', 'primaryColor', 'secondaryColor', 'tagline', 'ctaText',
       'businessHours', 'metaDescription',
     ];
+    
     const updates = {};
     allowed.forEach(k => { if (req.body[k] !== undefined) updates[k] = req.body[k]; });
+
+    // ELIMINAR DE CLOUDINARY SI CAMBIAN
+    if (updates.logoUrl && biz.logoUrl && updates.logoUrl !== biz.logoUrl) {
+      await deleteFromCloudinary(biz.logoUrl);
+    }
+    if (updates.bannerUrl && biz.bannerUrl && updates.bannerUrl !== biz.bannerUrl) {
+      await deleteFromCloudinary(biz.bannerUrl);
+    }
+
     await biz.update(updates);
     res.json(biz);
   } catch (e) {
@@ -307,10 +319,21 @@ exports.remove = async (req, res) => {
   try {
     const biz = await Business.findByPk(req.params.id);
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+    // ELIMINAR TODAS LAS IMÁGENES DE CLOUDINARY ANTES DE BORRAR EL NEGOCIO
+    if (biz.logoUrl) await deleteFromCloudinary(biz.logoUrl);
+    if (biz.bannerUrl) await deleteFromCloudinary(biz.bannerUrl);
+    
+    let gallery = [];
+    try { gallery = JSON.parse(biz.gallery || '[]'); } catch { gallery = []; }
+    for (const url of gallery) {
+      await deleteFromCloudinary(url);
+    }
+
     await biz.destroy();
-    res.json({ message: 'Negocio eliminado' });
+    res.json({ message: 'Negocio y recursos eliminados correctamente' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(400).json({ error: e.message });
   }
 };
 
@@ -361,7 +384,13 @@ exports.uploadPaymentScreenshot = async (req, res) => {
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
     if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
     
-    const paymentScreenshot = `/uploads/${req.file.filename}`;
+    // La URL de Cloudinary viene en req.file.path
+    const paymentScreenshot = req.file.path;
+    
+    // ELIMINAR EL COMPROBANTE ANTERIOR DE CLOUDINARY SI EXISTE
+    if (b.paymentScreenshot && b.paymentScreenshot !== paymentScreenshot) {
+      await deleteFromCloudinary(b.paymentScreenshot);
+    }
     
     // Al subir comprobante, el estado pasa a pending y si estaba bloqueado por falta de pago, se mantiene bloqueado
     // hasta que el SuperAdmin lo apruebe, O puedes decidir desbloquearlo automáticamente aquí.
@@ -370,6 +399,7 @@ exports.uploadPaymentScreenshot = async (req, res) => {
     
     await b.update({ 
       paymentScreenshot, 
+      paymentScreenshotViewed: false, // Resetear flag para que el SuperAdmin vea el aviso
       subscriptionStatus: 'pending',
       status: 'active' // Desbloqueo automático al enviar comprobante
     });

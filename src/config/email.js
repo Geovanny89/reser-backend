@@ -25,7 +25,7 @@ const formatColombiaDate = (dateInput) => {
 // Soporta Gmail, SMTP genérico, Ethereal (pruebas)
 const createTransporter = () => {
   const host    = process.env.EMAIL_HOST;
-  const port    = parseInt(process.env.EMAIL_PORT || '587');
+  const port    = parseInt(process.env.EMAIL_PORT || '465');
   const user    = process.env.EMAIL_USER;
   const pass    = process.env.EMAIL_PASS;
   const service = process.env.EMAIL_SERVICE; // 'gmail', 'outlook', etc.
@@ -46,13 +46,24 @@ const createTransporter = () => {
   return nodemailer.createTransport({
     host: host || "smtp.hostinger.com",
     port: port || 465,
-    secure: port === 465,
+    secure: true,
     auth: { user, pass },
     tls: { rejectUnauthorized: false },
   });
 };
 
 const transporter = createTransporter();
+
+// Verificar la conexión al iniciar si no es producción
+if (transporter) {
+  transporter.verify((error, success) => {
+    if (error) {
+      console.warn('[Email] ❌ Error de conexión SMTP (posible bloqueo de red):', error.message);
+    } else {
+      console.log('[Email] ✅ Servidor de correo listo para enviar notificaciones');
+    }
+  });
+}
 
 const FROM_NAME  = process.env.EMAIL_FROM_NAME  || 'KDice POS';
 const FROM_EMAIL = process.env.EMAIL_USER        || 'noreply@kdice.app';
@@ -308,6 +319,43 @@ const templates = {
       <p>Adjuntamos tu comprobante de pago en formato PDF para tu registro.</p>
       <p>Por favor conserva este documento para cualquier consulta o garantía del servicio.</p>
       <span class="badge badge-success">✅ Pagado</span>
+    `, businessName),
+  }),
+
+  // Alerta de cita pendiente no atendida (para admin/empleado)
+  pendingAppointmentAlert: ({ recipientType, employeeName, clientName, serviceName, businessName, startTime, appointmentId }) => ({
+    subject: `⚠️ Cita pendiente sin atender — ${businessName}`,
+    html: baseTemplate(`
+      <h2>⚠️ Cita pendiente de actualizar</h2>
+      <p>Hola <strong>${recipientType === 'admin' ? 'Administrador' : employeeName}</strong>,</p>
+      <p>La siguiente cita ya inició hace más de 15 minutos y aún no se ha actualizado su estado.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Cliente</span>
+          <span class="info-value">${clientName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Empleado asignado</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Fecha y hora programada</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
+        </div>
+      </div>
+      <p style="background:#fef3c7;padding:12px 16px;border-radius:8px;color:#92400e;font-weight:500;">
+        ⚡ Por favor actualiza el estado de esta cita en el sistema:<br>
+        • Si el cliente asistió: marca como "En atención" o "Completada"<br>
+        • Si el cliente no llegó: marca como "Cancelada"
+      </p>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="https://reservas.k-dice.com/admin/appointments" class="btn" style="background: #ef4444; color: #ffffff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Gestionar citas ahora</a>
+      </div>
+      <span class="badge badge-warning">⏰ Acción requerida</span>
     `, businessName),
   }),
 

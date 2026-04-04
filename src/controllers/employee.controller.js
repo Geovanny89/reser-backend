@@ -1,6 +1,7 @@
 const { Employee, User, Appointment, Service, Schedule, Business } = require('../models');
 const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { deleteFromCloudinary } = require('../config/cloudinary');
 
 exports.getByBusiness = async (req, res) => {
   try {
@@ -113,6 +114,12 @@ exports.update = async (req, res) => {
   try {
     const emp = await Employee.findByPk(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    
+    // ELIMINAR DE CLOUDINARY SI CAMBIA LA FOTO
+    if (req.body.photoUrl && emp.photoUrl && req.body.photoUrl !== emp.photoUrl) {
+      await deleteFromCloudinary(emp.photoUrl);
+    }
+
     await emp.update(req.body);
     res.json(emp);
   } catch (e) {

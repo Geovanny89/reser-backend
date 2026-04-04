@@ -15,5 +15,6 @@ module.exports = (sequelize) => {
     status:      { type: DataTypes.ENUM('pending', 'confirmed', 'attention', 'done', 'cancelled'), defaultValue: 'pending' },
     notes:       { type: DataTypes.TEXT },
     reminderSent: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si ya se envió el recordatorio de 1 hora' },
+    pendingAlertSent: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si ya se envió alerta de cita pendiente no atendida' },
   });
 };

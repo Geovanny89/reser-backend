@@ -7,5 +7,6 @@ module.exports = (sequelize) => {
     password: { type: DataTypes.STRING, allowNull: false },
     role:     { type: DataTypes.STRING, defaultValue: 'client' },
     status:   { type: DataTypes.ENUM('active', 'blocked'), defaultValue: 'active' },
+    pushToken: { type: DataTypes.STRING, allowNull: true, comment: 'Token para notificaciones push (Firebase/OneSignal)' },
   });
 };

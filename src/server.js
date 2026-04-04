@@ -3,6 +3,7 @@ const app = require('./app');
 const { sequelize, BusinessType, User, Business } = require('./models');
 const bcrypt = require('bcryptjs');
 const { startReminderService } = require('./services/reminderService');
+const { startPendingAlertService } = require('./services/pendingAlertService');
 const { Op } = require('sequelize');
 const PORT = process.env.PORT || 4000;
 
@@ -116,6 +117,10 @@ async function start() {
       
       // Iniciar monitor de suscripciones
       startSubscriptionCheck();
+      
+      // Iniciar servicio de alertas para citas pendientes no atendidas
+      startPendingAlertService();
+      console.log('🔔 Servicio de alertas de citas pendientes iniciado');
     });
   } catch (err) {
     console.error('❌  Error al iniciar:', err);
