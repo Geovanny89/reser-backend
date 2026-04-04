@@ -73,12 +73,12 @@ exports.sendAppointmentConfirmation = async (req, res) => {
     }
 
     await sendEmail(clientEmail, 'appointmentConfirmation', {
-      clientName:   appt.clientName,
-      businessName: appt.Business?.name,
-      serviceName:  appt.Service?.name,
-      employeeName: appt.Employee?.User?.name,
-      startTime:    appt.startTime,
-      price:        appt.Service?.price,
+      clientName:   String(appt.clientName || ''),
+      businessName: String(appt.Business?.name || ''),
+      serviceName:  String(appt.Service?.name || ''),
+      employeeName: String(appt.Employee?.User?.name || ''),
+      startTime:    String(appt.startTime || ''),
+      price:        String(appt.Service?.price || ''),
     });
 
     res.json({ success: true, message: `Confirmación enviada a ${clientEmail}` });
@@ -103,11 +103,11 @@ exports.notifyNewAppointment = async (appointmentId) => {
     if (!owner?.email) return;
 
     await sendEmail(owner.email, 'newAppointmentAdmin', {
-      businessName: appt.Business?.name,
-      clientName:   appt.clientName,
-      serviceName:  appt.Service?.name,
-      employeeName: appt.Employee?.User?.name,
-      startTime:    appt.startTime,
+      businessName: String(appt.Business?.name || ''),
+      clientName:   String(appt.clientName || ''),
+      serviceName:  String(appt.Service?.name || ''),
+      employeeName: String(appt.Employee?.User?.name || ''),
+      startTime:    String(appt.startTime || ''),
     });
   } catch (e) {
     console.error('[Notification] Error notificando nueva cita:', e.message);
@@ -133,11 +133,11 @@ exports.sendEmployeeWelcome = async (req, res) => {
       : null;
 
     await sendEmail(emp.User.email, 'employeeWelcome', {
-      employeeName: emp.User.name,
-      businessName: emp.Business?.name,
-      email:        emp.User.email,
+      employeeName: String(emp.User.name || ''),
+      businessName: String(emp.Business?.name || ''),
+      email:        String(emp.User.email || ''),
       tempPassword: '(La contraseña fue enviada por el administrador)',
-      loginUrl,
+      loginUrl:     loginUrl || '',
     });
 
     res.json({ success: true, message: `Bienvenida enviada a ${emp.User.email}` });
