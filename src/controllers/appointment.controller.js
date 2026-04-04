@@ -241,7 +241,7 @@ const sendPaymentReceipt = async (appointment) => {
   const pdfBuffer = await generatePaymentReceipt({
     businessId: appointment.businessId,
     businessName: appointment.Business?.name,
-    businessLogo: appointment.Business?.logo,
+    businessLogoUrl: appointment.Business?.logoUrl, // CORREGIDO: Usar logoUrl
     businessAddress: appointment.Business?.address,
     businessPhone: appointment.Business?.phone,
     businessNit: appointment.Business?.nit,
