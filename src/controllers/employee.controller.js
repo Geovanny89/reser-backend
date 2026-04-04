@@ -124,6 +124,14 @@ exports.update = async (req, res) => {
     if (req.body.email || req.body.name) {
       const user = await User.findByPk(emp.userId);
       if (user) {
+        // Verificar si el email ya existe (y no es del mismo usuario)
+        if (req.body.email && req.body.email !== user.email) {
+          const existingUser = await User.findOne({ where: { email: req.body.email } });
+          if (existingUser) {
+            return res.status(400).json({ error: 'Este correo electrónico ya está registrado por otro usuario' });
+          }
+        }
+        
         const userUpdates = {};
         if (req.body.email) userUpdates.email = req.body.email;
         if (req.body.name) userUpdates.name = req.body.name;
