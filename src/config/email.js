@@ -359,6 +359,103 @@ const templates = {
     `, businessName),
   }),
 
+  // Notificación de nuevo pago recibido (para admin del sistema)
+  newPaymentNotification: ({ businessName, ownerName, ownerEmail, amount, paymentMethod, paymentReference, nequiNumber, llaveBancaria, bankName, accountNumber, paymentDate }) => {
+    const methodLabels = { nequi: 'Nequi', llave: 'Llave Bancaria', transferencia: 'Transferencia Bancaria', otro: 'Otro' };
+    return {
+      subject: `💰 Nuevo pago recibido — ${businessName}`,
+      html: baseTemplate(`
+        <h2>💰 Nuevo pago recibido</h2>
+        <p>Un negocio ha realizado un pago y está pendiente de verificación.</p>
+        <div class="info-box">
+          <div class="info-row">
+            <span class="info-label">Negocio</span>
+            <span class="info-value">${businessName}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Propietario</span>
+            <span class="info-value">${ownerName} (${ownerEmail})</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Monto</span>
+            <span class="info-value" style="color:#10b981;font-size:18px">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(amount)}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Método de pago</span>
+            <span class="info-value">${methodLabels[paymentMethod] || paymentMethod}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Referencia</span>
+            <span class="info-value" style="font-family:monospace">${paymentReference || 'N/A'}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Fecha de pago</span>
+            <span class="info-value">${formatColombiaDate(paymentDate)}</span>
+          </div>
+        </div>
+        
+        <div class="info-box" style="background:#f0fdf4;border-color:#86efac;">
+          <h3 style="font-size:16px;margin-bottom:12px;color:#166534">📱 Datos para verificar en tu app bancaria:</h3>
+          ${nequiNumber ? `
+          <div class="info-row">
+            <span class="info-label">Número Nequi</span>
+            <span class="info-value" style="font-family:monospace;font-size:16px">${nequiNumber}</span>
+          </div>` : ''}
+          ${llaveBancaria ? `
+          <div class="info-row">
+            <span class="info-label">Llave Bancaria</span>
+            <span class="info-value" style="font-family:monospace">${llaveBancaria}</span>
+          </div>` : ''}
+          ${bankName ? `
+          <div class="info-row">
+            <span class="info-label">Banco</span>
+            <span class="info-value">${bankName}</span>
+          </div>` : ''}
+          ${accountNumber ? `
+          <div class="info-row">
+            <span class="info-label">Número de cuenta</span>
+            <span class="info-value" style="font-family:monospace">${accountNumber}</span>
+          </div>` : ''}
+        </div>
+
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="https://reservas.k-dice.com/superadmin/businesses" class="btn" style="background: #4f46e5; color: #ffffff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Verificar en Dashboard</a>
+        </div>
+        <p style="font-size:12px;color:#64748b;text-align:center">Revisa tu app de Nequi/Banco para confirmar que el pago fue recibido, luego marca el negocio como "Pagado" en el sistema.</p>
+        <span class="badge badge-warning">⏰ Verificación pendiente</span>
+      `, 'KDice POS'),
+    };
+  },
+
+  // Notificación de pago confirmado (para el negocio)
+  paymentConfirmed: ({ ownerName, businessName, startDate, endDate, amount }) => ({
+    subject: `✅ Pago confirmado — Tu suscripción está activa`,
+    html: baseTemplate(`
+      <h2>¡Tu pago ha sido confirmado!</h2>
+      <p>Hola <strong>${ownerName}</strong>,</p>
+      <p>Tu pago de suscripción ha sido verificado y tu negocio <strong>${businessName}</strong> está ahora activo.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Monto pagado</span>
+          <span class="info-value" style="color:#10b981;font-size:18px">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(amount)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Suscripción desde</span>
+          <span class="info-value">${startDate}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Próximo pago</span>
+          <span class="info-value">${endDate}</span>
+        </div>
+      </div>
+      <p>Tu negocio puede seguir operando normalmente. Recuerda realizar el próximo pago antes de la fecha de vencimiento para evitar suspensiones.</p>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="https://reservas.k-dice.com/admin" class="btn" style="background: #4f46e5; color: #ffffff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Ir al Dashboard</a>
+      </div>
+      <span class="badge badge-success">✅ Suscripción Activa</span>
+    `, 'KDice POS'),
+  }),
+
 };
 
 // ============================================================

@@ -1,5 +1,6 @@
 const { Business, Service, Employee, User } = require('../models');
 const { deleteFromCloudinary } = require('../config/cloudinary');
+const { sendEmail } = require('../config/email');
 
 exports.getAll = async (req, res) => {
   try {
@@ -416,6 +417,141 @@ exports.markScreenshotViewed = async (req, res) => {
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
     await b.update({ paymentScreenshotViewed: true });
     res.json({ message: 'Comprobante marcado como visto', business: b });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// NUEVO: Aprobar pago automáticamente (superadmin)
+exports.approvePayment = async (req, res) => {
+  try {
+    const b = await Business.findByPk(req.params.id, {
+      include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'email'] }]
+    });
+    if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+    // Calcular fechas: hoy hasta dentro de 30 días
+    const today = new Date();
+    const endDate = new Date(today);
+    endDate.setDate(endDate.getDate() + 30);
+
+    await b.update({
+      subscriptionStatus: 'paid',
+      subscriptionStartDate: today,
+      subscriptionEndDate: endDate,
+      lastPaymentDate: today,
+      paymentScreenshotViewed: true,
+      status: 'active'
+    });
+
+    // Enviar email de confirmación al negocio
+    try {
+      await sendEmail(
+        b.Owner?.email,
+        'paymentConfirmed',
+        {
+          businessName: b.name,
+          ownerName: b.Owner?.name || 'Estimado cliente',
+          startDate: today.toLocaleDateString('es-CO'),
+          endDate: endDate.toLocaleDateString('es-CO'),
+          amount: b.paymentAmount || 60000
+        }
+      );
+    } catch (emailErr) {
+      console.log('[Payment] Email no enviado:', emailErr.message);
+    }
+
+    res.json({ 
+      message: 'Pago aprobado correctamente', 
+      business: b,
+      subscriptionStartDate: today,
+      subscriptionEndDate: endDate
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// NUEVO: Enviar pago con detalles y notificar al admin
+exports.submitPayment = async (req, res) => {
+  try {
+    const b = await Business.findOne({ 
+      where: { ownerId: req.user.id },
+      include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'email'] }]
+    });
+    if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    const { 
+      paymentAmount, 
+      paymentMethod, 
+      paymentReference,
+      adminNequiNumber,
+      adminLlaveBancaria,
+      adminBankName,
+      adminAccountNumber
+    } = req.body;
+
+    // Validaciones
+    if (!paymentAmount || !paymentMethod) {
+      return res.status(400).json({ error: 'Monto y método de pago son requeridos' });
+    }
+
+    // Si hay archivo (screenshot), procesarlo
+    let paymentScreenshot = null;
+    if (req.file) {
+      paymentScreenshot = req.file.path;
+      // Eliminar comprobante anterior si existe
+      if (b.paymentScreenshot && b.paymentScreenshot !== paymentScreenshot) {
+        await deleteFromCloudinary(b.paymentScreenshot);
+      }
+    }
+
+    // Actualizar negocio con datos de pago
+    await b.update({
+      paymentAmount,
+      paymentMethod,
+      paymentReference: paymentReference || null,
+      paymentScreenshot,
+      paymentScreenshotViewed: false,
+      lastPaymentDate: new Date(),
+      subscriptionStatus: 'pending',
+      adminNequiNumber: adminNequiNumber || b.adminNequiNumber,
+      adminLlaveBancaria: adminLlaveBancaria || b.adminLlaveBancaria,
+      adminBankName: adminBankName || b.adminBankName,
+      adminAccountNumber: adminAccountNumber || b.adminAccountNumber,
+      status: 'active' // Mantener activo mientras se verifica
+    });
+
+    // Enviar notificación al admin del sistema
+    const adminEmail = process.env.ADMIN_EMAIL || 'notificaciones@k-dice.com';
+    try {
+      await sendEmail(
+        adminEmail,
+        'newPaymentNotification',
+        {
+          businessName: b.name,
+          ownerName: b.Owner?.name || 'Sin nombre',
+          ownerEmail: b.Owner?.email || 'Sin email',
+          amount: paymentAmount,
+          paymentMethod,
+          paymentReference: paymentReference || 'N/A',
+          nequiNumber: adminNequiNumber,
+          llaveBancaria: adminLlaveBancaria,
+          bankName: adminBankName,
+          accountNumber: adminAccountNumber,
+          paymentDate: new Date()
+        }
+      );
+      console.log(`[Payment] ✅ Notificación enviada a admin para pago de ${b.name}`);
+    } catch (emailError) {
+      console.error('[Payment] ❌ Error enviando notificación:', emailError.message);
+      // No fallar si el email falla
+    }
+
+    res.json({ 
+      message: 'Pago registrado correctamente. Está pendiente de verificación.', 
+      business: b 
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

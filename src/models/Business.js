@@ -19,6 +19,15 @@ module.exports = (sequelize) => {
     lastPaymentDate: { type: DataTypes.DATE },
     paymentScreenshot: { type: DataTypes.STRING },
     paymentScreenshotViewed: { type: DataTypes.BOOLEAN, defaultValue: false },
+    paymentAmount: { type: DataTypes.DECIMAL(10, 2) },
+    paymentMethod: { type: DataTypes.ENUM('nequi', 'llave', 'transferencia', 'otro') },
+    paymentReference: { type: DataTypes.STRING },
+
+    // === CAMPOS DE DATOS DE PAGO DEL NEGOCIO (para notificar al admin) ===
+    adminNequiNumber: { type: DataTypes.STRING },
+    adminLlaveBancaria: { type: DataTypes.STRING },
+    adminBankName: { type: DataTypes.STRING },
+    adminAccountNumber: { type: DataTypes.STRING },
 
     // === CAMPOS DE PERSONALIZACIÓN DE PÁGINA PÚBLICA ===
     whatsapp:    { type: DataTypes.STRING },

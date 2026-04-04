@@ -275,6 +275,9 @@ router.patch('/:id/subscription-dates', role('superadmin'), ctrl.updateSubscript
 // Marcar comprobante como visto
 router.patch('/:id/screenshot-viewed', role('superadmin'), ctrl.markScreenshotViewed);
 
+// Aprobar pago automáticamente (superadmin)
+router.post('/:id/approve-payment', role('superadmin'), ctrl.approvePayment);
+
 /**
  * @swagger
  * /businesses/my/payment-screenshot:
@@ -297,5 +300,43 @@ router.patch('/:id/screenshot-viewed', role('superadmin'), ctrl.markScreenshotVi
  *         description: Comprobante subido correctamente
  */
 router.post('/my/payment-screenshot', role('superadmin', 'admin'), upload.single('screenshot'), ctrl.uploadPaymentScreenshot);
+
+/**
+ * @swagger
+ * /businesses/my/submit-payment:
+ *   post:
+ *     summary: Enviar pago con detalles y notificar al admin
+ *     tags: [Businesses]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               screenshot:
+ *                 type: string
+ *                 format: binary
+ *               paymentAmount:
+ *                 type: number
+ *               paymentMethod:
+ *                 type: string
+ *                 enum: [nequi, llave, transferencia, otro]
+ *               paymentReference:
+ *                 type: string
+ *               adminNequiNumber:
+ *                 type: string
+ *               adminLlaveBancaria:
+ *                 type: string
+ *               adminBankName:
+ *                 type: string
+ *               adminAccountNumber:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Pago registrado y notificación enviada
+ */
+router.post('/my/submit-payment', role('superadmin', 'admin'), upload.single('screenshot'), ctrl.submitPayment);
 
 module.exports = router;

@@ -125,7 +125,7 @@ exports.login = async (req, res) => {
 
     // Verificar si el usuario está bloqueado directamente
     if (user.status === 'blocked') {
-      return res.status(403).json({ error: 'Tu cuenta está bloqueada, por favor paga la suscripción para seguir disfrutando de tus servicios' });
+      return res.status(403).json({ error: 'Usuario bloqueado, por favor consulte al administrador' });
     }
 
     // Si es admin o empleado, verificar si el negocio está bloqueado
@@ -287,10 +287,17 @@ exports.changePassword = async (req, res) => {
     if (!isMatch) return res.status(400).json({ error: 'La contraseña actual es incorrecta' });
 
     const hash = await bcrypt.hash(newPassword, 10);
-    await user.update({ password: hash });
+    
+    // Update using save() to ensure it persists
+    user.password = hash;
+    await user.save();
+    
+    console.log(`[Auth] Contraseña cambiada para usuario ${user.email}`);
+    console.log(`[Auth] Nuevo hash: ${hash.substring(0, 20)}...`);
 
     res.json({ message: 'Contraseña actualizada correctamente' });
   } catch (e) {
+    console.error('[Auth] Error cambiando contraseña:', e);
     res.status(500).json({ error: e.message });
   }
 };
