@@ -1,4 +1,10 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+
+// Forzar IPv4 en entornos donde IPv6 falla (común en VPS)
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 // Helper para formatear fecha en zona horaria de Colombia (UTC-5)
 const formatColombiaDate = (dateInput) => {
@@ -39,16 +45,27 @@ const createTransporter = () => {
     return nodemailer.createTransport({ 
       service, 
       auth: { user, pass },
-      tls: { rejectUnauthorized: false }
+      tls: { rejectUnauthorized: false },
+      connectionTimeout: 10000, // 10s
+      greetingTimeout: 10000,
+      socketTimeout: 10000
     });
   }
 
+  // Hostinger y otros SMTP genéricos
   return nodemailer.createTransport({
     host: host || "smtp.hostinger.com",
     port: port || 465,
-    secure: true,
+    secure: port === 465, // True si es 465 (SSL), false para 587 (TLS/STARTTLS)
     auth: { user, pass },
-    tls: { rejectUnauthorized: false },
+    tls: { 
+      rejectUnauthorized: false,
+      // Forzar IPv4 en el socket si el dns global no fuera suficiente
+      minVersion: 'TLSv1.2'
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 15000
   });
 };
 
@@ -494,6 +511,12 @@ const sendEmail = async (to, templateName, data, attachments = []) => {
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error(`[Email] ❌ Error enviando a ${to}:`, err.message);
+    if (err.code === 'ETIMEDOUT') {
+      console.error('[Email] 💡 Sugerencia: El puerto SMTP (465) podría estar bloqueado en el VPS. Prueba cambiando a EMAIL_PORT=587 en el .env');
+    }
+    if (err.code === 'EAUTH') {
+      console.error('[Email] 💡 Sugerencia: Las credenciales de email son incorrectas o están bloqueadas.');
+    }
     throw err;
   }
 };
