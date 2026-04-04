@@ -86,23 +86,23 @@ const generatePaymentReceipt = async (appointmentData) => {
         try {
           const logoX = margin;
           const logoY = 25;
-          const logoSize = 55;
+          const logoSize = 50;
           const radius = 8;
           
-          // Fondo redondeado sutil para el logo
-          doc.fillColor('#f5f5f5')
-             .roundedRect(logoX, logoY, logoSize, logoSize, radius, radius)
+          // Fondo blanco limpio para el logo (mejor que gris)
+          doc.fillColor('#ffffff')
+             .roundedRect(logoX - 2, logoY - 2, logoSize + 4, logoSize + 4, radius, radius)
              .fill()
-             .strokeColor('#e0e0e0')
-             .lineWidth(0.5)
-             .roundedRect(logoX, logoY, logoSize, logoSize, radius, radius)
+             .strokeColor('#e5e5e5')
+             .lineWidth(1)
+             .roundedRect(logoX - 2, logoY - 2, logoSize + 4, logoSize + 4, radius, radius)
              .stroke();
           
-          // Logo centrado dentro del cuadrado
-          doc.image(logoBuffer, logoX + 3, logoY + 3, { 
-            width: logoSize - 6, 
-            height: logoSize - 6,
-            fit: [logoSize - 6, logoSize - 6],
+          // Logo centrado sin recortar - mantiene proporción original
+          doc.image(logoBuffer, logoX, logoY, { 
+            width: logoSize, 
+            height: logoSize,
+            fit: [logoSize, logoSize],
             align: 'center',
             valign: 'center'
           });
@@ -113,9 +113,9 @@ const generatePaymentReceipt = async (appointmentData) => {
       }
     }
 
-    // Nombre del negocio - alineado a la derecha si hay logo, o a la izquierda si no
-    const titleX = hasLogo ? margin + 75 : margin;
-    const titleY = hasLogo ? 35 : 40;
+    // Nombre del negocio - alineado a la derecha del logo
+    const titleX = hasLogo ? margin + 70 : margin;
+    const titleY = hasLogo ? 30 : 40;
     
     doc.fillColor(colors.primary)
        .font('Helvetica-Bold')
@@ -128,20 +128,20 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(12)
        .text('Comprobante de Pago', titleX, titleY + 25);
 
-    // Fecha de emisión (alineada derecha)
+    // Fecha de emisión (debajo del título, alineada derecha)
     doc.fillColor(colors.secondary)
        .fontSize(10)
-       .text(`Emitido: ${formatColombiaDate(new Date())}`, pageWidth - margin, 35, { align: 'right' });
+       .text(`Emitido: ${formatColombiaDate(new Date())}`, pageWidth - margin, titleY + 25, { align: 'right' });
 
-    // Línea separadora elegante
+    // Línea separadora elegante - más abajo para dar espacio
     doc.strokeColor(colors.light)
        .lineWidth(1)
-       .moveTo(margin, 90)
-       .lineTo(pageWidth - margin, 90)
+       .moveTo(margin, 100)
+       .lineTo(pageWidth - margin, 100)
        .stroke();
 
     // === SECCIÓN: INFORMACIÓN DEL CLIENTE ===
-    let y = 110;
+    let y = 120;
     doc.fillColor(colors.primary)
        .font('Helvetica-Bold')
        .fontSize(14)
@@ -207,20 +207,33 @@ const generatePaymentReceipt = async (appointmentData) => {
        .lineTo(tableRight, tableBottom)
        .stroke();
 
-    // === TOTAL ===
-    y = tableBottom + 20;
-    doc.fillColor(colors.primary)
-       .font('Helvetica-Bold')
-       .fontSize(12)
-       .text('TOTAL PAGADO:', tableLeft + 350, y);
+    // === TOTAL PAGADO - Sección destacada ===
+    y = tableBottom + 25;
+    
+    // Caja de total con fondo sutil
+    const totalBoxWidth = 180;
+    const totalBoxX = pageWidth - margin - totalBoxWidth;
+    doc.fillColor('#f8f9fa')
+       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+       .fill()
+       .strokeColor(colors.light)
+       .lineWidth(0.5)
+       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+       .stroke();
+    
+    doc.fillColor(colors.secondary)
+       .font('Helvetica')
+       .fontSize(10)
+       .text('TOTAL PAGADO:', totalBoxX + 10, y + 5);
     
     doc.fillColor(colors.accent)
-       .fontSize(14)
+       .font('Helvetica-Bold')
+       .fontSize(16)
        .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
-             tableLeft + 420, y - 2);
+             totalBoxX + 10, y + 18);
 
     // === MÉTODO DE PAGO ===
-    y += 35;
+    y += 50;
     doc.fillColor(colors.secondary)
        .font('Helvetica')
        .fontSize(10)
