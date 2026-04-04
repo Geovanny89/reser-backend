@@ -450,11 +450,11 @@ exports.approvePayment = async (req, res) => {
         b.Owner?.email,
         'paymentConfirmed',
         {
-          businessName: b.name,
-          ownerName: b.Owner?.name || 'Estimado cliente',
-          startDate: today.toLocaleDateString('es-CO'),
-          endDate: endDate.toLocaleDateString('es-CO'),
-          amount: b.paymentAmount || 60000
+          businessName: String(b.name || ''),
+          ownerName: String(b.Owner?.name || 'Estimado cliente'),
+          startDate: String(today.toLocaleDateString('es-CO')),
+          endDate: String(endDate.toLocaleDateString('es-CO')),
+          amount: String(b.paymentAmount || 60000),
         }
       );
     } catch (emailErr) {
@@ -529,17 +529,17 @@ exports.submitPayment = async (req, res) => {
         adminEmail,
         'newPaymentNotification',
         {
-          businessName: b.name,
-          ownerName: b.Owner?.name || 'Sin nombre',
-          ownerEmail: b.Owner?.email || 'Sin email',
-          amount: paymentAmount,
-          paymentMethod,
-          paymentReference: paymentReference || 'N/A',
-          nequiNumber: adminNequiNumber,
-          llaveBancaria: adminLlaveBancaria,
-          bankName: adminBankName,
-          accountNumber: adminAccountNumber,
-          paymentDate: new Date()
+          businessName: String(b.name || ''),
+          ownerName: String(b.Owner?.name || 'Sin nombre'),
+          ownerEmail: String(b.Owner?.email || 'Sin email'),
+          amount: String(paymentAmount || ''),
+          paymentMethod: String(paymentMethod || ''),
+          paymentReference: String(paymentReference || 'N/A'),
+          nequiNumber: String(adminNequiNumber || ''),
+          llaveBancaria: String(adminLlaveBancaria || ''),
+          bankName: String(adminBankName || ''),
+          accountNumber: String(adminAccountNumber || ''),
+          paymentDate: String(new Date()),
         }
       );
       console.log(`[Payment] ✅ Notificación enviada a admin para pago de ${b.name}`);

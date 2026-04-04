@@ -481,6 +481,13 @@ const sendEmail = async (to, templateName, data, attachments = []) => {
       attachments,
     };
 
+    if (attachments && attachments.length > 0) {
+      console.log(`[Email] Encontrados ${attachments.length} adjuntos`);
+      attachments.forEach((att, idx) => {
+        console.log(`[Email] Adjunto ${idx}: filename=${att.filename}, content-type=${typeof att.content}`);
+      });
+    }
+
     const info = await transporter.sendMail(mailOptions);
 
     console.log(`[Email] ✅ Enviado a ${to} — ${subject} — ID: ${info.messageId}`);

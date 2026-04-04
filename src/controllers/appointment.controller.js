@@ -150,11 +150,11 @@ exports.create = async (req, res) => {
         const owner = await User.findByPk(fullAppt.Business?.ownerId);
         if (owner?.email) {
           await sendEmail(owner.email, 'newAppointmentAdmin', {
-            businessName: fullAppt.Business?.name,
-            clientName:   fullAppt.clientName,
-            serviceName:  fullAppt.Service?.name,
-            employeeName: fullAppt.Employee?.User?.name,
-            startTime:    fullAppt.startTime,
+            businessName: String(fullAppt.Business?.name || ''),
+            clientName:   String(fullAppt.clientName || ''),
+            serviceName:  String(fullAppt.Service?.name || ''),
+            employeeName: String(fullAppt.Employee?.User?.name || ''),
+            startTime:    String(fullAppt.startTime || ''),
           }).catch(e => console.error('[Email] Admin notify error:', e.message));
         }
         // Determinar el email del cliente: usuario registrado o email proporcionado en la reserva
@@ -169,12 +169,12 @@ exports.create = async (req, res) => {
         }
         if (clientEmailTo) {
           await sendEmail(clientEmailTo, 'appointmentConfirmation', {
-            clientName:   fullAppt.clientName,
-            businessName: fullAppt.Business?.name,
-            serviceName:  fullAppt.Service?.name,
-            employeeName: fullAppt.Employee?.User?.name,
-            startTime:    fullAppt.startTime,
-            price:        fullAppt.Service?.price,
+            clientName:   String(fullAppt.clientName || ''),
+            businessName: String(fullAppt.Business?.name || ''),
+            serviceName:  String(fullAppt.Service?.name || ''),
+            employeeName: String(fullAppt.Employee?.User?.name || ''),
+            startTime:    String(fullAppt.startTime || ''),
+            price:        String(fullAppt.Service?.price || ''),
           }).catch(e => console.error('[Email] Client notify error:', e.message));
         }
       } catch (e) {

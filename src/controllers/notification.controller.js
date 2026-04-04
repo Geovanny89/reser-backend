@@ -25,9 +25,21 @@ exports.sendPaymentSummary = async (req, res) => {
     // Preparar adjuntos si se envió PDF
     const attachments = [];
     if (pdfBase64) {
+      // Si por alguna razón llega como objeto (ej. { data: '...' }), extraer el string
+      let content = pdfBase64;
+      if (typeof pdfBase64 === 'object' && pdfBase64 !== null) {
+        console.warn('[Notification] Recibido pdfBase64 como objeto:', JSON.stringify(pdfBase64).substring(0, 100));
+        content = pdfBase64.pdfBase64 || pdfBase64.data || pdfBase64.content || String(pdfBase64);
+      }
+      
+      // Limpiar prefijo data:application/pdf;base64, si existe
+      if (typeof content === 'string' && content.includes(',')) {
+        content = content.split(',')[1];
+      }
+      
       attachments.push({
         filename: `reporte-pagos-${month}.pdf`,
-        content: pdfBase64,
+        content: content,
         encoding: 'base64'
       });
     }

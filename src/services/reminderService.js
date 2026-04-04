@@ -49,11 +49,11 @@ async function sendReminders() {
 
         if (clientEmailTo) {
           await sendEmail(clientEmailTo, 'appointmentReminder', {
-            clientName:   appt.clientName,
-            businessName: appt.Business?.name,
-            serviceName:  appt.Service?.name,
-            employeeName: appt.Employee?.User?.name,
-            startTime:    appt.startTime,
+            clientName:   String(appt.clientName || ''),
+            businessName: String(appt.Business?.name || ''),
+            serviceName:  String(appt.Service?.name || ''),
+            employeeName: String(appt.Employee?.User?.name || ''),
+            startTime:    String(appt.startTime || ''),
           });
           console.log(`[Reminder] ✅ Recordatorio enviado a ${clientEmailTo} para cita ${appt.id}`);
         }

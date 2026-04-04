@@ -56,12 +56,12 @@ async function sendPendingAlerts() {
         if (employeeEmail) {
           await sendEmail(employeeEmail, 'pendingAppointmentAlert', {
             recipientType: 'employee',
-            employeeName,
-            clientName,
-            serviceName,
-            businessName,
-            startTime: appt.startTime,
-            appointmentId: appt.id,
+            employeeName: String(employeeName),
+            clientName: String(clientName),
+            serviceName: String(serviceName),
+            businessName: String(businessName),
+            startTime: String(appt.startTime),
+            appointmentId: String(appt.id),
           });
           console.log(`[PendingAlert] 📧 Email enviado a empleado ${employeeEmail} para cita ${appt.id}`);
         }
@@ -70,12 +70,12 @@ async function sendPendingAlerts() {
         if (adminEmail && adminEmail !== employeeEmail) {
           await sendEmail(adminEmail, 'pendingAppointmentAlert', {
             recipientType: 'admin',
-            employeeName,
-            clientName,
-            serviceName,
-            businessName,
-            startTime: appt.startTime,
-            appointmentId: appt.id,
+            employeeName: String(employeeName),
+            clientName: String(clientName),
+            serviceName: String(serviceName),
+            businessName: String(businessName),
+            startTime: String(appt.startTime),
+            appointmentId: String(appt.id),
           });
           console.log(`[PendingAlert] 📧 Email enviado a admin ${adminEmail} para cita ${appt.id}`);
         }
