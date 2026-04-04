@@ -120,8 +120,30 @@ exports.update = async (req, res) => {
       await deleteFromCloudinary(emp.photoUrl);
     }
 
-    await emp.update(req.body);
-    res.json(emp);
+    // ACTUALIZAR EMAIL Y NOMBRE DEL USUARIO ASOCIADO SI SE PROPORCIONAN
+    if (req.body.email || req.body.name) {
+      const user = await User.findByPk(emp.userId);
+      if (user) {
+        const userUpdates = {};
+        if (req.body.email) userUpdates.email = req.body.email;
+        if (req.body.name) userUpdates.name = req.body.name;
+        await user.update(userUpdates);
+      }
+    }
+
+    // Filtrar solo los campos de Employee (quitar email y name que son de User)
+    const employeeUpdates = { ...req.body };
+    delete employeeUpdates.email;
+    delete employeeUpdates.name;
+
+    await emp.update(employeeUpdates);
+    
+    // Devolver empleado actualizado con datos del usuario
+    const updatedEmp = await Employee.findByPk(req.params.id, {
+      include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+    });
+    
+    res.json(updatedEmp);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

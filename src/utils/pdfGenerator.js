@@ -55,123 +55,224 @@ const formatColombiaDate = (dateInput, style = 'full') => {
  */
 const generatePaymentReceipt = async (appointmentData) => {
   return new Promise(async (resolve) => {
-    // Definición de colores modernos (Tailwind CSS Palette)
+    const doc = new PDFDocument({ size: 'A4', margin: 50 });
+    const buffers = [];
+
+    doc.on('data', buffers.push.bind(buffers));
+    doc.on('end', () => {
+      const pdfData = Buffer.concat(buffers);
+      resolve(pdfData);
+    });
+
+    // Colores profesionales y sobrios
     const colors = {
-      primary: '#111827',    // Slate 900
-      secondary: '#4B5563',  // Slate 600
-      accent: '#059669',     // Emerald 600 (Éxito)
-      border: '#E5E7EB',     // Gray 200
-      bgLight: '#F9FAFB',    // Gray 50
-      white: '#FFFFFF'
+      primary: '#374151',     // Gris oscuro
+      secondary: '#6b7280',   // Gris medio
+      light: '#f3f4f6',      // Gris claro
+      accent: '#10b981',      // Verde éxito
+      white: '#ffffff',
+      black: '#1f2937',
     };
 
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
-    const buffers = [];
-    doc.on('data', buffers.push.bind(buffers));
-    doc.on('end', () => resolve(Buffer.concat(buffers)));
-
     const pageWidth = doc.page.width;
-    const margin = 40;
-    const contentWidth = pageWidth - (margin * 2);
+    const margin = 50;
 
-    // === 1. ENCABEZADO Y LOGO ===
-    let currentY = 40;
-    
+    // === HEADER LIMPIO ===
+    // Intentar cargar logo desde Cloudinary
+    let hasLogo = false;
     if (appointmentData.businessLogoUrl) {
       const logoBuffer = await downloadImage(appointmentData.businessLogoUrl);
       if (logoBuffer) {
-        doc.image(logoBuffer, margin, currentY, { height: 45 });
+        try {
+          const logoX = margin;
+          const logoY = 25;
+          const logoSize = 50;
+          const radius = 8;
+          
+          // Fondo blanco limpio para el logo (mejor que gris)
+          doc.fillColor('#ffffff')
+             .roundedRect(logoX - 2, logoY - 2, logoSize + 4, logoSize + 4, radius, radius)
+             .fill()
+             .strokeColor('#e5e5e5')
+             .lineWidth(1)
+             .roundedRect(logoX - 2, logoY - 2, logoSize + 4, logoSize + 4, radius, radius)
+             .stroke();
+          
+          // Logo centrado sin recortar - mantiene proporción original
+          doc.image(logoBuffer, logoX, logoY, { 
+            width: logoSize, 
+            height: logoSize,
+            fit: [logoSize, logoSize],
+            align: 'center',
+            valign: 'center'
+          });
+          hasLogo = true;
+        } catch (e) {
+          console.log('Error agregando logo al PDF:', e.message);
+        }
       }
     }
 
-    // Título principal alineado a la derecha
+    // Nombre del negocio - alineado a la derecha del logo
+    const titleX = hasLogo ? margin + 70 : margin;
+    const titleY = hasLogo ? 30 : 40;
+    
     doc.fillColor(colors.primary)
        .font('Helvetica-Bold')
-       .fontSize(20)
-       .text('COMPROBANTE', margin, currentY, { align: 'right' });
+       .fontSize(24)
+       .text(appointmentData.businessName || 'Mi Negocio', titleX, titleY);
+
+    // Título del documento
+    doc.fillColor(colors.secondary)
+       .font('Helvetica')
+       .fontSize(12)
+       .text('Comprobante de Pago', titleX, titleY + 25);
+
+    // Fecha de emisión (debajo del título, alineada derecha)
+    doc.fillColor(colors.secondary)
+       .fontSize(10)
+       .text(`Emitido: ${formatColombiaDate(new Date())}`, pageWidth - margin, titleY + 25, { align: 'right' });
+
+    // Línea separadora elegante - más abajo para dar espacio
+    doc.strokeColor(colors.light)
+       .lineWidth(1)
+       .moveTo(margin, 100)
+       .lineTo(pageWidth - margin, 100)
+       .stroke();
+
+    // === SECCIÓN: INFORMACIÓN DEL CLIENTE ===
+    let y = 120;
+    doc.fillColor(colors.primary)
+       .font('Helvetica-Bold')
+       .fontSize(14)
+       .text('Información del Cliente', margin, y);
+
+    y += 20;
+    doc.fillColor(colors.black)
+       .font('Helvetica')
+       .fontSize(11);
+    
+    doc.text(`Cliente: ${appointmentData.clientName || 'No especificado'}`, margin, y);
+    y += 18;
+    doc.text(`Email: ${appointmentData.clientEmail || 'No especificado'}`, margin, y);
+    y += 18;
+    doc.text(`Teléfono: ${appointmentData.clientPhone || 'No especificado'}`, margin, y);
+
+    // === SECCIÓN: DETALLES DEL SERVICIO ===
+    y += 30;
+    doc.fillColor(colors.primary)
+       .font('Helvetica-Bold')
+       .fontSize(14)
+       .text('Detalles del Servicio', margin, y);
+
+    // Tabla de servicios con diseño limpio
+    const tableTop = y + 25;
+    const tableLeft = margin;
+    const tableRight = pageWidth - margin;
+    const tableWidth = tableRight - tableLeft;
+
+    // Header de tabla
+    doc.fillColor(colors.light)
+       .rect(tableLeft, tableTop, tableWidth, 28)
+       .fill();
+
+    doc.fillColor(colors.primary)
+       .font('Helvetica-Bold')
+       .fontSize(10)
+       .text('SERVICIO', tableLeft + 12, tableTop + 9)
+       .text('FECHA/HORA', tableLeft + 200, tableTop + 9)
+       .text('PROFESIONAL', tableLeft + 320, tableTop + 9)
+       .text('VALOR', tableLeft + 450, tableTop + 9);
+
+    // Fila de datos
+    const rowY = tableTop + 28;
+    doc.fillColor(colors.white)
+       .rect(tableLeft, rowY, tableWidth, 30)
+       .fill();
+
+    doc.fillColor(colors.black)
+       .font('Helvetica')
+       .fontSize(10)
+       .text(appointmentData.serviceName || 'Servicio', tableLeft + 12, rowY + 10, { width: 180, ellipsis: true })
+       .text(formatColombiaDate(appointmentData.startTime, 'short'), tableLeft + 200, rowY + 10)
+       .text(appointmentData.employeeName || 'Profesional', tableLeft + 320, rowY + 10, { width: 120, ellipsis: true })
+       .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
+             tableLeft + 450, rowY + 10);
+
+    // Línea inferior de tabla
+    const tableBottom = rowY + 30;
+    doc.strokeColor(colors.light)
+       .lineWidth(0.5)
+       .moveTo(tableLeft, tableBottom)
+       .lineTo(tableRight, tableBottom)
+       .stroke();
+
+    // === TOTAL PAGADO - Sección destacada ===
+    y = tableBottom + 25;
+    
+    // Caja de total con fondo sutil
+    const totalBoxWidth = 180;
+    const totalBoxX = pageWidth - margin - totalBoxWidth;
+    doc.fillColor('#f8f9fa')
+       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+       .fill()
+       .strokeColor(colors.light)
+       .lineWidth(0.5)
+       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+       .stroke();
     
     doc.fillColor(colors.secondary)
        .font('Helvetica')
        .fontSize(10)
-       .text(`Referencia: #${appointmentData.id?.substring(0, 8).toUpperCase()}`, margin, currentY + 22, { align: 'right' });
-
-    currentY += 70;
-
-    // === 2. BLOQUE DE INFORMACIÓN (EMISOR VS RECEPTOR) ===
-    // Fondo sutil para la sección de info
-    doc.fillColor(colors.bgLight)
-       .roundedRect(margin, currentY, contentWidth, 80, 4)
-       .fill();
-
-    const colWidth = contentWidth / 2;
+       .text('TOTAL PAGADO:', totalBoxX + 10, y + 5);
     
-    // De: (Empresa)
-    doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(9).text('DE:', margin + 15, currentY + 15);
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(11).text(appointmentData.businessName || 'Mi Negocio', margin + 15, currentY + 28);
-    doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text('Servicios Profesionales', margin + 15, currentY + 42);
-
-    // Para: (Cliente)
-    doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(9).text('PARA:', margin + colWidth, currentY + 15);
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(11).text(appointmentData.clientName || 'Cliente', margin + colWidth, currentY + 28);
-    doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text(appointmentData.clientEmail || '', margin + colWidth, currentY + 42);
-    
-    currentY += 100;
-
-    // === 3. TABLA DE DETALLES ===
-    // Encabezado de tabla minimalista
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(10);
-    doc.text('DESCRIPCIÓN DEL SERVICIO', margin, currentY);
-    doc.text('FECHA', margin + 260, currentY);
-    doc.text('TOTAL', margin, currentY, { align: 'right' });
-
-    currentY += 15;
-    doc.strokeColor(colors.primary).lineWidth(1).moveTo(margin, currentY).lineTo(pageWidth - margin, currentY).stroke();
-
-    // Fila del servicio
-    currentY += 15;
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(11)
-       .text(appointmentData.serviceName || 'Servicio General', margin, currentY);
-    
-    doc.fillColor(colors.secondary).font('Helvetica').fontSize(10)
-       .text(`Especialista: ${appointmentData.employeeName}`, margin, currentY + 15);
-
-    doc.fillColor(colors.primary).text(formatColombiaDate(appointmentData.startTime, 'short'), margin + 260, currentY);
-
-    const priceFormatted = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0);
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(12).text(priceFormatted, margin, currentY, { align: 'right' });
-
-    currentY += 60;
-
-    // === 4. RESUMEN Y SELLO DE PAGO ===
-    doc.strokeColor(colors.border).lineWidth(0.5).moveTo(margin, currentY).lineTo(pageWidth - margin, currentY).stroke();
-    currentY += 20;
-
-    // Caja de Estado "PAGADO"
-    doc.fillColor('#D1FAE5') // Verde muy claro
-       .roundedRect(margin, currentY, 80, 22, 11)
-       .fill();
     doc.fillColor(colors.accent)
        .font('Helvetica-Bold')
-       .fontSize(9)
-       .text('PAGADO', margin + 18, currentY + 7);
+       .fontSize(16)
+       .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
+             totalBoxX + 10, y + 18);
 
-    // Total final destacado
-    doc.fillColor(colors.secondary).font('Helvetica').fontSize(10).text('Total Recibido:', margin + 250, currentY + 2);
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(18).text(priceFormatted, margin, currentY - 5, { align: 'right' });
-
-    // === 5. PIE DE PÁGINA ===
-    const footerY = doc.page.height - 80;
-    
-    // Línea de corte o separación
-    doc.dash(5, { space: 5 }).strokeColor(colors.border).moveTo(margin, footerY).lineTo(pageWidth - margin, footerY).stroke().undash();
-
+    // === MÉTODO DE PAGO ===
+    y += 50;
     doc.fillColor(colors.secondary)
        .font('Helvetica')
-       .fontSize(8)
-       .text('Gracias por su confianza.', margin, footerY + 15, { align: 'center' })
-       .fillColor('#9CA3AF')
-       .text(`Comprobante generado automáticamente el ${formatColombiaDate(new Date())}`, margin, footerY + 28, { align: 'center' });
+       .fontSize(10)
+       .text(`Método de pago: ${appointmentData.paymentMethod || 'Efectivo'}`, margin, y);
 
+    // === NOTAS ===
+    if (appointmentData.notes) {
+      y += 25;
+      doc.fillColor(colors.primary)
+         .font('Helvetica-Bold')
+         .fontSize(11)
+         .text('Notas:', margin, y);
+      
+      y += 15;
+      doc.fillColor(colors.secondary)
+         .font('Helvetica')
+         .fontSize(10)
+         .text(appointmentData.notes, margin, y, { width: tableWidth });
+    }
+
+    // === FOOTER ===
+    const footerY = doc.page.height - 70;
+    
+    // Línea decorativa
+    doc.strokeColor(colors.light)
+       .lineWidth(0.5)
+       .moveTo(margin, footerY)
+       .lineTo(pageWidth - margin, footerY)
+       .stroke();
+
+    // Texto del footer
+    doc.fillColor(colors.secondary)
+       .font('Helvetica')
+       .fontSize(9)
+       .text('Este documento certifica que el pago fue recibido.', margin, footerY + 10, { align: 'center', width: pageWidth - margin * 2 })
+       .text('Conserve este comprobante para cualquier reclamación.', margin, footerY + 22, { align: 'center', width: pageWidth - margin * 2 })
+       .text(`N° Comprobante: #${appointmentData.id?.substring(0, 8).toUpperCase() || 'N/A'}`, margin, footerY + 34, { align: 'center', width: pageWidth - margin * 2 });
+
+    // Finalizar el PDF
     doc.end();
   });
 };
