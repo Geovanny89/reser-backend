@@ -140,7 +140,12 @@ router.patch('/:id/status', role('admin', 'superadmin', 'employee'), ctrl.update
  *       200:
  *         description: Cita cancelada
  */
-router.patch('/:id/cancel', auth, ctrl.cancel);
+router.patch('/:id/cancel', (req, res, next) => {
+  // Si viene clientEmail en el body (modo cliente simplificado en APK), permitimos pasar sin auth
+  if (req.body.clientEmail) return next();
+  // Si no, requerimos auth normal
+  return auth(req, res, next);
+}, ctrl.cancel);
 
 /**
  * @swagger

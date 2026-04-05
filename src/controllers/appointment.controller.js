@@ -290,12 +290,34 @@ exports.cancel = async (req, res) => {
     
     // Verificar permisos: admin, empleado asignado, o cliente dueño de la cita
     const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'superadmin');
-    const isEmployee = req.user && req.user.role === 'employee' && appt.employeeId === req.user.employeeId;
+    
+    let isEmployee = false;
+    if (req.user && req.user.role === 'employee') {
+      const emp = await Employee.findOne({ where: { userId: req.user.id } });
+      isEmployee = emp && appt.employeeId === emp.id;
+    }
+
     const isOwnerByEmail = req.body.clientEmail && appt.clientEmail === req.body.clientEmail.toLowerCase().trim();
     const isOwnerByClientId = req.user && req.user.role === 'client' && appt.clientId === req.user.id;
     
     if (!isAdmin && !isEmployee && !isOwnerByEmail && !isOwnerByClientId) {
       return res.status(403).json({ error: 'No tienes permiso para cancelar esta cita' });
+    }
+
+    // Restricción de 12 horas solo para CLIENTES
+    if (!isAdmin && !isEmployee && (isOwnerByEmail || isOwnerByClientId)) {
+      const now = new Date();
+      const apptTime = new Date(appt.startTime);
+      
+      // Diferencia en milisegundos
+      const diffMs = apptTime.getTime() - now.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+
+      if (diffHours < 12) {
+        return res.status(400).json({ 
+          error: 'no puedes cancelar por favor comunicate con el negocio' 
+        });
+      }
     }
     
     await appt.update({ status: 'cancelled' });
