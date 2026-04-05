@@ -128,10 +128,10 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(12)
        .text('Comprobante de Pago', titleX, titleY + 25);
 
-    // Fecha de emisión (debajo del título, alineada derecha)
+    // Fecha de emisión (movida más a la izquierda para evitar corte)
     doc.fillColor(colors.secondary)
        .fontSize(10)
-       .text(`Emitido: ${formatColombiaDate(new Date())}`, pageWidth - margin, titleY + 25, { align: 'right' });
+       .text(`Emitido: ${formatColombiaDate(new Date())}`, pageWidth - 150, titleY + 25, { align: 'left' });
 
     // Línea separadora elegante - más abajo para dar espacio
     doc.strokeColor(colors.light)
