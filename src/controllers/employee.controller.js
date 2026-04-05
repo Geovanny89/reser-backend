@@ -182,7 +182,7 @@ exports.getTodayAppointments = async (req, res) => {
       where: {
         employeeId,
         startTime: { [Op.between]: [today, tomorrow] },
-        status: { [Op.in]: ['pending', 'confirmed'] }
+        status: { [Op.in]: ['pending', 'confirmed', 'attention'] }
       },
       include: [
         { model: Service, attributes: ['name', 'price', 'durationMin'] },
@@ -211,7 +211,7 @@ exports.getAppointmentsByDateRange = async (req, res) => {
       where: {
         employeeId,
         startTime: { [Op.between]: [new Date(`${startDate}T00:00:00-05:00`), new Date(`${endDate}T23:59:59-05:00`)] },
-        status: { [Op.in]: ['pending', 'confirmed', 'done'] }
+        status: { [Op.in]: ['pending', 'confirmed', 'attention', 'done'] }
       },
       include: [
         { model: Service, attributes: ['name', 'price', 'durationMin'] },
