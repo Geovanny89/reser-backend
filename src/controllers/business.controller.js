@@ -321,7 +321,22 @@ exports.remove = async (req, res) => {
     const biz = await Business.findByPk(req.params.id);
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-    // ELIMINAR TODAS LAS IMÁGENES DE CLOUDINARY ANTES DE BORRAR EL NEGOCIO
+    const { Appointment, Service, Employee, Schedule } = require('../models');
+
+    // ELIMINAR EN ORDEN POR DEPENDENCIAS
+    // 1. Primero eliminar citas (appointments dependen de employees y services)
+    await Appointment.destroy({ where: { businessId: biz.id } });
+    
+    // 2. Eliminar schedules (dependen de employees)
+    await Schedule.destroy({ where: { businessId: biz.id } });
+    
+    // 3. Eliminar employees
+    await Employee.destroy({ where: { businessId: biz.id } });
+    
+    // 4. Eliminar services
+    await Service.destroy({ where: { businessId: biz.id } });
+
+    // 5. ELIMINAR TODAS LAS IMÁGENES DE CLOUDINARY
     if (biz.logoUrl) await deleteFromCloudinary(biz.logoUrl);
     if (biz.bannerUrl) await deleteFromCloudinary(biz.bannerUrl);
     
@@ -331,9 +346,11 @@ exports.remove = async (req, res) => {
       await deleteFromCloudinary(url);
     }
 
+    // 6. Finalmente eliminar el negocio
     await biz.destroy();
-    res.json({ message: 'Negocio y recursos eliminados correctamente' });
+    res.json({ message: 'Negocio y todos sus datos eliminados correctamente' });
   } catch (e) {
+    console.error('Error eliminando negocio:', e);
     res.status(400).json({ error: e.message });
   }
 };

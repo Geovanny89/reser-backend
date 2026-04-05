@@ -232,16 +232,9 @@ const generatePaymentReceipt = async (appointmentData) => {
        .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
              totalBoxX + 10, y + 18);
 
-    // === MÉTODO DE PAGO ===
-    y += 50;
-    doc.fillColor(colors.secondary)
-       .font('Helvetica')
-       .fontSize(10)
-       .text(`Método de pago: ${appointmentData.paymentMethod || 'Efectivo'}`, margin, y);
-
     // === NOTAS ===
+    y += 50;
     if (appointmentData.notes) {
-      y += 25;
       doc.fillColor(colors.primary)
          .font('Helvetica-Bold')
          .fontSize(11)
@@ -252,10 +245,13 @@ const generatePaymentReceipt = async (appointmentData) => {
          .font('Helvetica')
          .fontSize(10)
          .text(appointmentData.notes, margin, y, { width: tableWidth });
+      
+      y += 20;
     }
 
     // === FOOTER ===
-    const footerY = doc.page.height - 70;
+    // Footer justo después del contenido, no al final de la página
+    const footerY = y + 20;
     
     // Línea decorativa
     doc.strokeColor(colors.light)
