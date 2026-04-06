@@ -2,6 +2,7 @@ const { Appointment, Service, Employee, User, Business } = require('../models');
 const { Op } = require('sequelize');
 const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
+const { sendCancellationNotification, sendPushNotification } = require('../services/pushNotificationService');
 
 // Zona horaria Colombia: UTC-5 (no cambia con horario de verano)
 const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
@@ -156,6 +157,30 @@ exports.create = async (req, res) => {
             employeeName: String(fullAppt.Employee?.User?.name || ''),
             startTime:    String(fullAppt.startTime || ''),
           }).catch(e => console.error('[Email] Admin notify error:', e.message));
+        }
+        
+        // Enviar push notification al dueño si tiene FCM token
+        if (owner?.pushToken) {
+          await sendPushNotification(owner.pushToken, {
+            title: '📅 Nueva Cita Agendada',
+            body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'} para ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+          }, {
+            type: 'new_appointment',
+            appointmentId: fullAppt.id,
+            businessName: String(fullAppt.Business?.name || ''),
+          });
+        }
+        
+        // Enviar push notification al empleado asignado si tiene FCM token
+        if (fullAppt.Employee?.User?.pushToken) {
+          await sendPushNotification(fullAppt.Employee.User.pushToken, {
+            title: '📅 Nueva Cita Asignada',
+            body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'} el ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+          }, {
+            type: 'new_appointment',
+            appointmentId: fullAppt.id,
+            businessName: String(fullAppt.Business?.name || ''),
+          });
         }
         // Determinar el email del cliente: usuario registrado o email proporcionado en la reserva
         let clientEmailTo = null;
@@ -315,12 +340,65 @@ exports.cancel = async (req, res) => {
 
       if (diffHours < 12) {
         return res.status(400).json({ 
-          error: 'no puedes cancelar por favor comunicate con el negocio' 
+          error: 'No se puede cancelar la cita porque faltan menos de 12 horas. Por favor contacta al dueño del negocio para más información.' 
         });
       }
     }
     
     await appt.update({ status: 'cancelled' });
+    
+    // Enviar email al negocio si es cancelación por cliente
+    if (!isAdmin && !isEmployee && (isOwnerByEmail || isOwnerByClientId)) {
+      try {
+        // Buscar la cita completa con relaciones
+        const fullAppt = await Appointment.findByPk(req.params.id, {
+          include: [
+            { model: Service },
+            { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+            { model: Business }
+          ]
+        });
+        
+        if (fullAppt && fullAppt.Business) {
+          const owner = await User.findByPk(fullAppt.Business.ownerId);
+          if (owner?.email) {
+            await sendEmail(owner.email, 'appointmentCancelled', {
+              businessName: String(fullAppt.Business.name || ''),
+              clientName: String(fullAppt.clientName || ''),
+              serviceName: String(fullAppt.Service?.name || ''),
+              employeeName: String(fullAppt.Employee?.User?.name || 'No asignado'),
+              startTime: fullAppt.startTime,
+              cancelTime: new Date()
+            });
+          }
+          
+          // Enviar push notification al dueño si tiene FCM token
+          if (owner?.pushToken) {
+            await sendCancellationNotification(owner.pushToken, {
+              id: fullAppt.id,
+              clientName: String(fullAppt.clientName || ''),
+              serviceName: String(fullAppt.Service?.name || ''),
+              businessName: String(fullAppt.Business.name || ''),
+              startTime: fullAppt.startTime,
+            });
+          }
+          
+          // Enviar push notification al empleado asignado si tiene FCM token
+          if (fullAppt.Employee?.User?.pushToken) {
+            await sendCancellationNotification(fullAppt.Employee.User.pushToken, {
+              id: fullAppt.id,
+              clientName: String(fullAppt.clientName || ''),
+              serviceName: String(fullAppt.Service?.name || ''),
+              businessName: String(fullAppt.Business.name || ''),
+              startTime: fullAppt.startTime,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.log('[Cancel] Email no enviado:', emailErr.message);
+      }
+    }
+    
     res.json({ message: 'Cita cancelada', appt });
   } catch (e) {
     res.status(500).json({ error: e.message });

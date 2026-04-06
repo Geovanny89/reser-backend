@@ -301,3 +301,26 @@ exports.changePassword = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+// Actualizar token FCM para notificaciones push
+exports.updateFcmToken = async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+    const userId = req.user.id;
+
+    if (!fcmToken) {
+      return res.status(400).json({ error: 'FCM token es requerido' });
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+    await user.update({ pushToken: fcmToken });
+    console.log(`[Auth] FCM token actualizado para usuario ${user.email}`);
+
+    res.json({ message: 'Token FCM actualizado correctamente' });
+  } catch (e) {
+    console.error('[Auth] Error actualizando FCM token:', e);
+    res.status(500).json({ error: e.message });
+  }
+};

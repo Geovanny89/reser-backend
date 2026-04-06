@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { login, register, registerVendor, me } = require('../controllers/auth.controller');
+const { login, register, registerVendor, me, updateFcmToken } = require('../controllers/auth.controller');
 const auth = require('../middleware/auth');
 
 /**
@@ -172,5 +172,30 @@ router.patch('/change-password', auth, require('../controllers/auth.controller')
  *         description: No autorizado
  */
 router.get('/me', auth, me);
+
+/**
+ * @swagger
+ * /auth/fcm-token:
+ *   post:
+ *     summary: Actualizar token FCM para notificaciones push
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [fcmToken]
+ *             properties:
+ *               fcmToken: { type: string, description: 'Token FCM del dispositivo' }
+ *     responses:
+ *       200:
+ *         description: Token FCM actualizado
+ *       400:
+ *         description: Token no proporcionado
+ */
+router.post('/fcm-token', auth, updateFcmToken);
 
 module.exports = router;

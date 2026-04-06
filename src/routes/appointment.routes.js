@@ -59,6 +59,35 @@ router.get('/my-client-appointments', (req, res, next) => {
   return auth(req, res, next);
 }, ctrl.getMyClientAppointments);
 
+/**
+ * @swagger
+ * /appointments/{id}/cancel:
+ *   patch:
+ *     summary: Cancelar una cita (cliente sin auth o usuario autenticado)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               clientEmail: { type: string, format: email }
+ *     responses:
+ *       200:
+ *         description: Cita cancelada
+ */
+router.patch('/:id/cancel', (req, res, next) => {
+  // Si viene clientEmail en el body (modo cliente simplificado en APK), permitimos pasar sin auth
+  if (req.body.clientEmail) return next();
+  // Si no, requerimos auth normal
+  return auth(req, res, next);
+}, ctrl.cancel);
+
 router.use(auth);
 
 /**

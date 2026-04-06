@@ -284,6 +284,41 @@ const templates = {
     `, businessName),
   }),
 
+  // Notificación de cita cancelada por el cliente (para el negocio)
+  appointmentCancelled: ({ businessName, clientName, serviceName, employeeName, startTime, cancelTime }) => ({
+    subject: `❌ Cita cancelada por cliente — ${businessName}`,
+    html: baseTemplate(`
+      <h2>Cita cancelada por el cliente</h2>
+      <p>Un cliente ha cancelado una cita programada en tu negocio.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Cliente</span>
+          <span class="info-value">${clientName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Empleado asignado</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Fecha y hora original</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Cancelada el</span>
+          <span class="info-value">${formatColombiaDate(cancelTime)}</span>
+        </div>
+      </div>
+      <p style="background:#fef2f2;padding:12px 16px;border-radius:8px;color:#991b1b;font-weight:500;">
+        📌 Este espacio queda disponible para nuevas citas. Puedes verificar tu disponibilidad en el sistema.
+      </p>
+      <span class="badge" style="background:#fecaca;color:#991b1b;">❌ Cancelada por cliente</span>
+    `, businessName),
+  }),
+
   // Credenciales de nuevo empleado
   employeeWelcome: ({ employeeName, businessName, email, tempPassword, loginUrl }) => ({
     subject: `👋 Bienvenido al equipo de ${businessName}`,
