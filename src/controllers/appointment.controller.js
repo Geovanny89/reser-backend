@@ -143,7 +143,7 @@ exports.create = async (req, res) => {
         const fullAppt = await Appointment.findByPk(appt.id, {
           include: [
             { model: Service },
-            { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+            { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
             { model: Business },
           ],
         });

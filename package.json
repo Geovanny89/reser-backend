@@ -4,7 +4,8 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "db:update": "node scripts/update-db.js"
   },
   "dependencies": {
     "@sequelize/sqlite3": "^7.0.0-alpha.48",
