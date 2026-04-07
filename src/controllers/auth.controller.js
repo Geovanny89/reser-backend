@@ -26,7 +26,7 @@ exports.register = async (req, res) => {
 // Registro de vendedor con datos del negocio
 exports.registerVendor = async (req, res) => {
   try {
-    const { name, email, password, businessName, businessType, description, phone, address } = req.body;
+    const { name, email, password, businessName, businessType, description, phone, address, isTechnicalServices } = req.body;
     
     // Validar campos requeridos
     if (!name || !email || !password || !businessName || !businessType)
@@ -59,7 +59,8 @@ exports.registerVendor = async (req, res) => {
       ownerId: user.id,
       subscriptionStatus: 'paid',
       subscriptionStartDate: now,
-      subscriptionEndDate: endDate
+      subscriptionEndDate: endDate,
+      isTechnicalServices: isTechnicalServices || false, // Nuevo campo
     });
 
     // Generar token JWT
@@ -160,7 +161,8 @@ exports.login = async (req, res) => {
         type: business.type,
         status: business.status,
         subscriptionDaysLeft: subscriptionDaysLeft,
-        subscriptionEndDate: business.subscriptionEndDate
+        subscriptionEndDate: business.subscriptionEndDate,
+        isTechnicalServices: business.isTechnicalServices
       } : null
     });
   } catch (e) {
@@ -198,7 +200,8 @@ exports.me = async (req, res) => {
         status: business.status,
         subscriptionStatus: business.subscriptionStatus,
         subscriptionEndDate: business.subscriptionEndDate,
-        subscriptionDaysLeft: subscriptionDaysLeft
+        subscriptionDaysLeft: subscriptionDaysLeft,
+        isTechnicalServices: business.isTechnicalServices
       } : null
     });
   } catch (e) {
@@ -321,6 +324,38 @@ exports.updateFcmToken = async (req, res) => {
     res.json({ message: 'Token FCM actualizado correctamente' });
   } catch (e) {
     console.error('[Auth] Error actualizando FCM token:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Actualizar token FCM para CLIENTES NO REGISTRADOS (solo email)
+exports.updateClientFcmToken = async (req, res) => {
+  try {
+    const { email, fcmToken } = req.body;
+
+    if (!email || !fcmToken) {
+      return res.status(400).json({ error: 'Email y FCM token son requeridos' });
+    }
+
+    const { ClientDevice } = require('../models');
+    
+    // Buscar si ya existe el registro para este email
+    const [device, created] = await ClientDevice.findOrCreate({
+      where: { email: email.toLowerCase().trim() },
+      defaults: { pushToken: fcmToken, lastLogin: new Date() }
+    });
+
+    if (!created) {
+      await device.update({ 
+        pushToken: fcmToken, 
+        lastLogin: new Date() 
+      });
+    }
+
+    console.log(`[Auth] FCM token actualizado para CLIENTE INVITADO ${email}`);
+    res.json({ message: 'Token de cliente actualizado correctamente' });
+  } catch (e) {
+    console.error('[Auth] Error actualizando FCM token de cliente:', e);
     res.status(500).json({ error: e.message });
   }
 };

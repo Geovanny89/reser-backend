@@ -43,7 +43,7 @@ exports.updateMyBusiness = async (req, res) => {
       'name', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl',
       'whatsapp', 'instagram', 'facebook', 'tiktok', 'twitter', 'website',
       'gallery', 'primaryColor', 'secondaryColor', 'tagline', 'ctaText',
-      'businessHours', 'metaDescription',
+      'businessHours', 'metaDescription', 'isTechnicalServices',
     ];
     
     const updates = {};
@@ -155,7 +155,9 @@ exports.getAvailability = async (req, res) => {
     const duration = service ? service.durationMin : 60;
 
     // Hora actual en Colombia para no mostrar slots pasados
-    const nowColombia = new Date();
+    const nowColombia = new Date(new Date().getTime() + COLOMBIA_OFFSET_MS);
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+    const isTargetToday = date === todayStr;
 
     // Obtener todos los horarios del empleado para el día (incluyendo almuerzos y bloqueos)
     const allSchedules = await Schedule.findAll({
@@ -246,9 +248,12 @@ exports.getAvailability = async (req, res) => {
             const slotStart = colombiaDateTimeToUTC(date, timeStr);
             const slotEnd   = new Date(slotStart.getTime() + safeDuration * 60000);
 
-            // No mostrar slots en el pasado (con un margen de 5 minutos para permitir reservar citas muy cercanas)
-            const MARGIN_MS = 5 * 60 * 1000;
-            if (slotStart.getTime() > (Date.now() - MARGIN_MS)) {
+            // No mostrar slots en el pasado (con un margen de 15 minutos para permitir reservar citas muy cercanas)
+            const MARGIN_MS = 15 * 60 * 1000;
+            const nowMs = Date.now();
+            
+            // Si es hoy, filtrar slots pasados. Si es futuro, mostrar todos los configurados.
+            if (!isTargetToday || slotStart.getTime() > (nowMs - MARGIN_MS)) {
               // Verificar conflicto con citas existentes en memoria
               const hasConflict = empAppointments.some(appt => {
                 const apptStart = new Date(appt.startTime).getTime();

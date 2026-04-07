@@ -244,7 +244,7 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
-// Función auxiliar para enviar comprobante de pago
+// Función auxiliar para enviar comprobante de pago o orden de servicio
 const sendPaymentReceipt = async (appointment) => {
   // Determinar el email del cliente
   let clientEmail = null;
@@ -262,11 +262,65 @@ const sendPaymentReceipt = async (appointment) => {
     return;
   }
 
-  // Generar PDF del comprobante
+  const isTechnicalService = appointment.Business?.isTechnicalServices || false;
+  const orderNumber = appointment.id.substring(0, 8).toUpperCase();
+
+  // Para servicios técnicos: enviar Orden de Servicio con PDF
+  if (isTechnicalService) {
+    console.log('[Email] Enviando Orden de Servicio para cita técnica:', appointment.id);
+    
+    // Generar PDF de Orden de Servicio
+    const pdfBuffer = await generatePaymentReceipt({
+      businessId: appointment.businessId,
+      businessName: appointment.Business?.name,
+      businessLogoUrl: appointment.Business?.logoUrl,
+      businessAddress: appointment.Business?.address,
+      businessPhone: appointment.Business?.phone,
+      businessNit: appointment.Business?.nit,
+      id: appointment.id,
+      clientName: appointment.clientName,
+      clientEmail: appointment.clientEmail,
+      clientPhone: appointment.clientPhone,
+      serviceName: appointment.Service?.name,
+      serviceDescription: appointment.Service?.description,
+      employeeName: appointment.Employee?.User?.name,
+      startTime: appointment.startTime,
+      endTime: appointment.endTime,
+      price: appointment.Service?.price,
+      paymentMethod: appointment.paymentMethod || 'Efectivo',
+      notes: appointment.notes,
+      isTechnicalService: true, // Flag para que el PDF genere OS en lugar de comprobante
+    });
+    
+    await sendEmail(
+      clientEmail,
+      'serviceOrder',
+      {
+        clientName: appointment.clientName,
+        businessName: appointment.Business?.name,
+        serviceName: appointment.Service?.name,
+        employeeName: appointment.Employee?.User?.name,
+        startTime: appointment.startTime,
+        price: appointment.Service?.price,
+        orderNumber,
+        notes: appointment.notes,
+      },
+      [
+        {
+          filename: `orden-servicio-${orderNumber}.pdf`,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+      ]
+    );
+    return;
+  }
+
+  // Para servicios normales: enviar Comprobante de Pago con PDF
   const pdfBuffer = await generatePaymentReceipt({
     businessId: appointment.businessId,
     businessName: appointment.Business?.name,
-    businessLogoUrl: appointment.Business?.logoUrl, // CORREGIDO: Usar logoUrl
+    businessLogoUrl: appointment.Business?.logoUrl,
     businessAddress: appointment.Business?.address,
     businessPhone: appointment.Business?.phone,
     businessNit: appointment.Business?.nit,
@@ -275,6 +329,7 @@ const sendPaymentReceipt = async (appointment) => {
     clientEmail: appointment.clientEmail,
     clientPhone: appointment.clientPhone,
     serviceName: appointment.Service?.name,
+    serviceDescription: appointment.Service?.description,
     employeeName: appointment.Employee?.User?.name,
     startTime: appointment.startTime,
     endTime: appointment.endTime,
@@ -283,8 +338,6 @@ const sendPaymentReceipt = async (appointment) => {
     notes: appointment.notes,
   });
 
-  // Enviar email con PDF adjunto
-  const receiptNumber = appointment.id.substring(0, 8).toUpperCase();
   await sendEmail(
     clientEmail,
     'paymentReceipt',
@@ -294,11 +347,11 @@ const sendPaymentReceipt = async (appointment) => {
       serviceName: appointment.Service?.name,
       startTime: appointment.startTime,
       price: appointment.Service?.price,
-      receiptNumber,
+      receiptNumber: orderNumber,
     },
     [
       {
-        filename: `comprobante-${receiptNumber}.pdf`,
+        filename: `comprobante-${orderNumber}.pdf`,
         content: pdfBuffer,
         contentType: 'application/pdf',
       },

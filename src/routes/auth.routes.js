@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { login, register, registerVendor, me, updateFcmToken } = require('../controllers/auth.controller');
+const { login, register, registerVendor, me, updateFcmToken, updateClientFcmToken } = require('../controllers/auth.controller');
 const auth = require('../middleware/auth');
 
 /**
@@ -197,5 +197,21 @@ router.get('/me', auth, me);
  *         description: Token no proporcionado
  */
 router.post('/fcm-token', auth, updateFcmToken);
+
+/**
+ * @swagger
+ * /auth/fcm-token-client:
+ *   post:
+ *     summary: Actualizar token FCM para cliente invitado (solo email)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, fcmToken]
+ */
+router.post('/fcm-token-client', updateClientFcmToken);
 
 module.exports = router;

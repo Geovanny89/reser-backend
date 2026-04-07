@@ -374,6 +374,52 @@ const templates = {
     `, businessName),
   }),
 
+  // Orden de servicio técnico (sin comprobante de pago)
+  serviceOrder: ({ clientName, businessName, serviceName, employeeName, startTime, price, orderNumber, notes }) => ({
+    subject: `📋 Orden de Servicio — ${businessName}`,
+    html: baseTemplate(`
+      <h2>Orden de Servicio Técnico</h2>
+      <p>Hola <strong>${clientName}</strong>, adjuntamos los detalles de tu orden de servicio.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Negocio</span>
+          <span class="info-value">${businessName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Técnico asignado</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Fecha programada</span>
+          <span class="info-value">${formatColombiaDate(startTime)}</span>
+        </div>
+        ${price ? `
+        <div class="info-row">
+          <span class="info-label">Precio estimado</span>
+          <span class="info-value" style="color:#64748b">${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(price)}</span>
+        </div>` : ''}
+        <div class="info-row">
+          <span class="info-label">N° de orden</span>
+          <span class="info-value" style="font-family:monospace;color:#4f46e5">#${orderNumber}</span>
+        </div>
+      </div>
+      ${notes ? `
+      <div style="background:#f0f9ff;padding:16px;border-radius:8px;border:1px solid #bae6fd;margin:16px 0;">
+        <strong style="color:#0369a1">Notas:</strong><br>
+        <span style="color:#0c4a6e">${notes}</span>
+      </div>` : ''}
+      <p style="background:#fef3c7;padding:12px 16px;border-radius:8px;color:#92400e;font-weight:500;">
+        📋 Este es un servicio técnico. El precio final se determinará según el trabajo realizado.
+      </p>
+      <p>Por favor conserva este documento para cualquier consulta o reclamo del servicio.</p>
+      <span class="badge badge-info">📋 Orden de Servicio</span>
+    `, businessName),
+  }),
+
   // Alerta de cita pendiente no atendida (para admin/empleado)
   pendingAppointmentAlert: ({ recipientType, employeeName, clientName, serviceName, businessName, startTime, appointmentId }) => ({
     subject: `⚠️ Cita pendiente sin atender — ${businessName}`,

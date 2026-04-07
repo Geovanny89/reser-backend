@@ -7,6 +7,7 @@ const Service    = require('./Service')(sequelize);
 const Employee   = require('./Employee')(sequelize);
 const Appointment = require('./Appointment')(sequelize);
 const Schedule   = require('./Schedule')(sequelize);
+const ClientDevice = require('./ClientDevice')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -34,4 +35,4 @@ Employee.hasMany(Appointment,    { foreignKey: 'employeeId' });
 Schedule.belongsTo(Employee, { foreignKey: 'employeeId' });
 Employee.hasMany(Schedule, { foreignKey: 'employeeId', as: 'Schedules' });
 
-module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule };
+module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, ClientDevice };

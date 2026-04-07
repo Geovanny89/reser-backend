@@ -122,11 +122,16 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(24)
        .text(appointmentData.businessName || 'Mi Negocio', titleX, titleY);
 
+    // Determinar tipo de documento
+    const isTechnicalService = appointmentData.isTechnicalService || false;
+    const documentTitle = isTechnicalService ? 'Orden de Servicio' : 'Comprobante de Pago';
+    const documentSubtitle = isTechnicalService ? 'Confirmación de Visita Técnica' : 'Soporte de Transacción';
+
     // Título del documento
     doc.fillColor(colors.secondary)
        .font('Helvetica')
        .fontSize(12)
-       .text('Comprobante de Pago', titleX, titleY + 25);
+       .text(documentTitle, titleX, titleY + 25);
 
     // Fecha de emisión (movida más a la izquierda para evitar corte)
     doc.fillColor(colors.secondary)
@@ -140,12 +145,12 @@ const generatePaymentReceipt = async (appointmentData) => {
        .lineTo(pageWidth - margin, 100)
        .stroke();
 
-    // === SECCIÓN: INFORMACIÓN DEL CLIENTE ===
+    // === SECCIÓN: INFORMACIÓN DEL CLIENTE / VISITA ===
     let y = 120;
     doc.fillColor(colors.primary)
        .font('Helvetica-Bold')
        .fontSize(14)
-       .text('Información del Cliente', margin, y);
+       .text(isTechnicalService ? 'Información de la Visita' : 'Información del Cliente', margin, y);
 
     y += 20;
     doc.fillColor(colors.black)
@@ -154,7 +159,7 @@ const generatePaymentReceipt = async (appointmentData) => {
     
     doc.text(`Cliente: ${appointmentData.clientName || 'No especificado'}`, margin, y);
     y += 18;
-    doc.text(`Email: ${appointmentData.clientEmail || 'No especificado'}`, margin, y);
+    doc.text(`${isTechnicalService ? 'Técnico' : 'Profesional'}: ${appointmentData.employeeName || 'No especificado'}`, margin, y);
     y += 18;
     doc.text(`Teléfono: ${appointmentData.clientPhone || 'No especificado'}`, margin, y);
 
@@ -181,8 +186,12 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(10)
        .text('SERVICIO', tableLeft + 12, tableTop + 9)
        .text('FECHA/HORA', tableLeft + 200, tableTop + 9)
-       .text('PROFESIONAL', tableLeft + 320, tableTop + 9)
-       .text('VALOR', tableLeft + 450, tableTop + 9);
+       .text(isTechnicalService ? 'TÉCNICO' : 'PROFESIONAL', tableLeft + 320, tableTop + 9);
+    
+    // Solo mostrar columna VALOR si no es servicio técnico
+    if (!isTechnicalService) {
+      doc.text('VALOR', tableLeft + 450, tableTop + 9);
+    }
 
     // Fila de datos
     const rowY = tableTop + 28;
@@ -195,45 +204,72 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(10)
        .text(appointmentData.serviceName || 'Servicio', tableLeft + 12, rowY + 10, { width: 180, ellipsis: true })
        .text(formatColombiaDate(appointmentData.startTime, 'short'), tableLeft + 200, rowY + 10)
-       .text(appointmentData.employeeName || 'Profesional', tableLeft + 320, rowY + 10, { width: 120, ellipsis: true })
-       .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
-             tableLeft + 450, rowY + 10);
+       .text(appointmentData.employeeName || (isTechnicalService ? 'Técnico por asignar' : 'Profesional'), tableLeft + 320, rowY + 10, { width: 120, ellipsis: true });
+    
+    // Solo mostrar precio si no es servicio técnico
+    if (!isTechnicalService) {
+      doc.text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
+               tableLeft + 450, rowY + 10);
+    }
 
     // Línea inferior de tabla
-    const tableBottom = rowY + 30;
+    let tableBottom = rowY + 30;
+
+    // --- AGREGAR DESCRIPCIÓN DEL SERVICIO (SI EXISTE) ---
+    if (appointmentData.serviceDescription) {
+      doc.fillColor('#f9fafb') // Fondo gris muy claro para la descripción
+         .rect(tableLeft, tableBottom, tableWidth, 40)
+         .fill();
+
+      doc.fillColor(colors.primary)
+         .font('Helvetica-Bold')
+         .fontSize(9)
+         .text('DESCRIPCIÓN:', tableLeft + 12, tableBottom + 10);
+
+      doc.fillColor(colors.secondary)
+         .font('Helvetica')
+         .fontSize(9)
+         .text(appointmentData.serviceDescription, tableLeft + 85, tableBottom + 10, { width: tableWidth - 100 });
+
+      tableBottom += 40;
+    }
+
     doc.strokeColor(colors.light)
        .lineWidth(0.5)
        .moveTo(tableLeft, tableBottom)
        .lineTo(tableRight, tableBottom)
        .stroke();
 
-    // === TOTAL PAGADO - Sección destacada ===
-    y = tableBottom + 25;
-    
-    // Caja de total con fondo sutil
-    const totalBoxWidth = 180;
-    const totalBoxX = pageWidth - margin - totalBoxWidth;
-    doc.fillColor('#f8f9fa')
-       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
-       .fill()
-       .strokeColor(colors.light)
-       .lineWidth(0.5)
-       .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
-       .stroke();
-    
-    doc.fillColor(colors.secondary)
-       .font('Helvetica')
-       .fontSize(10)
-       .text('TOTAL PAGADO:', totalBoxX + 10, y + 5);
-    
-    doc.fillColor(colors.accent)
-       .font('Helvetica-Bold')
-       .fontSize(16)
-       .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
-             totalBoxX + 10, y + 18);
+    // === TOTAL PAGADO - Solo para comprobantes de pago ===
+    if (!isTechnicalService) {
+      y = tableBottom + 25;
+      
+      // Caja de total con fondo sutil
+      const totalBoxWidth = 180;
+      const totalBoxX = pageWidth - margin - totalBoxWidth;
+      doc.fillColor('#f8f9fa')
+         .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+         .fill()
+         .strokeColor(colors.light)
+         .lineWidth(0.5)
+         .roundedRect(totalBoxX, y - 5, totalBoxWidth, 35, 6, 6)
+         .stroke();
+      
+      doc.fillColor(colors.secondary)
+         .font('Helvetica')
+         .fontSize(10)
+         .text('TOTAL PAGADO:', totalBoxX + 10, y + 5);
+      
+      doc.fillColor(colors.accent)
+         .font('Helvetica-Bold')
+         .fontSize(16)
+         .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
+               totalBoxX + 10, y + 18);
 
-    // === NOTAS ===
-    y += 50;
+      y += 50;
+    } else {
+      y = tableBottom + 20;
+    }
     if (appointmentData.notes) {
       doc.fillColor(colors.primary)
          .font('Helvetica-Bold')
@@ -261,12 +297,20 @@ const generatePaymentReceipt = async (appointmentData) => {
        .stroke();
 
     // Texto del footer
+    const footerText1 = isTechnicalService 
+      ? 'Este documento confirma la solicitud de su servicio.' 
+      : 'Este documento certifica que el pago fue recibido.';
+    const footerText2 = isTechnicalService 
+      ? 'Conserve esta orden para cualquier reclamación.' 
+      : 'Conserve este comprobante para cualquier reclamación.';
+    const referenceLabel = isTechnicalService ? 'N° Orden de Servicio' : 'N° Comprobante';
+    
     doc.fillColor(colors.secondary)
        .font('Helvetica')
        .fontSize(9)
-       .text('Este documento certifica que el pago fue recibido.', margin, footerY + 10, { align: 'center', width: pageWidth - margin * 2 })
-       .text('Conserve este comprobante para cualquier reclamación.', margin, footerY + 22, { align: 'center', width: pageWidth - margin * 2 })
-       .text(`N° Comprobante: #${appointmentData.id?.substring(0, 8).toUpperCase() || 'N/A'}`, margin, footerY + 34, { align: 'center', width: pageWidth - margin * 2 });
+       .text(footerText1, margin, footerY + 10, { align: 'center', width: pageWidth - margin * 2 })
+       .text(footerText2, margin, footerY + 22, { align: 'center', width: pageWidth - margin * 2 })
+       .text(`${referenceLabel}: #${appointmentData.id?.substring(0, 8).toUpperCase() || 'N/A'}`, margin, footerY + 34, { align: 'center', width: pageWidth - margin * 2 });
 
     // Finalizar el PDF
     doc.end();

@@ -44,6 +44,9 @@ module.exports = (sequelize) => {
     ctaText:        { type: DataTypes.STRING, defaultValue: 'Reservar cita ahora' },
     businessHours:  { type: DataTypes.TEXT },
     metaDescription: { type: DataTypes.STRING },
+    
+    // === Campo para empresas de servicios técnicos ===
+    isTechnicalServices: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Es empresa de soporte técnico (cámaras, computadores, etc)' },
   });
 
   Business.beforeCreate(async (b) => {

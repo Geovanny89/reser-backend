@@ -293,14 +293,22 @@ exports.getCommissionReport = async (req, res) => {
       ]
     });
 
-    const report = appointments.map(appt => ({
-      date:          appt.startTime,
-      service:       appt.Service.name,
-      price:         parseFloat(appt.Service.price),
-      employee:      appt.Employee.User.name,
-      employeeEarns: (parseFloat(appt.Service.price) * (parseFloat(appt.Employee.commissionPct) || 0) / 100).toFixed(2),
-      ownerEarns:    (parseFloat(appt.Service.price) * (parseFloat(appt.Employee.ownerPct) || 100) / 100).toFixed(2),
-    }));
+    const report = appointments.map(appt => {
+      const price = parseFloat(appt.Service.price) || 0;
+      const hasCommission = appt.Service.hasEmployeeCommission !== false; // Default true
+      const commissionPct = hasCommission ? (parseFloat(appt.Employee.commissionPct) || 0) : 0;
+      const ownerPct = hasCommission ? (parseFloat(appt.Employee.ownerPct) || 100) : 100;
+      
+      return {
+        date:          appt.startTime,
+        service:       appt.Service.name,
+        price:         price,
+        employee:      appt.Employee.User.name,
+        employeeEarns: (price * commissionPct / 100).toFixed(2),
+        ownerEarns:    (price * ownerPct / 100).toFixed(2),
+        hasCommission: hasCommission, // Para mostrar en UI si aplica comisión
+      };
+    });
 
     const totals = report.reduce((acc, r) => ({
       total:         acc.total + parseFloat(r.price),

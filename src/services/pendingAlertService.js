@@ -6,92 +6,110 @@
 
 const { Appointment, Service, Employee, User, Business } = require('../models');
 const { sendEmail } = require('../config/email');
+const { sendPushNotification } = require('./pushNotificationService');
 const { Op } = require('sequelize');
 
-const CHECK_INTERVAL_MS = 30 * 60 * 1000;  // revisar cada 30 minutos
-const GRACE_PERIOD_MS   = 15 * 60 * 1000;  // tolerancia: 15 minutos después de la hora
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;   // revisar cada 5 minutos para mayor precisión
+const ALERT_15M_MS = 15 * 60 * 1000;
+const ALERT_30M_MS = 30 * 60 * 1000;
+const ALERT_60M_MS = 60 * 60 * 1000;
 
 let intervalId = null;
 
 async function sendPendingAlerts() {
   try {
     const now = Date.now();
-    // Buscar citas que:
-    // - Están en status 'scheduled' (no atendidas/canceladas/completadas)
-    // - La hora de inicio ya pasó (más el período de gracia)
-    // - No se ha enviado alerta aún (pendingAlertSent = false o null)
-    const cutoffTime = new Date(now - GRACE_PERIOD_MS);
 
-    const appointments = await Appointment.findAll({
+    // ─── ALERTA 15 MINUTOS ───
+    const cutoff15 = new Date(now - ALERT_15M_MS);
+    const appts15 = await Appointment.findAll({
       where: {
-        startTime: { [Op.lt]: cutoffTime },
+        startTime: { [Op.lt]: cutoff15 },
         status: 'confirmed',
-        [Op.or]: [
-          { pendingAlertSent: false },
-          { pendingAlertSent: null }
-        ]
+        pendingAlertSent: false
       },
-      include: [
-        { model: Service, attributes: ['name', 'durationMin'] },
-        { 
-          model: Employee, 
-          include: [{ model: User, attributes: ['name', 'email', 'pushToken'] }] 
-        },
-        { model: Business, include: [{ model: User, as: 'Owner', attributes: ['email', 'pushToken'] }] },
-      ],
+      include: includeOptions
     });
+    for (const appt of appts15) await processStuckAlert(appt, '15 minutos', 'pendingAlertSent');
 
-    console.log(`[PendingAlert] 🔍 Encontradas ${appointments.length} citas pendientes no atendidas`);
+    // ─── ALERTA 30 MINUTOS ───
+    const cutoff30 = new Date(now - ALERT_30M_MS);
+    const appts30 = await Appointment.findAll({
+      where: {
+        startTime: { [Op.lt]: cutoff30 },
+        status: 'confirmed',
+        pendingAlert30mSent: false
+      },
+      include: includeOptions
+    });
+    for (const appt of appts30) await processStuckAlert(appt, '30 minutos', 'pendingAlert30mSent');
 
-    for (const appt of appointments) {
-      try {
-        const businessName = appt.Business?.name || 'Tu negocio';
-        const serviceName = appt.Service?.name || 'Servicio';
-        const employeeName = appt.Employee?.User?.name || 'Empleado';
-        const employeeEmail = appt.Employee?.User?.email;
-        const adminEmail = appt.Business?.Owner?.email;
-        const clientName = appt.clientName || 'Cliente';
+    // ─── ALERTA 60 MINUTOS ───
+    const cutoff60 = new Date(now - ALERT_60M_MS);
+    const appts60 = await Appointment.findAll({
+      where: {
+        startTime: { [Op.lt]: cutoff60 },
+        status: 'confirmed',
+        pendingAlert60mSent: false
+      },
+      include: includeOptions
+    });
+    for (const appt of appts60) await processStuckAlert(appt, '1 hora', 'pendingAlert60mSent');
 
-        // Enviar email al empleado asignado
-        if (employeeEmail) {
-          await sendEmail(employeeEmail, 'pendingAppointmentAlert', {
-            recipientType: 'employee',
-            employeeName: String(employeeName),
-            clientName: String(clientName),
-            serviceName: String(serviceName),
-            businessName: String(businessName),
-            startTime: String(appt.startTime),
-            appointmentId: String(appt.id),
-          });
-          console.log(`[PendingAlert] 📧 Email enviado a empleado ${employeeEmail} para cita ${appt.id}`);
-        }
-
-        // Enviar email al admin
-        if (adminEmail && adminEmail !== employeeEmail) {
-          await sendEmail(adminEmail, 'pendingAppointmentAlert', {
-            recipientType: 'admin',
-            employeeName: String(employeeName),
-            clientName: String(clientName),
-            serviceName: String(serviceName),
-            businessName: String(businessName),
-            startTime: String(appt.startTime),
-            appointmentId: String(appt.id),
-          });
-          console.log(`[PendingAlert] 📧 Email enviado a admin ${adminEmail} para cita ${appt.id}`);
-        }
-
-        // Aquí iría la lógica de notificación push (Firebase/OneSignal)
-        // await sendPushNotification(...);
-
-        // Marcar como alerta enviada
-        await appt.update({ pendingAlertSent: true });
-        
-      } catch (e) {
-        console.error(`[PendingAlert] ❌ Error procesando cita ${appt.id}:`, e.message);
-      }
-    }
   } catch (e) {
     console.error('[PendingAlert] ❌ Error en ciclo de alertas:', e.message);
+  }
+}
+
+const includeOptions = [
+  { model: Service, attributes: ['name'] },
+  { model: Employee, include: [{ model: User, attributes: ['name', 'email', 'pushToken'] }] },
+  { model: Business, include: [{ model: User, as: 'Owner', attributes: ['name', 'email', 'pushToken'] }] },
+];
+
+async function processStuckAlert(appt, timeLabel, fieldToUpdate) {
+  try {
+    const businessName = appt.Business?.name || 'Negocio';
+    const serviceName = appt.Service?.name || 'Servicio';
+    const employeeName = appt.Employee?.User?.name || 'Empleado';
+    const clientName = appt.clientName || 'Cliente';
+
+    // 1. Email solo en la primera alerta (15 min) para no saturar
+    if (timeLabel === '15 minutos') {
+      if (appt.Employee?.User?.email) {
+        await sendEmail(appt.Employee.User.email, 'pendingAppointmentAlert', {
+          recipientType: 'employee', employeeName, clientName, serviceName, businessName, startTime: String(appt.startTime), appointmentId: appt.id,
+        });
+      }
+      if (appt.Business?.Owner?.email && appt.Business.Owner.email !== appt.Employee?.User?.email) {
+        await sendEmail(appt.Business.Owner.email, 'pendingAppointmentAlert', {
+          recipientType: 'admin', employeeName, clientName, serviceName, businessName, startTime: String(appt.startTime), appointmentId: appt.id,
+        });
+      }
+    }
+
+    // 2. Push al empleado
+    const employeePushToken = appt.Employee?.User?.pushToken;
+    if (employeePushToken) {
+      await sendPushNotification(employeePushToken, {
+        title: '⚠️ Cita sin iniciar',
+        body: `La cita de ${clientName} (${serviceName}) empezó hace ${timeLabel}. Por favor actualiza el estado.`,
+      }, { type: 'pending_alert', appointmentId: appt.id });
+    }
+
+    // 3. Push al admin
+    const adminPushToken = appt.Business?.Owner?.pushToken;
+    if (adminPushToken && adminPushToken !== employeePushToken) {
+      await sendPushNotification(adminPushToken, {
+        title: '⚠️ Cita retrasada',
+        body: `La cita de ${clientName} con ${employeeName} no ha iniciado después de ${timeLabel}.`,
+      }, { type: 'pending_alert', appointmentId: appt.id });
+    }
+
+    await appt.update({ [fieldToUpdate]: true });
+    console.log(`[PendingAlert] ✅ Alerta de ${timeLabel} enviada para cita ${appt.id}`);
+  } catch (e) {
+    console.error(`[PendingAlert] ❌ Error procesando alerta para cita ${appt.id}:`, e.message);
   }
 }
 
