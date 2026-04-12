@@ -21,6 +21,7 @@ async function updateDatabase() {
     // 2. Agregar columnas de recordatorios a Appointments
     const appointmentColumns = [
       { name: 'reminder30mSent', type: 'BOOLEAN' },
+      { name: 'reminder2hSent', type: 'BOOLEAN' },
       { name: 'pendingAlert30mSent', type: 'BOOLEAN' },
       { name: 'pendingAlert60mSent', type: 'BOOLEAN' }
     ];
