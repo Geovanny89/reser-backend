@@ -9,9 +9,61 @@ exports.getByBusiness = async (req, res) => {
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
     const employees = await Employee.findAll({
       where: { businessId, active: true },
-      include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
+        { 
+          model: Appointment, 
+          attributes: ['id', 'rating', 'clientName', 'updatedAt', 'status'],
+          required: false
+        }
+      ],
+      order: [
+        ['id', 'ASC'],
+        [{ model: Appointment }, 'updatedAt', 'DESC']
+      ]
     });
-    res.json(employees);
+
+    // Calcular estadísticas para cada empleado
+    const employeesWithStats = employees.map(emp => {
+      // Filtrar manualmente solo las que tienen rating para las estadísticas y reseñas
+      const allAppointments = emp.Appointments || [];
+      const ratedAppointments = allAppointments.filter(a => a.rating != null && a.rating !== '');
+      
+      const totalRatings = ratedAppointments.length;
+      const ratings = ratedAppointments.map(a => a.rating);
+      
+      const avgRating = totalRatings > 0 
+        ? (ratings.reduce((sum, r) => sum + r, 0) / totalRatings).toFixed(1)
+        : null;
+      
+      // Contar distribución de estrellas
+      const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      ratings.forEach(r => {
+        if (distribution[r] !== undefined) distribution[r]++;
+      });
+
+      // Obtener TODAS las reseñas detalladas
+      const reviews = ratedAppointments.map(a => ({
+        id: a.id,
+        clientName: a.clientName || 'Cliente Anónimo',
+        rating: a.rating,
+        date: a.updatedAt
+      }));
+
+      const empJson = emp.toJSON();
+      delete empJson.Appointments; 
+      return {
+        ...empJson,
+        stats: {
+          avgRating: avgRating ? parseFloat(avgRating) : null,
+          totalRatings,
+          distribution,
+          reviews
+        }
+      };
+    });
+
+    res.json(employeesWithStats);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -20,7 +72,7 @@ exports.getByBusiness = async (req, res) => {
 // Crear empleado (soporta creación de usuario si se pasan name/email/password)
 exports.create = async (req, res) => {
   try {
-    const { businessId, userId, name, email, password, commissionPct, ownerPct, specialties, photoUrl } = req.body;
+    const { businessId, userId, name, email, password, commissionPct, ownerPct, specialties, specialty, photoUrl, description } = req.body;
     
     let finalUserId = userId;
     let tempPassword = null;
@@ -37,7 +89,7 @@ exports.create = async (req, res) => {
         name,
         email,
         password: hash,
-        role: 'employee'
+        role: ['admin', 'admin_suc'].includes(req.body.role) ? req.body.role : 'employee'
       });
       finalUserId = user.id;
     }
@@ -50,7 +102,10 @@ exports.create = async (req, res) => {
       commissionPct: commissionPct || 0, 
       ownerPct: ownerPct || 100, 
       specialties: specialties || [],
-      photoUrl: photoUrl || null
+      specialty: specialty || null,
+      photoUrl: photoUrl || null,
+      description: description || null,
+      isManager: req.body.isManager === true || req.body.isManager === 'true'
     });
 
     res.status(201).json({
@@ -65,13 +120,25 @@ exports.create = async (req, res) => {
 // Invitar empleado (crear usuario + empleado)
 exports.invite = async (req, res) => {
   try {
-    const { name, email, commissionPct, ownerPct, specialties, photoUrl } = req.body;
+    const { name, email, commissionPct, ownerPct, specialties, specialty, photoUrl, description, businessId } = req.body;
     const adminId = req.user.id; // ID del admin autenticado
 
-    // Obtener el negocio del admin
-    const business = await Business.findOne({ where: { ownerId: adminId } });
-    if (!business) {
-      return res.status(404).json({ error: 'No tienes un negocio asociado' });
+    // Si viene businessId, lo usamos. Si no, buscamos por owner (comportamiento anterior)
+    let finalBusinessId = businessId;
+
+    if (!finalBusinessId) {
+      let business = await Business.findOne({ where: { ownerId: adminId } });
+      
+      // Si no es el dueño, buscar si es un admin_suc de una sucursal
+      if (!business && req.user.role === 'admin_suc') {
+        const emp = await Employee.findOne({ where: { userId: adminId, isManager: true } });
+        if (emp) business = await Business.findByPk(emp.businessId);
+      }
+
+      if (!business) {
+        return res.status(404).json({ error: 'No tienes un negocio asociado' });
+      }
+      finalBusinessId = business.id;
     }
 
     // Validar que el email no exista
@@ -90,14 +157,16 @@ exports.invite = async (req, res) => {
       role: 'employee'
     });
 
-    // Crear empleado con el businessId del admin
+    // Crear empleado con el businessId
     const employee = await Employee.create({
-      businessId: business.id,
+      businessId: finalBusinessId,
       userId: user.id,
       commissionPct: commissionPct || 0,
       ownerPct: ownerPct || 100,
       specialties: specialties || [],
-      photoUrl: photoUrl || null
+      specialty: specialty || null,
+      photoUrl: photoUrl || null,
+      description: description || null
     });
 
     res.status(201).json({
@@ -143,6 +212,11 @@ exports.update = async (req, res) => {
     const employeeUpdates = { ...req.body };
     delete employeeUpdates.email;
     delete employeeUpdates.name;
+
+    // ELIMINAR FOTO ANTERIOR DE CLOUDINARY SI CAMBIA
+    if (employeeUpdates.photoUrl && emp.photoUrl && employeeUpdates.photoUrl !== emp.photoUrl) {
+      await deleteFromCloudinary(emp.photoUrl);
+    }
 
     await emp.update(employeeUpdates);
     
@@ -294,7 +368,10 @@ exports.getCommissionReport = async (req, res) => {
     });
 
     const report = appointments.map(appt => {
-      const price = parseFloat(appt.Service.price) || 0;
+      const basePrice = parseFloat(appt.Service.price) || 0;
+      const additional = parseFloat(appt.additionalAmount) || 0;
+      const totalPrice = basePrice + additional;
+      
       const hasCommission = appt.Service.hasEmployeeCommission !== false; // Default true
       const commissionPct = hasCommission ? (parseFloat(appt.Employee.commissionPct) || 0) : 0;
       const ownerPct = hasCommission ? (parseFloat(appt.Employee.ownerPct) || 100) : 100;
@@ -302,11 +379,14 @@ exports.getCommissionReport = async (req, res) => {
       return {
         date:          appt.startTime,
         service:       appt.Service.name,
-        price:         price,
+        client:        appt.clientName,
+        price:         totalPrice, // Precio total (base + adicional)
+        basePrice:     basePrice,
+        additional:    additional,
         employee:      appt.Employee.User.name,
-        employeeEarns: (price * commissionPct / 100).toFixed(2),
-        ownerEarns:    (price * ownerPct / 100).toFixed(2),
-        hasCommission: hasCommission, // Para mostrar en UI si aplica comisión
+        employeeEarns: (totalPrice * commissionPct / 100).toFixed(2),
+        ownerEarns:    (totalPrice * ownerPct / 100).toFixed(2),
+        hasCommission: hasCommission,
       };
     });
 

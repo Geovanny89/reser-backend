@@ -15,7 +15,11 @@ const storage = new CloudinaryStorage({
   params: {
     folder: 'kdice-reservas', // Carpeta principal
     allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-    transformation: [{ width: 1200, crop: 'limit', quality: 'auto' }], // Compresión automática
+    transformation: [
+      { width: 1200, crop: 'limit' }, // No agrandar imágenes pequeñas, máximo 1200px
+      { quality: 'auto:good' },       // Compresión inteligente (buen balance peso/calidad)
+      { fetch_format: 'auto' }        // Entrega el formato más eficiente (WebP/AVIF) según el navegador
+    ],
     public_id: (req, file) => {
       // Nombre único del archivo
       const cleanName = file.originalname.split('.')[0].replace(/\s+/g, '-');

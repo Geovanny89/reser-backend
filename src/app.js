@@ -9,6 +9,10 @@ app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
+// Rutas críticas primero para probar
+app.post('/api/test-post', (req, res) => res.json({ ok: true }));
+app.use('/api/promotions', require('./routes/promotion.routes'));
+
 // Servir archivos subidos
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
@@ -40,6 +44,7 @@ app.use('/api/appointments',  checkBusinessStatus, require('./routes/appointment
 app.use('/api/schedules',     checkBusinessStatus, require('./routes/schedule.routes'));
 app.use('/api/upload',        require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
+app.use('/api/system-settings', require('./routes/systemSetting.routes'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '3.0.0', timestamp: new Date() }));
 

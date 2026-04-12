@@ -240,6 +240,22 @@ const generatePaymentReceipt = async (appointmentData) => {
        .lineTo(tableRight, tableBottom)
        .stroke();
 
+    // === CARGO ADICIONAL (si existe) ===
+    const additionalAmt = parseFloat(appointmentData.additionalAmount || 0);
+    if (additionalAmt > 0) {
+      doc.fillColor('#fffbeb').rect(tableLeft, tableBottom, tableWidth, 35).fill();
+      doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(10)
+         .text('CARGO ADICIONAL:', tableLeft + 12, tableBottom + 10);
+      doc.fillColor(colors.secondary).font('Helvetica').fontSize(9)
+         .text(appointmentData.additionalNote || 'Concepto adicional', tableLeft + 120, tableBottom + 10);
+      doc.fillColor('#d97706').font('Helvetica-Bold').fontSize(10)
+         .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(additionalAmt), 
+               tableLeft + 450, tableBottom + 10);
+      tableBottom += 35;
+      doc.strokeColor(colors.light).lineWidth(0.5)
+         .moveTo(tableLeft, tableBottom).lineTo(tableRight, tableBottom).stroke();
+    }
+
     // === TOTAL PAGADO - Solo para comprobantes de pago ===
     if (!isTechnicalService) {
       y = tableBottom + 25;
@@ -260,10 +276,13 @@ const generatePaymentReceipt = async (appointmentData) => {
          .fontSize(10)
          .text('TOTAL PAGADO:', totalBoxX + 10, y + 5);
       
+      const basePrice = parseFloat(appointmentData.price || 0);
+      const totalAmount = basePrice + additionalAmt;
+      
       doc.fillColor(colors.accent)
          .font('Helvetica-Bold')
          .fontSize(16)
-         .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(appointmentData.price || 0), 
+         .text(new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(totalAmount), 
                totalBoxX + 10, y + 18);
 
       y += 50;

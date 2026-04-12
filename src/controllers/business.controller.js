@@ -1,11 +1,16 @@
-const { Business, Service, Employee, User } = require('../models');
+const { Business, Service, Employee, User, Promotion } = require('../models');
 const { deleteFromCloudinary } = require('../config/cloudinary');
 const { sendEmail } = require('../config/email');
+const { Op } = require('sequelize');
 
 exports.getAll = async (req, res) => {
   try {
     const businesses = await Business.findAll({
-      include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'email'] }]
+      include: [
+        { model: User, as: 'Owner', attributes: ['id', 'name', 'email'] },
+        { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+      ],
+      order: [['createdAt', 'DESC']]
     });
     res.json(businesses);
   } catch (e) {
@@ -16,18 +21,210 @@ exports.getAll = async (req, res) => {
 // NUEVO: Obtener el negocio del admin autenticado
 exports.getMyBusiness = async (req, res) => {
   try {
-    const biz = await Business.findOne({
-      where: { ownerId: req.user.id },
-      include: [
-        { model: Service, as: 'Services', where: { active: true }, required: false },
-        {
-          model: Employee, as: 'Employees', where: { active: true }, required: false,
-          include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+    const userId = req.user.id;
+    const { businessId } = req.query;
+    
+    let biz = null;
+
+    // 1. Si se solicita un negocio específico
+    if (businessId) {
+      biz = await Business.findByPk(businessId, {
+        include: [
+          { model: Service, as: 'Services', where: { active: true }, required: false },
+          {
+            model: Employee, as: 'Employees', where: { active: true }, required: false,
+            include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+          },
+          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+        ]
+      });
+
+      if (biz) {
+        // Verificar si es dueño o manager
+        const isOwner = biz.ownerId === userId;
+        const emp = await Employee.findOne({ where: { userId, businessId: biz.id, isManager: true } });
+        const isManager = !!emp || req.user.role === 'admin_suc';
+
+        if (!isOwner && !isManager) {
+          return res.status(403).json({ error: 'Sin permisos para este negocio' });
         }
-      ]
-    });
-    if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado' });
+      }
+    }
+
+    // 2. Si no hay negocio específico o no se encontró, buscar el principal/asignado
+    if (!biz) {
+      // Buscar si el usuario es el DUEÑO de algún negocio
+      biz = await Business.findOne({
+        where: { ownerId: userId },
+        include: [
+          { model: Service, as: 'Services', where: { active: true }, required: false },
+          {
+            model: Employee, as: 'Employees', where: { active: true }, required: false,
+            include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+          },
+          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+        ],
+        order: [['isBranch', 'ASC']] // Primero negocios principales
+      });
+
+      // Si no es dueño, buscar si es un EMPLEADO con permisos de gestión
+      if (!biz) {
+        const emp = await Employee.findOne({ 
+          where: { userId },
+          attributes: ['businessId', 'isManager']
+        });
+
+        if (emp && (emp.isManager || req.user.role === 'admin_suc')) {
+          biz = await Business.findByPk(emp.businessId, {
+            include: [
+              { model: Service, as: 'Services', where: { active: true }, required: false },
+              {
+                model: Employee, as: 'Employees', where: { active: true }, required: false,
+                include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+              },
+              { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+            ]
+          });
+        }
+      }
+    }
+
+    if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado o asignado' });
     res.json(biz);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.create = async (req, res) => {
+  try {
+    const { name, type, ownerId, parentBusinessId } = req.body;
+    
+    let isBranch = false;
+    let branchStatus = 'none';
+    let status = 'active';
+
+    if (parentBusinessId) {
+      isBranch = true;
+      branchStatus = 'pending_approval';
+      status = 'blocked'; // Bloqueada hasta que el superadmin la apruebe
+    }
+
+    const biz = await Business.create({
+      ...req.body,
+      isBranch,
+      branchStatus,
+      status
+    });
+
+    res.status(201).json(biz);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
+exports.requestBranch = async (req, res) => {
+  try {
+    const { name, type, address, phone, branchPaymentScreenshot } = req.body;
+    
+    // Buscar el negocio principal del usuario
+    let parentBiz = await Business.findOne({ 
+      where: { ownerId: req.user.id },
+      order: [['isBranch', 'ASC']]
+    });
+    
+    // Si no es el dueño, podría ser un admin_suc de una sucursal que quiere crear otra sucursal?
+    // Generalmente solo el dueño (admin) crea sucursales, pero si admin_suc debe tener "mismos permisos"
+    if (!parentBiz && req.user.role === 'admin_suc') {
+      const emp = await Employee.findOne({ where: { userId: req.user.id, isManager: true } });
+      if (emp) {
+        const currentBiz = await Business.findByPk(emp.businessId);
+        if (currentBiz.isBranch) {
+          parentBiz = await Business.findByPk(currentBiz.parentBusinessId);
+        } else {
+          parentBiz = currentBiz;
+        }
+      }
+    }
+
+    if (!parentBiz) return res.status(404).json({ error: 'No tienes un negocio principal registrado' });
+
+    const branch = await Business.create({
+      name,
+      type: type || 'otro',
+      address,
+      phone,
+      ownerId: parentBiz.ownerId, // La sucursal pertenece al mismo dueño que el negocio principal
+      parentBusinessId: parentBiz.id,
+      isBranch: true,
+      branchStatus: 'pending_approval',
+      status: 'blocked',
+      subscriptionStatus: 'pending',
+      branchPaymentScreenshot // Este campo es el que lee el superadmin
+    });
+
+    res.status(201).json(branch);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+};
+
+exports.approveBranch = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approve } = req.body; // true o false
+
+    const branch = await Business.findByPk(id);
+    if (!branch || !branch.isBranch) return res.status(404).json({ error: 'Sucursal no encontrada' });
+
+    if (approve) {
+      await branch.update({
+        branchStatus: 'approved',
+        status: 'active',
+        subscriptionStatus: 'paid',
+        subscriptionStartDate: new Date(),
+        subscriptionEndDate: new Date(new Date().setMonth(new Date().getMonth() + 1)) // 1 mes inicial
+      });
+    } else {
+      await branch.update({
+        branchStatus: 'rejected',
+        status: 'blocked'
+      });
+    }
+
+    res.json({ message: approve ? 'Sucursal aprobada y activada' : 'Sucursal rechazada' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.getMyBranches = async (req, res) => {
+  try {
+    // Buscar el negocio principal
+    let parentBiz = await Business.findOne({ 
+      where: { ownerId: req.user.id },
+      order: [['isBranch', 'ASC']]
+    });
+
+    // Si no es el dueño, podría ser un admin_suc de una sucursal
+    if (!parentBiz && req.user.role === 'admin_suc') {
+      const emp = await Employee.findOne({ where: { userId: req.user.id, isManager: true } });
+      if (emp) {
+        const currentBiz = await Business.findByPk(emp.businessId);
+        if (currentBiz.isBranch) {
+          parentBiz = await Business.findByPk(currentBiz.parentBusinessId);
+        } else {
+          parentBiz = currentBiz;
+        }
+      }
+    }
+
+    if (!parentBiz) return res.json([]);
+
+    const branches = await Business.findAll({
+      where: { parentBusinessId: parentBiz.id }
+    });
+    res.json(branches);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -36,14 +233,41 @@ exports.getMyBusiness = async (req, res) => {
 // NUEVO: Actualizar el negocio del admin autenticado
 exports.updateMyBusiness = async (req, res) => {
   try {
-    const biz = await Business.findOne({ where: { ownerId: req.user.id } });
-    if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado' });
+    const { businessId } = req.query;
+    let biz = null;
+
+    if (businessId) {
+      biz = await Business.findByPk(businessId);
+      if (biz) {
+        const isOwner = biz.ownerId === req.user.id;
+        const emp = await Employee.findOne({ where: { userId: req.user.id, businessId: biz.id, isManager: true } });
+        const isManager = !!emp || req.user.role === 'admin_suc';
+        if (!isOwner && !isManager) return res.status(403).json({ error: 'Sin permisos' });
+      }
+    }
+
+    if (!biz) {
+      biz = await Business.findOne({ 
+        where: { ownerId: req.user.id },
+        order: [['isBranch', 'ASC']]
+      });
+
+      // Si no es el dueño, buscar si es un admin_suc gestionando su sucursal
+      if (!biz && req.user.role === 'admin_suc') {
+        const emp = await Employee.findOne({ where: { userId: req.user.id, isManager: true } });
+        if (emp) biz = await Business.findByPk(emp.businessId);
+      }
+    }
+
+    if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado o asignado' });
     
     const allowed = [
       'name', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl',
-      'whatsapp', 'instagram', 'facebook', 'tiktok', 'twitter', 'website',
+      'whatsapp', 'whatsappCatalog', 'instagram', 'facebook', 'tiktok', 'twitter', 'pinterest', 'youtube', 'website',
       'gallery', 'primaryColor', 'secondaryColor', 'tagline', 'ctaText',
       'businessHours', 'metaDescription', 'isTechnicalServices',
+      'showPaymentMethods', 'paymentMethods', 'useParentWhatsApp',
+      'showMissionVision', 'mission', 'vision', 'googleMapsUrl',
     ];
     
     const updates = {};
@@ -69,15 +293,46 @@ exports.getBySlug = async (req, res) => {
     const biz = await Business.findOne({
       where: { slug: req.params.slug },
       include: [
-        { model: Service, as: 'Services', where: { active: true }, required: false },
+        { 
+          model: Service, 
+          as: 'Services', 
+          where: { active: true }, 
+          required: false,
+          attributes: ['id', 'name', 'description', 'price', 'durationMin', 'isTechnicalService', 'priceOptional', 'imageUrl']
+        },
         {
           model: Employee, as: 'Employees', where: { active: true }, required: false,
+          attributes: ['id', 'businessId', 'userId', 'specialty', 'photoUrl', 'description', 'isManager', 'active'],
           include: [{ model: User, attributes: ['id', 'name'] }]
         }
       ]
     });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
-    res.json(biz);
+
+    // Obtener promociones activas
+    const now = new Date();
+    const promotions = await Promotion.findAll({
+      where: {
+        businessId: biz.id,
+        active: true,
+        startDate: { [Op.lte]: now },
+        endDate: { [Op.gte]: now }
+      },
+      include: [{ model: Service, attributes: ['name'] }]
+    });
+
+    const bizJson = biz.toJSON();
+    bizJson.Promotions = promotions;
+    
+    // Asignar promociones a los servicios
+    if (bizJson.Services) {
+      bizJson.Services = bizJson.Services.map(svc => {
+        const svcPromos = promotions.filter(p => p.serviceId === svc.id || p.applyToAllServices);
+        return { ...svc, Promotions: svcPromos };
+      });
+    }
+
+    res.json(bizJson);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -87,7 +342,12 @@ exports.getBySlug = async (req, res) => {
 exports.getByIdPublic = async (req, res) => {
   try {
     const biz = await Business.findByPk(req.params.id, {
-      attributes: ['id', 'name', 'slug', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl', 'primaryColor', 'secondaryColor', 'whatsapp', 'instagram', 'facebook', 'tiktok', 'twitter', 'website', 'status']
+      attributes: [
+        'id', 'name', 'slug', 'type', 'description', 'phone', 'address', 
+        'logoUrl', 'bannerUrl', 'primaryColor', 'secondaryColor', 
+        'whatsapp', 'whatsappCatalog', 'instagram', 'facebook', 'tiktok', 'twitter', 'website', 
+        'status', 'showMissionVision', 'mission', 'vision', 'googleMapsUrl'
+      ]
     });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
     if (biz.status === 'blocked') return res.status(403).json({ error: 'Negocio bloqueado' });
@@ -171,23 +431,11 @@ exports.getAvailability = async (req, res) => {
     const dayAppointments = await Appointment.findAll({
       where: {
         businessId: biz.id,
-        status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] },
+        status: { [Op.notIn]: ['cancelled'] },
         startTime: { [Op.lt]: endOfDay },
         endTime:   { [Op.gt]: startOfDay }
       }
     });
-
-    // Agrupar por empleado: work = jornada, lunch = almuerzo, blocked = permiso/bloqueo
-    const schedulesByEmployee = {};
-    for (const sched of allSchedules) {
-      if (!schedulesByEmployee[sched.employeeId]) {
-        schedulesByEmployee[sched.employeeId] = { work: [], lunch: [], blocked: [] };
-      }
-      // Normalizar y limpiar tipo
-      const rawType = (sched.type || 'work').trim().toLowerCase();
-      const tipo = ['work', 'lunch', 'blocked'].includes(rawType) ? rawType : 'work';
-      schedulesByEmployee[sched.employeeId][tipo].push(sched);
-    }
 
     /**
      * Convierte un horario HH:MM a minutos desde medianoche.
@@ -200,6 +448,17 @@ exports.getAvailability = async (req, res) => {
     };
 
     /**
+     * Convierte un objeto Date o string ISO a minutos del día en Colombia.
+     */
+    const dateToMinutesColombia = (date) => {
+      const d = new Date(date);
+      // Ajustar al offset de Colombia
+      const localMs = d.getTime() + COLOMBIA_OFFSET_MS;
+      const localDate = new Date(localMs);
+      return localDate.getUTCHours() * 60 + localDate.getUTCMinutes();
+    };
+
+    /**
      * Verifica si el intervalo [slotStart, slotEnd) se solapa con [blockStart, blockEnd).
      */
     const overlaps = (slotStart, slotEnd, blockStart, blockEnd) => {
@@ -207,73 +466,73 @@ exports.getAvailability = async (req, res) => {
     };
 
     const slots = [];
+    const nowMs = Date.now();
+    const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de gracia
+
     for (const emp of employees) {
-      const empSchedules = schedulesByEmployee[emp.id] || { work: [], lunch: [], blocked: [] };
-      const empAppointments = dayAppointments.filter(a => a.employeeId === emp.id);
+      const empSchedules = allSchedules.filter(s => String(s.employeeId) === String(emp.id));
+      const empAppointments = dayAppointments.filter(a => String(a.employeeId) === String(emp.id));
 
-      // Pre-calcular rangos de almuerzo y bloqueo en minutos para este empleado
-      const lunchRanges = empSchedules.lunch.map(s => ({
-        start: toMinutes(s.startTime),
-        end:   toMinutes(s.endTime),
-      }));
-      const blockedRanges = empSchedules.blocked.map(s => ({
-        start: toMinutes(s.startTime),
-        end:   toMinutes(s.endTime),
-      }));
+      const workSchedules = empSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
+      const lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
+      const blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
 
-      // Procesar solo horarios de trabajo
-      for (const sched of empSchedules.work) {
+      for (const sched of workSchedules) {
         const workStart = toMinutes(sched.startTime);
         const workEnd   = toMinutes(sched.endTime);
         let current = workStart;
 
-        // Si el servicio dura 0 o es inválido, usar 30 min por defecto
-        const safeDuration = (duration && duration > 0) ? duration : 30;
+        const safeDuration = (duration && duration > 0) ? Number(duration) : 30;
 
         while (current + safeDuration <= workEnd) {
-          const slotEndMin = current + safeDuration;
+          const hh = String(Math.floor(current / 60)).padStart(2, '0');
+          const mm = String(current % 60).padStart(2, '0');
+          const timeStr = `${hh}:${mm}`;
 
-          // Verificar si el slot se solapa con CUALQUIER almuerzo
-          const isLunch = lunchRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
+          const slotStart = colombiaDateTimeToUTC(date, timeStr);
+          const slotEnd   = new Date(slotStart.getTime() + safeDuration * 60000);
 
-          // Verificar si el slot se solapa con CUALQUIER bloqueo/permiso
-          const isBlocked = isLunch || blockedRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
-
-          if (!isBlocked) {
-            const hh = String(Math.floor(current / 60)).padStart(2, '0');
-            const mm = String(current % 60).padStart(2, '0');
-            const timeStr = `${hh}:${mm}`;
-
-            // Construir fechas UTC correctas para Colombia
-            const slotStart = colombiaDateTimeToUTC(date, timeStr);
-            const slotEnd   = new Date(slotStart.getTime() + safeDuration * 60000);
-
-            // No mostrar slots en el pasado (con un margen de 15 minutos para permitir reservar citas muy cercanas)
-            const MARGIN_MS = 15 * 60 * 1000;
-            const nowMs = Date.now();
-            
-            // Si es hoy, filtrar slots pasados. Si es futuro, mostrar todos los configurados.
-            if (!isTargetToday || slotStart.getTime() > (nowMs - MARGIN_MS)) {
-              // Verificar conflicto con citas existentes en memoria
-              const hasConflict = empAppointments.some(appt => {
-                const apptStart = new Date(appt.startTime).getTime();
-                const apptEnd   = new Date(appt.endTime).getTime();
-                return apptStart < slotEnd.getTime() && apptEnd > slotStart.getTime();
-              });
-
-              if (!hasConflict) {
-                slots.push({
-                  employeeId:   emp.id,
-                  employeeName: emp.User.name,
-                  startTime:    slotStart,
-                  endTime:      slotEnd,
-                  localTime:    timeStr,
-                });
-              }
-            }
+          // 1. Filtrar si ya pasó (si es hoy)
+          if (isTargetToday && slotStart.getTime() <= (nowMs - MARGIN_MS)) {
+            current += 5;
+            continue;
           }
 
-          current += 30; // Siempre avanzar en intervalos de 30 minutos para ofrecer más opciones
+          // 2. Verificar Citas Existentes
+          const conflictAppt = empAppointments.find(appt => {
+            const apptS = dateToMinutesColombia(appt.startTime);
+            const apptE = dateToMinutesColombia(appt.endTime);
+            return overlaps(current, current + safeDuration, apptS, apptE);
+          });
+
+          if (conflictAppt) {
+            // Saltar al final de la cita
+            current = dateToMinutesColombia(conflictAppt.endTime);
+            continue;
+          }
+
+          // 3. Verificar Almuerzo y Bloqueos
+          const conflictBlock = [...lunchRanges, ...blockedRanges].find(r => 
+            overlaps(current, current + safeDuration, toMinutes(r.startTime), toMinutes(r.endTime))
+          );
+
+          if (conflictBlock) {
+            // Saltar al final del bloqueo
+            current = toMinutes(conflictBlock.endTime);
+            continue;
+          }
+
+          // 4. El slot está libre!
+          slots.push({
+            employeeId:   emp.id,
+            employeeName: emp.User.name,
+            startTime:    slotStart,
+            endTime:      slotEnd,
+            localTime:    timeStr,
+          });
+
+          // Avanzar al siguiente intervalo según la duración del servicio
+          current += safeDuration;
         }
       }
     }
@@ -573,6 +832,35 @@ exports.submitPayment = async (req, res) => {
     res.json({ 
       message: 'Pago registrado correctamente. Está pendiente de verificación.', 
       business: b 
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Actualizar misión y visión
+exports.updateMissionVision = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { mission, vision, showMissionVision } = req.body;
+    
+    const business = await Business.findByPk(id);
+    if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    // Verificar que el usuario tenga permiso
+    const isOwner = business.ownerId === req.user.id;
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: 'No autorizado' });
+    
+    await business.update({
+      mission: mission !== undefined ? mission : business.mission,
+      vision: vision !== undefined ? vision : business.vision,
+      showMissionVision: showMissionVision !== undefined ? showMissionVision : business.showMissionVision
+    });
+    
+    res.json({ 
+      message: 'Misión y visión actualizadas correctamente', 
+      business 
     });
   } catch (e) {
     res.status(500).json({ error: e.message });

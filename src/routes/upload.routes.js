@@ -23,13 +23,21 @@ router.post('/', auth, upload.single('image'), (req, res) => {
 });
 
 // Subir múltiples imágenes para la galería
-router.post('/gallery', auth, role('admin'), upload.array('images', 20), async (req, res) => {
+router.post('/gallery', auth, role('admin', 'admin_suc'), upload.array('images', 20), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No se recibieron imágenes' });
     }
     const urls = req.files.map(f => f.path);
-    const biz = await Business.findOne({ where: { ownerId: req.user.id } });
+    
+    // Buscar negocio (dueño o admin sucursal)
+    let biz = await Business.findOne({ where: { ownerId: req.user.id } });
+    if (!biz && req.user.role === 'admin_suc') {
+      const { Employee } = require('../models');
+      const emp = await Employee.findOne({ where: { userId: req.user.id, isManager: true } });
+      if (emp) biz = await Business.findByPk(emp.businessId);
+    }
+
     if (biz) {
       let gallery = [];
       try { gallery = JSON.parse(biz.gallery || '[]'); } catch { gallery = []; }
@@ -45,11 +53,19 @@ router.post('/gallery', auth, role('admin'), upload.array('images', 20), async (
 });
 
 // Eliminar imagen de la galería
-router.delete('/gallery/remove', auth, role('admin'), async (req, res) => {
+router.delete('/gallery/remove', auth, role('admin', 'admin_suc'), async (req, res) => {
   try {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL requerida' });
-    const biz = await Business.findOne({ where: { ownerId: req.user.id } });
+    
+    // Buscar negocio (dueño o admin sucursal)
+    let biz = await Business.findOne({ where: { ownerId: req.user.id } });
+    if (!biz && req.user.role === 'admin_suc') {
+      const { Employee } = require('../models');
+      const emp = await Employee.findOne({ where: { userId: req.user.id, isManager: true } });
+      if (emp) biz = await Business.findByPk(emp.businessId);
+    }
+
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
     
     let gallery = [];

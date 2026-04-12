@@ -88,6 +88,40 @@ router.patch('/:id/cancel', (req, res, next) => {
   return auth(req, res, next);
 }, ctrl.cancel);
 
+/**
+ * @swagger
+ * /appointments/{id}/confirm:
+ *   get:
+ *     summary: Confirmar asistencia a cita (cliente - desde email)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: token
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Asistencia confirmada
+ */
+router.get('/:id/confirm', ctrl.confirmAttendance);
+
+/**
+ * @swagger
+ * /appointments/{id}/cancel-from-email:
+ *   get:
+ *     summary: Cancelar cita (cliente - desde email)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ */
+router.get('/:id/cancel-from-email', ctrl.cancelFromEmail);
+
 router.use(auth);
 
 /**
@@ -109,8 +143,9 @@ router.use(auth);
  *       200:
  *         description: Lista de citas
  */
-router.get('/', role('admin', 'superadmin'), ctrl.getByBusiness);
-router.get('/business/:businessId', role('admin', 'superadmin'), ctrl.getByBusiness);
+router.get('/', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
+router.get('/consolidated', role('admin', 'admin_suc'), ctrl.getConsolidated);
+router.get('/business/:businessId', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 
 /**
  * @swagger
@@ -150,7 +185,62 @@ router.get('/my', role('employee'), ctrl.getMyAppointments);
  *       200:
  *         description: Estado actualizado
  */
-router.patch('/:id/status', role('admin', 'superadmin', 'employee'), ctrl.updateStatus);
+router.patch('/:id/status', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.updateStatus);
+
+/**
+ * @swagger
+ * /appointments/{id}/additional-charge:
+ *   patch:
+ *     summary: Agregar o modificar cargo adicional a una cita
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               additionalAmount: { type: number, example: 10000 }
+ *               additionalNote: { type: string, example: "Figura complicada" }
+ *     responses:
+ *       200:
+ *         description: Cargo adicional agregado
+ */
+router.patch('/:id/additional-charge', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.addAdditionalCharge);
+
+/**
+ * @swagger
+ * /appointments/{id}/transfer:
+ *   patch:
+ *     summary: Transferir cita a otro empleado
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               newEmployeeId: { type: string, format: uuid, description: 'ID del empleado destino' }
+ *     responses:
+ *       200:
+ *         description: Cita transferida exitosamente
+ *       409:
+ *         description: El empleado destino ya tiene una cita en ese horario
+ */
+router.patch('/:id/transfer', role('admin', 'admin_suc', 'superadmin'), ctrl.transferAppointment);
 
 /**
  * @swagger
@@ -195,7 +285,7 @@ router.patch('/:id/cancel', (req, res, next) => {
  *       400:
  *         description: La cita no está completada
  */
-router.post('/:id/send-receipt', role('admin', 'superadmin'), ctrl.sendReceipt);
+router.post('/:id/send-receipt', role('admin', 'admin_suc', 'superadmin'), ctrl.sendReceipt);
 
 /**
  * @swagger

@@ -1,4 +1,4 @@
-const { Appointment, Service, Employee, User, Business } = require('../models');
+const { Appointment, Service, Employee, User, Business, Promotion } = require('../models');
 const { Op } = require('sequelize');
 const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
@@ -41,16 +41,17 @@ exports.getByBusiness = async (req, res) => {
   try {
     const businessId = req.query.businessId || req.params.businessId;
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
-    
-    const { date, status } = req.query;
+
+    const { date, employeeId } = req.query;
     const where = { businessId };
-    if (status) where.status = status;
+    if (employeeId) where.employeeId = employeeId;
+    
     if (date) {
-      // Usar fecha local de Colombia (UTC-5)
       const d = new Date(`${date}T00:00:00-05:00`);
       const next = new Date(d); next.setDate(next.getDate() + 1);
       where.startTime = { [Op.between]: [d, next] };
     }
+
     const appointments = await Appointment.findAll({
       where,
       include: [
@@ -59,6 +60,50 @@ exports.getByBusiness = async (req, res) => {
       ],
       order: [['startTime', 'ASC']]
     });
+    res.json(appointments);
+  } catch (e) {
+    console.error('[getByBusiness] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.getConsolidated = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    // 1. Buscar el negocio principal (si es el dueño) o el negocio asignado (si es manager)
+    let mainBiz = await Business.findOne({ where: { ownerId: userId, isBranch: false } });
+    
+    if (!mainBiz) {
+      const emp = await Employee.findOne({ where: { userId, isManager: true } });
+      if (emp) {
+        mainBiz = await Business.findByPk(emp.businessId);
+      }
+    }
+
+    if (!mainBiz) return res.status(404).json({ error: 'Negocio no encontrado' });
+
+    // Si es una sucursal, el "consolidado" para ese manager son solo sus propias citas
+    // Si es el negocio principal, traemos todas las sucursales
+    let businessIds = [mainBiz.id];
+    
+    if (!mainBiz.isBranch) {
+      const branches = await Business.findAll({ 
+        where: { parentBusinessId: mainBiz.id },
+        attributes: ['id']
+      });
+      businessIds = [...businessIds, ...branches.map(b => b.id)];
+    }
+
+    // 2. Traer todas las citas de esos negocios
+    const appointments = await Appointment.findAll({
+      where: { businessId: { [Op.in]: businessIds } },
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] }
+      ],
+      order: [['startTime', 'DESC']]
+    });
+
     res.json(appointments);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -113,7 +158,17 @@ exports.getMyClientAppointments = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, startTime, notes } = req.body;
+    const { businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, startTime, notes, status } = req.body;
+
+    console.log('[Create Appointment] Datos recibidos:', {
+      businessId,
+      serviceId,
+      employeeId,
+      startTime,
+      clientEmail,
+      clientName,
+      user: req.user ? { id: req.user.id, role: req.user.role } : 'no auth'
+    });
 
     const service = await Service.findByPk(serviceId);
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
@@ -121,22 +176,74 @@ exports.create = async (req, res) => {
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
 
-    const conflict = await Appointment.findOne({
+    // Verificar conflictos SOLO si no es cita express (status='attention')
+    // Las citas express son para atención inmediata y no deben ser bloqueadas
+    const isExpress = status === 'attention';
+    
+    if (!isExpress) {
+      const conflict = await Appointment.findOne({
+        where: {
+          employeeId,
+          businessId,
+          status: { [Op.notIn]: ['cancelled'] },
+          startTime: { [Op.lt]: end },
+          endTime: { [Op.gt]: start },
+        }
+      });
+      if (conflict) return res.status(409).json({ error: 'El empleado ya tiene una cita en ese horario' });
+    }
+
+    // CALCULAR PRECIO CON PROMOCIONES
+    const now = new Date();
+    const promotion = await Promotion.findOne({
       where: {
-        employeeId,
-        status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] }, // Bloquear por cualquier cita que NO esté cancelada
-        startTime: { [Op.lt]: end },
-        endTime: { [Op.gt]: start },
-      }
+        businessId,
+        active: true,
+        startDate: { [Op.lte]: now },
+        endDate: { [Op.gte]: now },
+        [Op.or]: [
+          { serviceId },
+          { applyToAllServices: true }
+        ]
+      },
+      order: [['applyToAllServices', 'ASC']] // Priorizar promociones específicas sobre las generales
     });
-    if (conflict) return res.status(409).json({ error: 'El empleado ya tiene una cita en ese horario' });
+
+    const basePrice = parseFloat(service.price || 0);
+    let discountApplied = 0;
+    let promotionId = null;
+
+    if (promotion) {
+      promotionId = promotion.id;
+      if (promotion.discountType === 'percentage') {
+        discountApplied = basePrice * (parseFloat(promotion.discountValue) / 100);
+      } else {
+        discountApplied = parseFloat(promotion.discountValue);
+      }
+    }
+
+    const finalPrice = Math.max(0, basePrice - discountApplied);
+
+    const cleanPhone = clientPhone ? clientPhone.replace(/\D/g, '').slice(-10) : null;
 
     const appt = await Appointment.create({
-      businessId, serviceId, employeeId, clientName, clientPhone,
+      businessId, serviceId, employeeId, clientName, 
+      clientPhone: cleanPhone,
       clientEmail: clientEmail ? clientEmail.toLowerCase().trim() : null,
       clientId: (req.user && req.user.role === 'client') ? req.user.id : (req.body.clientId || null),
       startTime: start, endTime: end, notes,
+      status: status || 'pending',
+      basePrice, discountApplied, finalPrice, promotionId
     });
+    
+    console.log('[Create Appointment] Cita creada exitosamente:', {
+      id: appt.id,
+      businessId: appt.businessId,
+      startTime: appt.startTime,
+      endTime: appt.endTime,
+      status: appt.status
+    });
+    
     // Notificaciones automáticas (sin bloquear la respuesta)
     setImmediate(async () => {
       try {
@@ -199,7 +306,7 @@ exports.create = async (req, res) => {
             serviceName:  String(fullAppt.Service?.name || ''),
             employeeName: String(fullAppt.Employee?.User?.name || ''),
             startTime:    String(fullAppt.startTime || ''),
-            price:        String(fullAppt.Service?.price || ''),
+            price:        String(fullAppt.finalPrice || fullAppt.Service?.price || ''),
           }).catch(e => console.error('[Email] Client notify error:', e.message));
         }
       } catch (e) {
@@ -225,16 +332,100 @@ exports.updateStatus = async (req, res) => {
     if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
     
     const oldStatus = appt.status;
-    await appt.update({ status: req.body.status });
+    const updateData = { status: req.body.status };
 
-    // Si la cita se marca como completada, enviar comprobante de pago
+    // Si se está completando la cita, guardar el método de pago si viene en el body
+    if (req.body.status === 'done' && req.body.paymentMethod) {
+      updateData.paymentMethod = req.body.paymentMethod;
+    }
+
+    // SI EL SERVICIO CAMBIÓ, RECALCULAR endTime BASADO EN LA DURACIÓN DEL NUEVO SERVICIO
+    if (req.body.serviceId && req.body.serviceId !== appt.serviceId) {
+      const newService = await Service.findByPk(req.body.serviceId);
+      if (newService) {
+        updateData.serviceId = newService.id;
+        const start = new Date(appt.startTime);
+        updateData.endTime = new Date(start.getTime() + newService.durationMin * 60000);
+      }
+    } else if (appt.Service) {
+      // SI NO CAMBIÓ EL ID, PERO EL TIEMPO SIGUE SIENDO EL MISMO, 
+      // ASEGURAR QUE endTime COINCIDA CON LA DURACIÓN ACTUAL DEL SERVICIO
+      const start = new Date(appt.startTime);
+      updateData.endTime = new Date(start.getTime() + appt.Service.durationMin * 60000);
+    }
+
+    await appt.update(updateData);
+
+    // Si la cita se marca como completada, enviar comprobante de pago y solicitud de calificación
     if (req.body.status === 'done' && oldStatus !== 'done') {
-      setImmediate(async () => {
-        try {
-          await sendPaymentReceipt(appt);
-        } catch (e) {
-          console.error('[Email] Error enviando comprobante de pago:', e.message);
-        }
+      // Usar setImmediate para no bloquear la respuesta, luego setTimeout para el delay
+      setImmediate(() => {
+        setTimeout(async () => {
+          try {
+            console.log(`[Done Action] Iniciando procesamiento post-completado para cita ${appt.id}`);
+            
+            // Recargar cita para asegurar datos frescos
+            const freshAppt = await Appointment.findByPk(appt.id, {
+              include: [
+                { model: Service },
+                { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+                { model: Business },
+              ]
+            });
+
+            if (!freshAppt) {
+              console.error('[Done Action] Cita no encontrada al recargar');
+              return;
+            }
+
+            // Enviar comprobante de pago (aislado en su propio try-catch)
+            try {
+              await sendPaymentReceipt(freshAppt);
+              console.log(`[Done Action] Comprobante enviado para cita ${appt.id}`);
+            } catch (receiptErr) {
+              console.error('[Done Action] Error enviando comprobante:', receiptErr.message);
+            }
+            
+            // Enviar solicitud de calificación por WhatsApp (con 5 min de delay)
+            if (freshAppt.clientPhone && !freshAppt.ratingSent) {
+              try {
+                const { WhatsAppSession, Business } = require('../models');
+                const { queueMessage, getRandomRatingTemplate } = require('../services/whatsappService');
+                
+                const resolvedBizId = await Business.resolveWhatsAppBusinessId(freshAppt.businessId);
+                const session = await WhatsAppSession.findOne({ 
+                  where: { businessId: resolvedBizId, status: 'connected' } 
+                });
+                
+                if (session) {
+                  const employeeName = freshAppt.Employee?.User?.name || 'nuestro profesional';
+                  const businessName = freshAppt.Business?.name || 'nosotros';
+                  const ratingTemplate = getRandomRatingTemplate();
+                  const text = `¡Hola *${freshAppt.clientName}*! 👋 Gracias por visitarnos en *${businessName}*.\n\n${ratingTemplate}\n\nServicio: *${employeeName}*`;
+                  
+                  // Programar envío con 5 minutos de delay
+                  setTimeout(async () => {
+                    try {
+                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, text);
+                      await freshAppt.update({ ratingSent: true });
+                      console.log(`[Done Action] Solicitud de calificación enviada (5min post-cita) para cita ${appt.id}`);
+                    } catch (delayedErr) {
+                      console.error('[Done Action] Error enviando calificación post-delay:', delayedErr.message);
+                    }
+                  }, 5 * 60 * 1000); // 5 minutos
+                  
+                  console.log(`[Done Action] Solicitud de calificación programada para cita ${appt.id} (envío en 5 min)`);
+                }
+              } catch (waErr) {
+                console.error('[Done Action] Error programando solicitud de calificación:', waErr.message);
+              }
+            }
+            
+            console.log(`[Done Action] Procesamiento completado para cita ${appt.id}`);
+          } catch (e) {
+            console.error('[Done Action] Error general:', e.message);
+          }
+        }, 5000); // Delay de 5 segundos para evitar colisiones
       });
     }
 
@@ -265,46 +456,52 @@ const sendPaymentReceipt = async (appointment) => {
   const isTechnicalService = appointment.Business?.isTechnicalServices || false;
   const orderNumber = appointment.id.substring(0, 8).toUpperCase();
 
-  // Para servicios técnicos: enviar Orden de Servicio con PDF
-  if (isTechnicalService) {
-    console.log('[Email] Enviando Orden de Servicio para cita técnica:', appointment.id);
-    
-    // Generar PDF de Orden de Servicio
-    const pdfBuffer = await generatePaymentReceipt({
-      businessId: appointment.businessId,
-      businessName: appointment.Business?.name,
-      businessLogoUrl: appointment.Business?.logoUrl,
-      businessAddress: appointment.Business?.address,
-      businessPhone: appointment.Business?.phone,
-      businessNit: appointment.Business?.nit,
-      id: appointment.id,
-      clientName: appointment.clientName,
-      clientEmail: appointment.clientEmail,
-      clientPhone: appointment.clientPhone,
-      serviceName: appointment.Service?.name,
-      serviceDescription: appointment.Service?.description,
-      employeeName: appointment.Employee?.User?.name,
-      startTime: appointment.startTime,
-      endTime: appointment.endTime,
-      price: appointment.Service?.price,
-      paymentMethod: appointment.paymentMethod || 'Efectivo',
-      notes: appointment.notes,
-      isTechnicalService: true, // Flag para que el PDF genere OS en lugar de comprobante
-    });
-    
-    await sendEmail(
-      clientEmail,
-      'serviceOrder',
-      {
-        clientName: appointment.clientName,
+    // Para servicios técnicos: enviar Orden de Servicio con PDF
+    if (isTechnicalService) {
+      console.log('[Email] Enviando Orden de Servicio para cita técnica:', appointment.id);
+      
+      const basePrice = parseFloat(appointment.Service?.price || 0);
+      const additional = parseFloat(appointment.additionalAmount || 0);
+      const totalPrice = basePrice + additional;
+
+      // Generar PDF de Orden de Servicio
+      const pdfBuffer = await generatePaymentReceipt({
+        businessId: appointment.businessId,
         businessName: appointment.Business?.name,
+        businessLogoUrl: appointment.Business?.logoUrl,
+        businessAddress: appointment.Business?.address,
+        businessPhone: appointment.Business?.phone,
+        businessNit: appointment.Business?.nit,
+        id: appointment.id,
+        clientName: appointment.clientName,
+        clientEmail: appointment.clientEmail,
+        clientPhone: appointment.clientPhone,
         serviceName: appointment.Service?.name,
+        serviceDescription: appointment.Service?.description,
         employeeName: appointment.Employee?.User?.name,
         startTime: appointment.startTime,
-        price: appointment.Service?.price,
-        orderNumber,
+        endTime: appointment.endTime,
+        price: basePrice, // Enviamos el base
+        additionalAmount: additional, // El adicional por separado
+        additionalNote: appointment.additionalNote, // El concepto del adicional
+        paymentMethod: appointment.paymentMethod || 'Efectivo',
         notes: appointment.notes,
-      },
+        isTechnicalService: true, // Flag para que el PDF genere OS en lugar de comprobante
+      });
+      
+      await sendEmail(
+        clientEmail,
+        'serviceOrder',
+        {
+          clientName: appointment.clientName,
+          businessName: appointment.Business?.name,
+          serviceName: appointment.Service?.name,
+          employeeName: appointment.Employee?.User?.name,
+          startTime: appointment.startTime,
+          price: totalPrice,
+          orderNumber,
+          notes: appointment.notes,
+        },
       [
         {
           filename: `orden-servicio-${orderNumber}.pdf`,
@@ -315,6 +512,10 @@ const sendPaymentReceipt = async (appointment) => {
     );
     return;
   }
+
+  const basePrice = parseFloat(appointment.Service?.price || 0);
+  const additional = parseFloat(appointment.additionalAmount || 0);
+  const totalPrice = basePrice + additional;
 
   // Para servicios normales: enviar Comprobante de Pago con PDF
   const pdfBuffer = await generatePaymentReceipt({
@@ -333,7 +534,9 @@ const sendPaymentReceipt = async (appointment) => {
     employeeName: appointment.Employee?.User?.name,
     startTime: appointment.startTime,
     endTime: appointment.endTime,
-    price: appointment.Service?.price,
+    price: basePrice, // Enviamos el base
+    additionalAmount: additional, // El adicional por separado
+    additionalNote: appointment.additionalNote, // El concepto del adicional
     paymentMethod: appointment.paymentMethod || 'Efectivo',
     notes: appointment.notes,
   });
@@ -346,7 +549,7 @@ const sendPaymentReceipt = async (appointment) => {
       businessName: appointment.Business?.name,
       serviceName: appointment.Service?.name,
       startTime: appointment.startTime,
-      price: appointment.Service?.price,
+      price: totalPrice,
       receiptNumber: orderNumber,
     },
     [
@@ -367,7 +570,7 @@ exports.cancel = async (req, res) => {
     if (appt.status === 'cancelled') return res.status(400).json({ error: 'La cita ya está cancelada' });
     
     // Verificar permisos: admin, empleado asignado, o cliente dueño de la cita
-    const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'superadmin');
+    const isAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin');
     
     let isEmployee = false;
     if (req.user && req.user.role === 'employee') {
@@ -541,12 +744,21 @@ exports.getAvailability = async (req, res) => {
     };
 
     /**
+     * Convierte un objeto Date o string ISO a minutos del día en Colombia.
+     */
+    const dateToMinutesColombia = (date) => {
+      const d = new Date(date);
+      // Ajustar al offset de Colombia
+      const localMs = d.getTime() + COLOMBIA_OFFSET_MS;
+      const localDate = new Date(localMs);
+      return localDate.getUTCHours() * 60 + localDate.getUTCMinutes();
+    };
+
+    /**
      * Verifica si el intervalo [slotStart, slotEnd) se solapa con [blockStart, blockEnd).
      */
     const overlaps = (slotStart, slotEnd, blockStart, blockEnd) => {
-      const bStart = toMinutes(blockStart);
-      const bEnd = toMinutes(blockEnd);
-      return slotStart < bEnd && slotEnd > bStart;
+      return slotStart < blockEnd && slotEnd > blockStart;
     };
 
     const availableSlots = [];
@@ -556,48 +768,402 @@ exports.getAvailability = async (req, res) => {
       const workEnd = toMinutes(sched.endTime);
       let current = workStart;
 
-      const safeDuration = (duration && duration > 0) ? duration : 30;
+      const safeDuration = (duration && duration > 0) ? Number(duration) : 30;
 
       while (current + safeDuration <= workEnd) {
-        const slotEndMin = current + safeDuration;
-
-        // Preparar timeStr primero
         const hh = String(Math.floor(current / 60)).padStart(2, '0');
         const mm = String(current % 60).padStart(2, '0');
         const timeStr = `${hh}:${mm}`;
 
-        // 1. Verificar Almuerzo
-        const isLunch = lunchRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
-        // 2. Verificar Bloqueos
-        const isBlocked = isLunch || blockedRanges.some(r => overlaps(current, slotEndMin, r.start, r.end));
+        const slotTime = colombiaDateTimeToUTC(date, timeStr);
+        const slotEndTime = new Date(slotTime.getTime() + safeDuration * 60000);
 
-        if (!isBlocked) {
-          const slotTime = colombiaDateTimeToUTC(date, timeStr);
-          const slotEndTime = new Date(slotTime.getTime() + safeDuration * 60000);
-          
-          // 3. Verificar Citas Existentes
-          const hasConflict = existingAppointments.some(appt => {
-            const apptStart = new Date(appt.startTime).getTime();
-            const apptEnd   = new Date(appt.endTime).getTime();
-            return apptStart < slotEndTime.getTime() && apptEnd > slotTime.getTime();
-          });
-
-          // 4. Verificar que no sea en el pasado
-          const MARGIN_MS = 5 * 60 * 1000;
-          if (slotTime.getTime() > (Date.now() - MARGIN_MS) && !hasConflict) {
-            availableSlots.push(timeStr);
-          }
+        // 1. Filtrar si ya pasó (si es hoy)
+        const MARGIN_MS = 5 * 60 * 1000;
+        if (slotTime.getTime() <= (Date.now() - MARGIN_MS)) {
+          current += 5;
+          continue;
         }
-        current += 30; // Intervalos de 30 min para generar opciones
+
+        // 2. Verificar Citas Existentes
+        const conflictAppt = existingAppointments.find(appt => {
+          const apptS = dateToMinutesColombia(appt.startTime);
+          const apptE = dateToMinutesColombia(appt.endTime);
+          return overlaps(current, current + safeDuration, apptS, apptE);
+        });
+
+        if (conflictAppt) {
+          // Saltar al final de la cita
+          current = dateToMinutesColombia(conflictAppt.endTime);
+          continue;
+        }
+
+        // 3. Verificar Almuerzo y Bloqueos
+        const conflictBlock = [...lunchRanges, ...blockedRanges].find(r => 
+          overlaps(current, current + safeDuration, toMinutes(r.startTime), toMinutes(r.endTime))
+        );
+
+        if (conflictBlock) {
+          // Saltar al final del bloqueo
+          current = toMinutes(conflictBlock.endTime);
+          continue;
+        }
+
+        // 4. El slot está libre!
+        availableSlots.push({
+          time: timeStr,
+          startTime: slotTime,
+          endTime: slotEndTime
+        });
+
+        // Avanzar al siguiente intervalo según la duración del servicio
+        current += safeDuration;
       }
     }
 
-    // Eliminar duplicados de horarios (en caso de múltiples jornadas de trabajo solapadas)
-    const uniqueSlots = [...new Set(availableSlots)].sort();
+    // Eliminar duplicados (basado en el campo 'time')
+    const seen = new Set();
+    const uniqueSlots = availableSlots.filter(slot => {
+      if (seen.has(slot.time)) return false;
+      seen.add(slot.time);
+      return true;
+    }).sort((a, b) => a.time.localeCompare(b.time));
 
     res.json({ availableSlots: uniqueSlots });
   } catch (e) {
     console.error('Error en getAvailability:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Add or update additional charge to appointment
+exports.addAdditionalCharge = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { additionalAmount, additionalNote } = req.body;
+
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: Business },
+      ],
+    });
+
+    if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Permisos: Admin o el empleado asignado a la cita
+    const isAdmin = ['admin', 'admin_suc', 'superadmin'].includes(req.user.role);
+    let isAssignedEmployee = false;
+
+    if (req.user.role === 'employee') {
+      const emp = await Employee.findOne({ where: { userId: req.user.id } });
+      isAssignedEmployee = emp && appt.employeeId === emp.id;
+    }
+
+    if (!isAdmin && !isAssignedEmployee) {
+      return res.status(403).json({ error: 'Sin permisos suficientes para modificar esta cita' });
+    }
+
+    // Validate additional amount
+    const amount = parseFloat(additionalAmount);
+    if (isNaN(amount) || amount < 0) {
+      return res.status(400).json({ error: 'El monto adicional debe ser un número positivo' });
+    }
+
+    // Update appointment with additional charge
+    await appt.update({
+      additionalAmount: amount,
+      additionalNote: additionalNote || null,
+    });
+
+    res.json({
+      success: true,
+      message: 'Cargo adicional agregado exitosamente',
+      appointment: {
+        id: appt.id,
+        additionalAmount: amount,
+        additionalNote: additionalNote,
+        totalAmount: parseFloat(appt.Service?.price || 0) + amount,
+      },
+    });
+  } catch (e) {
+    console.error('Error adding additional charge:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Client confirms attendance (no auth required - link from email)
+exports.confirmAttendance = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Find appointment
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
+        { model: Business, include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'pushToken'] }] },
+      ],
+    });
+    
+    if (!appt) return res.status(404).send('<h1>Cita no encontrada</h1>');
+    if (appt.status === 'cancelled') return res.status(400).send('<h1>Esta cita ya fue cancelada</h1>');
+    
+    // Update confirmation status
+    await appt.update({ 
+      confirmed: true, 
+      confirmedAt: new Date(),
+      reminder24hSent: true 
+    });
+    
+    // Send push notification to admin
+    const owner = appt.Business?.Owner;
+    if (owner?.pushToken) {
+      await sendPushNotification(owner.pushToken, {
+        title: '✅ Cliente Confirmó Asistencia',
+        body: `${appt.clientName} confirmó que asistirá a la cita de ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+      }, {
+        type: 'appointment_confirmed',
+        appointmentId: appt.id,
+        businessId: appt.businessId,
+        clientName: appt.clientName,
+      });
+    }
+    
+    // Send confirmation email to client
+    let clientEmail = null;
+    if (appt.clientId) {
+      const clientUser = await User.findByPk(appt.clientId);
+      clientEmail = clientUser?.email || null;
+    }
+    if (!clientEmail && appt.clientEmail) {
+      clientEmail = appt.clientEmail;
+    }
+    
+    if (clientEmail) {
+      await sendEmail(clientEmail, 'appointmentConfirmedByClient', {
+        clientName: String(appt.clientName || ''),
+        businessName: String(appt.Business?.name || ''),
+        serviceName: String(appt.Service?.name || ''),
+        employeeName: String(appt.Employee?.User?.name || ''),
+        startTime: String(appt.startTime || ''),
+      }).catch(e => console.error('[Email] Confirmation error:', e.message));
+    }
+    
+    // HTML de respuesta "minimalista"
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Asistencia Confirmada</title>
+        <style>
+          body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; }
+          .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 400px; }
+          .icon { font-size: 3rem; margin-bottom: 1rem; }
+          h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #10b981; }
+          p { margin: 0; color: #64748b; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="icon">✅</div>
+          <h1>¡Asistencia Confirmada!</h1>
+          <p>Gracias por confirmar tu asistencia a la cita en <strong>${appt.Business?.name || 'nuestro negocio'}</strong>.</p>
+          <p style="margin-top: 1rem; font-size: 0.8rem;">Puedes cerrar esta pestaña ahora.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (e) {
+    console.error('Error confirming attendance:', e);
+    res.status(500).send('<h1>Error al confirmar asistencia</h1>');
+  }
+};
+
+// Client cancels from email link
+exports.cancelFromEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
+        { model: Business, include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'pushToken', 'email'] }] },
+      ],
+    });
+    
+    if (!appt) return res.status(404).send('<h1>Cita no encontrada</h1>');
+    if (appt.status === 'cancelled') return res.status(400).send('<h1>Esta cita ya fue cancelada anteriormente</h1>');
+    
+    // Actualizar estado a cancelada
+    await appt.update({ status: 'cancelled' });
+    
+    // Notificar al dueño
+    const owner = appt.Business?.Owner;
+    if (owner) {
+      // Push
+      if (owner.pushToken) {
+        await sendCancellationNotification(owner.pushToken, {
+          id: appt.id,
+          clientName: String(appt.clientName || ''),
+          serviceName: String(appt.Service?.name || ''),
+          businessName: String(appt.Business?.name || ''),
+          startTime: appt.startTime,
+        });
+      }
+      // Email
+      if (owner.email) {
+        await sendEmail(owner.email, 'appointmentCancelled', {
+          businessName: String(appt.Business?.name || ''),
+          clientName: String(appt.clientName || ''),
+          serviceName: String(appt.Service?.name || ''),
+          employeeName: String(appt.Employee?.User?.name || 'No asignado'),
+          startTime: appt.startTime,
+          cancelTime: new Date()
+        });
+      }
+    }
+    
+    // HTML de respuesta
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Cita Cancelada</title>
+        <style>
+          body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; }
+          .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 400px; }
+          .icon { font-size: 3rem; margin-bottom: 1rem; }
+          h1 { margin: 0 0 0.5rem; font-size: 1.5rem; color: #ef4444; }
+          p { margin: 0; color: #64748b; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="icon">❌</div>
+          <h1>Cita Cancelada</h1>
+          <p>Tu cita en <strong>${appt.Business?.name || 'nuestro negocio'}</strong> ha sido cancelada exitosamente.</p>
+          <p style="margin-top: 1rem; font-size: 0.8rem;">Puedes cerrar esta pestaña ahora.</p>
+        </div>
+      </body>
+      </html>
+    `);
+  } catch (e) {
+    console.error('Error cancelling from email:', e);
+    res.status(500).send('<h1>Error al procesar la cancelación</h1>');
+  }
+};
+
+// Transfer appointment to another employee (optionally with new time slot)
+exports.transferAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newEmployeeId, newStartTime } = req.body;
+
+    if (!newEmployeeId) {
+      return res.status(400).json({ error: 'newEmployeeId es requerido' });
+    }
+
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: Business },
+      ],
+    });
+
+    if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
+    if (appt.status === 'cancelled') return res.status(400).json({ error: 'No se puede transferir una cita cancelada' });
+    if (appt.status === 'done') return res.status(400).json({ error: 'No se puede transferir una cita completada' });
+
+    // Get new employee details
+    const newEmployee = await Employee.findByPk(newEmployeeId, {
+      include: [{ model: User, attributes: ['name', 'pushToken'] }]
+    });
+    if (!newEmployee) return res.status(404).json({ error: 'Empleado destino no encontrado' });
+    if (newEmployee.businessId !== appt.businessId) {
+      return res.status(400).json({ error: 'El empleado destino no pertenece a este negocio' });
+    }
+
+    // Calculate start and end times (use new time if provided, otherwise keep original)
+    let startTime = appt.startTime;
+    let endTime = appt.endTime;
+    let timeChanged = false;
+
+    if (newStartTime) {
+      startTime = new Date(newStartTime);
+      endTime = new Date(startTime.getTime() + (appt.Service?.durationMin || 60) * 60000);
+      timeChanged = true;
+    }
+
+    // Check if new employee is already booked at the target time (skip for express appointments)
+    const isExpressAppt = appt.status === 'attention';
+    
+    if (!isExpressAppt) {
+      const conflict = await Appointment.findOne({
+        where: {
+          employeeId: newEmployeeId,
+          id: { [Op.ne]: id }, // Exclude current appointment
+          status: { [Op.notIn]: ['cancelled'] },
+          startTime: { [Op.lt]: endTime },
+          endTime: { [Op.gt]: startTime },
+        }
+      });
+
+      if (conflict) {
+        return res.status(409).json({ 
+          error: `El empleado ${newEmployee.User?.name} ya tiene una cita en ese horario`,
+          requiresReschedule: true, // Flag to indicate user can pick different time
+          conflictAppointment: {
+            id: conflict.id,
+            startTime: conflict.startTime,
+            endTime: conflict.endTime,
+          }
+        });
+      }
+    }
+
+    const oldEmployeeName = appt.Employee?.User?.name || 'Empleado anterior';
+    const newEmployeeName = newEmployee.User?.name || 'Nuevo empleado';
+
+    // Update appointment with new employee and optionally new time
+    await appt.update({ 
+      employeeId: newEmployeeId,
+      startTime: startTime,
+      endTime: endTime
+    });
+
+    // Send push notification to new employee
+    if (newEmployee.User?.pushToken) {
+      await sendPushNotification(newEmployee.User.pushToken, {
+        title: '📅 Cita Transferida',
+        body: `Se te ha asignado una cita de ${appt.clientName} - ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+      }, {
+        type: 'appointment_transferred',
+        appointmentId: appt.id,
+        businessId: appt.businessId,
+        transferredFrom: oldEmployeeName,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Cita transferida exitosamente de ${oldEmployeeName} a ${newEmployeeName}`,
+      appointment: {
+        id: appt.id,
+        employeeId: newEmployeeId,
+        employeeName: newEmployeeName,
+        previousEmployeeName: oldEmployeeName,
+      }
+    });
+  } catch (e) {
+    console.error('Error transferring appointment:', e);
     res.status(500).json({ error: e.message });
   }
 };

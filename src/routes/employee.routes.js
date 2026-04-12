@@ -26,14 +26,14 @@ router.use(auth);
  */
 router.get('/business/:businessId',  ctrl.getByBusiness);
 router.get('/',                      ctrl.getByBusiness);
-router.get('/commission-report',     role('admin', 'superadmin'), ctrl.getCommissionReport);
-router.get('/commissions',           role('admin', 'superadmin'), ctrl.getCommissionReport);
+router.get('/commission-report',     role('admin', 'admin_suc', 'superadmin'), ctrl.getCommissionReport);
+router.get('/commissions',           role('admin', 'admin_suc', 'superadmin'), ctrl.getCommissionReport);
 router.get('/me/info',               role('employee'), ctrl.getEmployeeInfo);
 router.get('/:employeeId/today',     ctrl.getTodayAppointments);
 router.get('/:employeeId/appointments', ctrl.getAppointmentsByDateRange);
-router.post('/',                     role('admin', 'superadmin'), ctrl.create);
-router.post('/invite',               role('admin', 'superadmin'), ctrl.invite);
-router.put('/:id',                   role('admin', 'superadmin'), ctrl.update);
-router.delete('/:id',                role('admin', 'superadmin'), ctrl.remove);
+router.post('/',                     role('admin', 'admin_suc', 'superadmin'), ctrl.create);
+router.post('/invite',               role('admin', 'admin_suc', 'superadmin'), ctrl.invite);
+router.put('/:id',                   role('admin', 'admin_suc', 'superadmin'), ctrl.update);
+router.delete('/:id',                role('admin', 'admin_suc', 'superadmin'), ctrl.remove);
 
 module.exports = router;

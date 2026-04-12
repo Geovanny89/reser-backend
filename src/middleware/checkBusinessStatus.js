@@ -19,8 +19,8 @@ module.exports = async (req, res, next) => {
       const biz = await Business.findOne({ where: { ownerId: req.user.id } });
       if (biz) businessId = biz.id;
     } 
-    // Si es empleado, buscamos el negocio al que pertenece
-    else if (req.user.role === 'employee') {
+    // Si es empleado o admin_suc, buscamos el negocio al que pertenece
+    else if (req.user.role === 'employee' || req.user.role === 'admin_suc') {
       const emp = await Employee.findOne({ where: { userId: req.user.id } });
       if (emp) businessId = emp.businessId;
     }

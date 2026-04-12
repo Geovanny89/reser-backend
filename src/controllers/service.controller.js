@@ -1,13 +1,53 @@
-const { Service, Business } = require('../models');
+const { Service, Business, Promotion } = require('../models');
+const { Op } = require('sequelize');
+const { deleteFromCloudinary } = require('../config/cloudinary');
 
 exports.getByBusiness = async (req, res) => {
   try {
     const businessId = req.params.businessId || req.query.businessId;
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
-    const services = await Service.findAll({
-      where: { businessId, active: true }
+    
+    const now = new Date();
+    
+    // Obtener promociones generales del negocio
+    const generalPromotions = await Promotion.findAll({
+      where: {
+        businessId,
+        active: true,
+        applyToAllServices: true,
+        startDate: { [Op.lte]: now },
+        endDate: { [Op.gte]: now }
+      }
     });
-    res.json(services);
+
+    const services = await Service.findAll({
+      where: { businessId, active: true },
+      include: [
+        {
+          model: Promotion,
+          as: 'Promotions',
+          where: {
+            active: true,
+            applyToAllServices: false,
+            startDate: { [Op.lte]: now },
+            endDate: { [Op.gte]: now }
+          },
+          required: false
+        }
+      ]
+    });
+
+    // Combinar promociones generales con cada servicio
+    const servicesWithPromos = services.map(s => {
+      const serviceJson = s.toJSON();
+      // Si el servicio no tiene una promoción específica, añadir la general si existe
+      if ((!serviceJson.Promotions || serviceJson.Promotions.length === 0) && generalPromotions.length > 0) {
+        serviceJson.Promotions = generalPromotions;
+      }
+      return serviceJson;
+    });
+
+    res.json(servicesWithPromos);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -15,26 +55,44 @@ exports.getByBusiness = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission } = req.body;
-    const adminId = req.user.id;
+    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl } = req.body;
+    const userId = req.user.id;
 
-    const business = await Business.findOne({ where: { ownerId: adminId } });
-    if (!business) {
-      return res.status(404).json({ error: 'No tienes un negocio asociado' });
+    // Si viene businessId, lo usamos. Si no, buscamos el negocio del usuario
+    let finalBusinessId = businessId;
+
+    if (!finalBusinessId) {
+      // 1. Buscar si el usuario es el DUEÑO de algún negocio
+      const biz = await Business.findOne({ where: { ownerId: userId, isBranch: false } });
+      if (biz) {
+        finalBusinessId = biz.id;
+      } else {
+        // 2. Si no es dueño, buscar si es un EMPLEADO con rol de administrador (isManager)
+        const { Employee } = require('../models');
+        const emp = await Employee.findOne({ where: { userId, isManager: true } });
+        if (emp) {
+          finalBusinessId = emp.businessId;
+        }
+      }
+    }
+
+    if (!finalBusinessId) {
+      return res.status(404).json({ error: 'No se pudo encontrar un negocio asociado a tu cuenta' });
     }
 
     // Convertir precio vacío a null
     const parsedPrice = price === '' || price === undefined ? null : parseFloat(price);
 
     const service = await Service.create({
-      businessId: business.id,
+      businessId: finalBusinessId,
       name,
       description,
       price: parsedPrice,
       durationMin,
       isTechnicalService: isTechnicalService || false,
       priceOptional: priceOptional || false,
-      hasEmployeeCommission: hasEmployeeCommission !== false // default true
+      hasEmployeeCommission: hasEmployeeCommission !== false, // default true
+      imageUrl: imageUrl || null
     });
     res.status(201).json(service);
   } catch (e) {
@@ -66,8 +124,38 @@ exports.update = async (req, res) => {
     if (updateData.hasEmployeeCommission !== undefined) {
       updateData.hasEmployeeCommission = updateData.hasEmployeeCommission !== false;
     }
+
+    // ELIMINAR FOTO ANTERIOR DE CLOUDINARY SI CAMBIA
+    if (updateData.imageUrl && service.imageUrl && updateData.imageUrl !== service.imageUrl) {
+      await deleteFromCloudinary(service.imageUrl);
+    }
     
     await service.update(updateData);
+
+    // SI LA DURACIÓN O CUALQUIER OTRO DATO RELEVANTE CAMBIÓ, 
+    // ACTUALIZAR EL endTime DE TODAS LAS CITAS QUE AÚN NO SE HAN COMPLETADO
+    if (req.body.durationMin !== undefined) {
+      const { Appointment } = require('../models');
+      const { Op } = require('sequelize');
+      const newDuration = parseInt(req.body.durationMin);
+      
+      // Buscar todas las citas que NO estén terminadas ni canceladas
+      const futureAppointments = await Appointment.findAll({
+        where: {
+          serviceId: service.id,
+          status: { [Op.in]: ['pending', 'confirmed', 'attention'] }
+        }
+      });
+
+      // Actualizar cada cita individualmente para recalcular su endTime
+      for (const appt of futureAppointments) {
+        const start = new Date(appt.startTime);
+        const newEnd = new Date(start.getTime() + newDuration * 60000);
+        await appt.update({ endTime: newEnd });
+      }
+      console.log(`[ServiceUpdate] Forzada actualización de ${futureAppointments.length} citas por cambio a ${newDuration} min`);
+    }
+
     res.json(service);
   } catch (e) {
     res.status(400).json({ error: e.message });

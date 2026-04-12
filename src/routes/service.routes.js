@@ -61,7 +61,7 @@ router.use(auth);
  *             schema:
  *               $ref: '#/components/schemas/Service'
  */
-router.post('/', role('admin', 'superadmin'), ctrl.create);
+router.post('/', role('admin', 'admin_suc', 'superadmin'), ctrl.create);
 
 /**
  * @swagger
@@ -80,7 +80,7 @@ router.post('/', role('admin', 'superadmin'), ctrl.create);
  *       200:
  *         description: Servicio actualizado
  */
-router.put('/:id', role('admin', 'superadmin'), ctrl.update);
+router.put('/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.update);
 
 /**
  * @swagger
@@ -99,6 +99,6 @@ router.put('/:id', role('admin', 'superadmin'), ctrl.update);
  *       200:
  *         description: Servicio eliminado
  */
-router.delete('/:id', role('admin', 'superadmin'), ctrl.remove);
+router.delete('/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.remove);
 
 module.exports = router;

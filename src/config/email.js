@@ -1,25 +1,11 @@
 const nodemailer = require('nodemailer');
-const dns = require('dns');
-
-// Forzar IPv4 en entornos donde IPv6 falla (común en VPS)
-if (dns.setDefaultResultOrder) {
-  dns.setDefaultResultOrder('ipv4first');
-}
 
 // Helper para formatear fecha en zona horaria de Colombia (UTC-5)
 const formatColombiaDate = (dateInput) => {
   const date = new Date(dateInput);
-  
-  // Si no es una fecha válida, devolver el string original
   if (isNaN(date.getTime())) return dateInput;
-
-  // En muchos entornos Node (como VPS), toLocaleString ignora el timeZone si falta la data ICU.
-  // Por eso ajustamos el offset manualmente: Colombia es UTC-5.
-  // Obtenemos el tiempo en UTC y le restamos 5 horas (18,000,000 ms)
   const COLOMBIA_OFFSET = -5 * 60 * 60 * 1000;
   const colombiaTime = new Date(date.getTime() + COLOMBIA_OFFSET);
-
-  // Formatear usando el locale es-CO pero forzando UTC para que no se aplique el offset local del servidor
   return colombiaTime.toLocaleString('es-CO', { 
     timeZone: 'UTC', 
     dateStyle: 'full', 
@@ -27,45 +13,25 @@ const formatColombiaDate = (dateInput) => {
   });
 };
 
-// Crear transporter de Nodemailer
-// Soporta Gmail, SMTP genérico, Ethereal (pruebas)
 const createTransporter = () => {
-  const host    = process.env.EMAIL_HOST;
+  const host    = process.env.EMAIL_HOST || "smtp.hostinger.com";
   const port    = parseInt(process.env.EMAIL_PORT || '465');
   const user    = process.env.EMAIL_USER;
   const pass    = process.env.EMAIL_PASS;
-  const service = process.env.EMAIL_SERVICE; // 'gmail', 'outlook', etc.
 
   if (!user || !pass) {
-    console.warn('[Email] ⚠️  Credenciales de email no configuradas. Las notificaciones están desactivadas.');
+    console.warn('[Email] ⚠️ Credenciales de email no configuradas.');
     return null;
   }
 
-  if (service) {
-    return nodemailer.createTransport({ 
-      service, 
-      auth: { user, pass },
-      tls: { rejectUnauthorized: false },
-      connectionTimeout: 10000, // 10s
-      greetingTimeout: 10000,
-      socketTimeout: 10000
-    });
-  }
-
-  // Hostinger y otros SMTP genéricos
   return nodemailer.createTransport({
-    host: host || "smtp.hostinger.com",
-    port: port || 465,
-    secure: port === 465, // True si es 465 (SSL), false para 587 (TLS/STARTTLS)
+    host,
+    port,
+    secure: port === 465,
     auth: { user, pass },
-    tls: { 
-      rejectUnauthorized: false,
-      // Forzar IPv4 en el socket si el dns global no fuera suficiente
-      minVersion: 'TLSv1.2'
-    },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 15000
+    tls: {
+      rejectUnauthorized: false
+    }
   });
 };
 
@@ -524,6 +490,72 @@ const templates = {
       `, 'KDice POS'),
     };
   },
+
+  // Recordatorio 24h antes (cliente) - con botón de confirmar
+  appointmentReminder24h: ({ clientName, businessName, serviceName, employeeName, startTime, confirmUrl, cancelUrl }) => ({
+    subject: `⏰ Recordatorio: Tienes una cita mañana en ${businessName}`,
+    html: baseTemplate(`
+      <h2>¡Hola ${clientName}!</h2>
+      <p>Te recordamos que tienes una cita programada para <strong>mañana</strong>:</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Negocio</span>
+          <span class="info-value">${businessName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Profesional</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Fecha y hora</span>
+          <span class="info-value">${startTime}</span>
+        </div>
+      </div>
+      <p style="text-align: center; margin: 24px 0; font-size: 16px;">
+        <strong>¿Vas a asistir a tu cita?</strong>
+      </p>
+      <div style="text-align: center; margin: 24px 0; display: flex; justify-content: center; gap: 15px;">
+        <a href="${confirmUrl}" class="btn" style="background: #10b981; color: #ffffff; padding: 14px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 16px;">✅ Sí, asistiré</a>
+        <a href="${cancelUrl}" class="btn" style="background: #ef4444; color: #ffffff; padding: 14px 24px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 16px;">❌ No asistiré</a>
+      </div>
+      <p style="font-size: 12px; color: #64748b; text-align: center; margin-top: 15px;">Si confirmas, nos ayudarás a prepararnos mejor para recibirte.</p>
+    `, businessName),
+  }),
+
+  // Confirmación de asistencia (cliente confirmó)
+  appointmentConfirmedByClient: ({ clientName, businessName, serviceName, employeeName, startTime }) => ({
+    subject: `✅ Asistencia confirmada - ${businessName}`,
+    html: baseTemplate(`
+      <h2>¡Gracias ${clientName}!</h2>
+      <p>Has confirmado tu asistencia a la cita:</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Negocio</span>
+          <span class="info-value">${businessName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Profesional</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Fecha y hora</span>
+          <span class="info-value">${startTime}</span>
+        </div>
+      </div>
+      <p style="text-align: center; margin: 24px 0;">
+        <span class="badge badge-success" style="background: #10b981; color: white; padding: 8px 16px; border-radius: 4px; font-weight: bold;">✅ Asistencia Confirmada</span>
+      </p>
+      <p style="font-size: 12px; color: #64748b; text-align: center;">Te esperamos puntualmente. ¡Gracias por tu preferencia!</p>
+    `, businessName),
+  }),
 
   // Notificación de pago confirmado (para el negocio)
   paymentConfirmed: ({ ownerName, businessName, startDate, endDate, amount }) => ({

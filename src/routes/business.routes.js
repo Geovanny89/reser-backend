@@ -104,7 +104,11 @@ router.use(auth);
  *             schema:
  *               $ref: '#/components/schemas/Business'
  */
-router.get('/my/business', role('superadmin', 'admin'), ctrl.getMyBusiness);
+router.get('/my/business', role('superadmin', 'admin', 'admin_suc'), ctrl.getMyBusiness);
+router.get('/my/branches', role('admin', 'admin_suc'), ctrl.getMyBranches);
+router.post('/request-branch', role('admin', 'admin_suc'), ctrl.requestBranch);
+router.put('/:id/mission-vision', role('admin', 'admin_suc'), ctrl.updateMissionVision);
+router.post('/:id/approve-branch', role('superadmin'), ctrl.approveBranch);
 
 /**
  * @swagger
@@ -146,7 +150,7 @@ router.get('/', role('superadmin'), ctrl.getAll);
  *       201:
  *         description: Negocio creado exitosamente
  */
-router.post('/', role('superadmin', 'admin'), ctrl.create);
+router.post('/', role('superadmin', 'admin', 'admin_suc'), ctrl.create);
 
 /**
  * @swagger
@@ -184,7 +188,7 @@ router.post('/', role('superadmin', 'admin'), ctrl.create);
  *       200:
  *         description: Negocio actualizado
  */
-router.put('/my/business', role('superadmin', 'admin'), ctrl.updateMyBusiness);
+router.put('/my/business', role('superadmin', 'admin', 'admin_suc'), ctrl.updateMyBusiness);
 
 /**
  * @swagger

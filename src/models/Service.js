@@ -13,5 +13,6 @@ module.exports = (sequelize) => {
     isTechnicalService: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Es un servicio técnico (sin precio fijo)' },
     priceOptional:      { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'El precio es opcional/cotizable' },
     hasEmployeeCommission: { type: DataTypes.BOOLEAN, defaultValue: true, comment: 'El empleado paga comisión por este servicio' },
+    imageUrl: { type: DataTypes.STRING, comment: 'Imagen del servicio' },
   });
 };

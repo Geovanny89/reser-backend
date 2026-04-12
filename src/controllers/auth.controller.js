@@ -14,7 +14,7 @@ exports.register = async (req, res) => {
     if (exists) return res.status(400).json({ error: 'El email ya está registrado' });
 
     const hash = await bcrypt.hash(password, 10);
-    const safeRole = ['admin', 'employee', 'client'].includes(role) ? role : 'client';
+    const safeRole = ['admin', 'admin_suc', 'employee', 'client'].includes(role) ? role : 'client';
     const user = await User.create({ name, email, password: hash, role: safeRole });
 
     res.status(201).json({ id: user.id, email: user.email, role: user.role });
@@ -64,8 +64,14 @@ exports.registerVendor = async (req, res) => {
     });
 
     // Generar token JWT
+    // Si es un empleado con permisos de manager, le damos trato de admin en el frontend y en el token
+    let effectiveRole = user.role;
+    if (user.role === 'employee' && isManager) {
+      effectiveRole = 'admin';
+    }
+
     const token = jwt.sign(
-      { id: user.id, role: user.role, name: user.name },
+      { id: user.id, role: effectiveRole, name: user.name },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRES }
     );
@@ -100,15 +106,11 @@ exports.login = async (req, res) => {
     if (!user || !(await bcrypt.compare(password, user.password)))
       return res.status(401).json({ error: 'Credenciales inválidas' });
 
-    const token = jwt.sign(
-      { id: user.id, role: user.role, name: user.name },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES }
-    );
-
     // Si es admin, obtener su negocio y verificar suscripción
     let business = null;
     let subscriptionDaysLeft = null;
+    let isManager = false;
+
     if (user.role === 'admin') {
       business = await Business.findOne({ where: { ownerId: user.id } });
       if (business && business.subscriptionEndDate) {
@@ -130,13 +132,28 @@ exports.login = async (req, res) => {
     }
 
     // Si es admin o empleado, verificar si el negocio está bloqueado
-    if (user.role === 'admin' || user.role === 'employee') {
+    if (user.role === 'admin' || user.role === 'employee' || user.role === 'admin_suc') {
       let bizToCheck = business;
-      if (user.role === 'employee') {
+
+      if (user.role === 'employee' || user.role === 'admin_suc') {
         const { Employee } = require('../models');
         const emp = await Employee.findOne({ where: { userId: user.id } });
         if (emp) {
           bizToCheck = await Business.findByPk(emp.businessId);
+          isManager = emp.isManager;
+          
+          // Si es manager o admin_suc, enviamos los datos del negocio para que el frontend lo use
+          if ((isManager || user.role === 'admin_suc') && bizToCheck) {
+            business = bizToCheck;
+            
+            // Calcular días de suscripción para el manager también
+            if (business.subscriptionEndDate) {
+              const now = new Date();
+              const endDate = new Date(business.subscriptionEndDate);
+              const diffTime = endDate - now;
+              subscriptionDaysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            }
+          }
         }
       }
 
@@ -145,13 +162,25 @@ exports.login = async (req, res) => {
       }
     }
 
+    // Si es un empleado con permisos de manager, le damos trato de admin en el frontend y en el token
+    let effectiveRole = user.role;
+    if (user.role === 'employee' && isManager) {
+      effectiveRole = 'admin';
+    }
+
+    const token = jwt.sign(
+      { id: user.id, role: effectiveRole, name: user.name },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
+
     res.json({ 
       token, 
       user: { 
         id: user.id, 
         name: user.name, 
         email: user.email, 
-        role: user.role,
+        role: effectiveRole, // Aquí ya viene como 'admin' si es manager
         status: user.status
       },
       business: business ? {
@@ -180,27 +209,47 @@ exports.me = async (req, res) => {
     // Si es admin, obtener su negocio y calcular días de suscripción
     let business = null;
     let subscriptionDaysLeft = null;
+    let isManager = false;
+
+    let effectiveRole = user.role;
+
     if (user.role === 'admin') {
-      business = await Business.findOne({ where: { ownerId: user.id } });
-      if (business && business.subscriptionEndDate) {
-        const now = new Date();
-        const endDate = new Date(business.subscriptionEndDate);
-        const diffTime = endDate - now;
-        subscriptionDaysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      business = await Business.findOne({ where: { ownerId: user.id, isBranch: false } });
+    } else if (user.role === 'employee' || user.role === 'admin_suc') {
+      const { Employee } = require('../models');
+      const emp = await Employee.findOne({ where: { userId: user.id } });
+      console.log(`[Login] User ${user.id} role: ${user.role}, Employee found:`, emp ? { id: emp.id, businessId: emp.businessId, isManager: emp.isManager } : null);
+      if (emp) {
+        isManager = emp.isManager;
+        business = await Business.findByPk(emp.businessId);
+        console.log(`[Login] Business found for ${user.role}:`, business ? { id: business.id, name: business.name } : null);
+        if (isManager && user.role === 'employee') effectiveRole = 'admin'; // Solo empleados manager se convierten a admin
       }
     }
 
+    if (business && business.subscriptionEndDate) {
+      const now = new Date();
+      const endDate = new Date(business.subscriptionEndDate);
+      const diffTime = endDate - now;
+      subscriptionDaysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
+
     res.json({ 
-      user,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: effectiveRole, // Asegurar que el rol admin se mantenga al refrescar
+        status: user.status
+      },
       business: business ? {
         id: business.id,
         name: business.name,
         slug: business.slug,
         type: business.type,
         status: business.status,
-        subscriptionStatus: business.subscriptionStatus,
-        subscriptionEndDate: business.subscriptionEndDate,
         subscriptionDaysLeft: subscriptionDaysLeft,
+        subscriptionEndDate: business.subscriptionEndDate,
         isTechnicalServices: business.isTechnicalServices
       } : null
     });
