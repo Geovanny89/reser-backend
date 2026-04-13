@@ -175,6 +175,7 @@ exports.create = async (req, res) => {
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
+    console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString() });
 
     // Verificar conflictos SOLO si no es cita express (status='attention')
     // Las citas express son para atención inmediata y no deben ser bloqueadas

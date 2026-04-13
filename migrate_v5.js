@@ -63,7 +63,9 @@ async function migrate() {
     // Columnas a agregar
     const columnsToAdd = [
       { name: 'reminder24hSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
-      { name: 'reminder1hSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'reminder2hSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'reminderSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'reminder30mSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
       { name: 'reminder24hScheduled', type: require('sequelize').DataTypes.DATE, allowNull: true },
       { name: 'reminder1hScheduled', type: require('sequelize').DataTypes.DATE, allowNull: true },
       { name: 'clientRating', type: require('sequelize').DataTypes.INTEGER, allowNull: true },
@@ -71,6 +73,14 @@ async function migrate() {
       { name: 'ratingRequestSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
       { name: 'ratingRequestTime', type: require('sequelize').DataTypes.DATE, allowNull: true },
       { name: 'paymentMethod', type: require('sequelize').DataTypes.STRING, allowNull: true },
+      { name: 'pendingAlertSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'pendingAlert30mSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'pendingAlert60mSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'confirmed', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
+      { name: 'confirmedAt', type: require('sequelize').DataTypes.DATE, allowNull: true },
+      { name: 'rating', type: require('sequelize').DataTypes.INTEGER, allowNull: true },
+      { name: 'promotionId', type: require('sequelize').DataTypes.UUID, allowNull: true },
+      { name: 'whatsappReminderSent', type: require('sequelize').DataTypes.BOOLEAN, defaultValue: false },
     ];
 
     for (const col of columnsToAdd) {

@@ -99,7 +99,7 @@ async function start() {
     console.log('✅  Conexión a base de datos establecida');
     
     try {
-      await sequelize.sync({ alter: true });
+      await sequelize.sync({ alter: false });
       console.log('✅  Modelos sincronizados con la base de datos (alter: true)');
     } catch (syncErr) {
       console.error('⚠️  Error al sincronizar modelos (puede ser normal en PostgreSQL con ENUMs):', syncErr.message);
