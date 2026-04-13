@@ -1,10 +1,14 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode-svg');
 const { WhatsAppSession, Appointment, Business, User, Service, Employee } = require('../models');
-const { sendEmail } = require('../config/email');
-const { sendCancellationNotification } = require('./pushNotificationService');
+
 const path = require('path');
 const fs = require('fs');
+
+// Puppeteer con stealth mode para evitar detección
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 
 // Almacén de instancias activas en memoria
 const instances = new Map();
@@ -53,6 +57,15 @@ const RATING_TEMPLATES = [
   '👋 ¿Cómo estuvo tu cita? Tu calificación del 1 al 5 nos ayuda mucho. ¡Gracias por confiar en nosotros!'
 ];
 
+// Plantillas variadas para agradecimiento de calificación
+const RATING_THANKS_TEMPLATES = [
+  (rating) => `🌟 ¡Gracias por calificar con ${'⭐'.repeat(rating)}! Nos ayuda mucho.`,
+  (rating) => `💫 ¡Excelente! Gracias por tu ${'⭐'.repeat(rating)}. Tu opinión nos hace mejores.`,
+  (rating) => `🙏 ¡Agradecemos tu ${'⭐'.repeat(rating)}! Gracias por tomarte el tiempo de calificarnos.`,
+  (rating) => `⭐⭐⭐ ¡Genial! Tu calificación de ${rating} estrellas ha sido guardada. ¡Gracias!`,
+  (rating) => `🎉 ¡Perfecto! Gracias por tu ${'⭐'.repeat(rating)}. Tu feedback es muy valioso para nosotros.`
+];
+
 /**
  * Genera un delay aleatorio entre mensajes para simular comportamiento humano
  * Entre 45 segundos y 3 minutos
@@ -84,18 +97,18 @@ function canSendMessage(businessId) {
   const colombiaOffset = -5 * 60 * 60 * 1000;
   const colombiaTime = new Date(now.getTime() + colombiaOffset);
   const currentHour = colombiaTime.getUTCHours();
-  
+
   const countData = messageCounts.get(businessId);
   if (!countData || countData.hour !== currentHour) {
     messageCounts.set(businessId, { hour: currentHour, count: 1 });
     return true;
   }
-  
+
   if (countData.count >= MAX_MESSAGES_PER_HOUR) {
     console.log(`[WhatsApp] ⚠️ Límite de ${MAX_MESSAGES_PER_HOUR} mensajes/hora alcanzado para ${businessId}`);
     return false;
   }
-  
+
   countData.count++;
   return true;
 }
@@ -122,13 +135,13 @@ function humanizeMessage(text) {
   if (Math.random() > 0.7) {
     text = ' ' + text;
   }
-  
+
   // Reemplazar emojis por variaciones aleatorias
   if (text.includes('🕒') || text.includes('⏰') || text.includes('📅')) {
     const randomEmoji = EMOJI_SETS[Math.floor(Math.random() * EMOJI_SETS.length)];
     text = text.replace(/[🕒⏰📅🗓️]/g, randomEmoji);
   }
-  
+
   return text;
 }
 
@@ -187,7 +200,7 @@ async function cleanLockFiles(businessId) {
         try {
           fs.unlinkSync(lockPath);
           console.log(`[WhatsApp] 🧹 Archivo de bloqueo eliminado: ${file}`);
-        } catch (e) {}
+        } catch (e) { }
       }
     });
   }
@@ -199,7 +212,7 @@ async function cleanLockFiles(businessId) {
 async function createInstance(businessId, forceFresh = false) {
   const sessionsDir = path.resolve(__dirname, '../../sessions');
   const authPath = path.join(sessionsDir, `session-${businessId}`);
-  
+
   if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
 
   // 1. Cierre forzoso de instancia previa si existe en el MAP
@@ -218,20 +231,20 @@ async function createInstance(businessId, forceFresh = false) {
       instances.delete(businessId);
     }
     currentQRs.delete(businessId);
-    
+
     // Si es forceFresh o hubo error, limpiar carpeta o bloqueos
     if (forceFresh) {
       if (fs.existsSync(authPath)) {
         try {
           fs.rmSync(authPath, { recursive: true, force: true });
           console.log(`[WhatsApp] ✅ Carpeta de sesión eliminada para ${businessId}`);
-        } catch (e) {}
+        } catch (e) { }
       }
     } else {
       // Si no es fresh, al menos limpiar los locks de Chrome
       await cleanLockFiles(businessId);
     }
-    
+
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
@@ -251,9 +264,23 @@ async function createInstance(businessId, forceFresh = false) {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-site-isolation-trials',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection',
+        '--window-size=1920,1080',
+        '--start-maximized'
       ],
-      executablePath: process.env.CHROME_PATH || undefined
+      executablePath: process.env.CHROME_PATH || undefined,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1920, height: 1080 },
+      defaultViewport: { width: 1920, height: 1080 }
     }
   });
 
@@ -271,10 +298,10 @@ async function createInstance(businessId, forceFresh = false) {
         background: '#ffffff',
         ecl: 'M'
       }).svg();
-      
+
       const base64 = Buffer.from(qrSvg).toString('base64');
       const dataUri = `data:image/svg+xml;base64,${base64}`;
-      
+
       console.log(`[WhatsApp] ✅ QR DataURI generado con éxito para BIZ-ID: ${businessId}`);
       currentQRs.set(businessId, dataUri);
       await WhatsAppSession.upsert({ businessId, status: 'connecting' });
@@ -289,6 +316,30 @@ async function createInstance(businessId, forceFresh = false) {
     console.log(`[WhatsApp] ✅ Cliente ${businessId} listo y conectado`);
     currentQRs.delete(businessId);
     await WhatsAppSession.update({ status: 'connected' }, { where: { businessId } });
+    
+    // Ocultar señales de automatización para evitar detección
+    try {
+      if (client.pupPage) {
+        await client.pupPage.evaluateOnNewDocument(() => {
+          // Ocultar navigator.webdriver
+          Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+          });
+          // Ocultar chrome.runtime
+          window.chrome = { runtime: {} };
+          // Ocultar permisos de notificación
+          const originalQuery = window.navigator.permissions.query;
+          window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+              Promise.resolve({ state: Notification.permission }) :
+              originalQuery(parameters)
+          );
+        });
+        console.log(`[WhatsApp] 🔒 Stealth mode activado para ${businessId}`);
+      }
+    } catch (stealthErr) {
+      console.warn(`[WhatsApp] ⚠️ No se pudo activar stealth mode:`, stealthErr.message);
+    }
   });
 
   // Autenticación fallida
@@ -305,12 +356,12 @@ async function createInstance(businessId, forceFresh = false) {
     await WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
     instances.delete(businessId);
     currentQRs.delete(businessId);
-    
+
     // Limpiar archivos de sesión
     if (fs.existsSync(authPath)) {
       try {
         fs.rmSync(authPath, { recursive: true, force: true });
-      } catch (e) {}
+      } catch (e) { }
     }
   });
 
@@ -324,7 +375,7 @@ async function createInstance(businessId, forceFresh = false) {
   // Inicializar cliente con manejo de errores y retry
   let initAttempts = 0;
   const maxInitAttempts = 3;
-  
+
   while (initAttempts < maxInitAttempts) {
     initAttempts++;
     try {
@@ -337,25 +388,25 @@ async function createInstance(businessId, forceFresh = false) {
       return client;
     } catch (err) {
       console.error(`[WhatsApp] ❌ Intento ${initAttempts}/${maxInitAttempts} fallido para ${businessId}:`, err.message);
-      
+
       // Limpiar instancia fallida antes de reintentar
       try {
         await client.destroy();
-      } catch (e) {}
+      } catch (e) { }
 
       if (initAttempts < maxInitAttempts) {
         console.log(`[WhatsApp] 🔄 Reintentando en 5 segundos con una instancia nueva...`);
         await new Promise(resolve => setTimeout(resolve, 5000));
-        
+
         // Es mejor crear una instancia nueva para el siguiente reintento
-        return createInstance(businessId, false); 
+        return createInstance(businessId, false);
       } else {
         // Último intento fallido, limpiar todo
         instances.delete(businessId);
         currentQRs.delete(businessId);
         // Limpiar sesión corrupta
         if (fs.existsSync(authPath)) {
-          try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) {}
+          try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
         }
         await WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
         throw err;
@@ -376,11 +427,11 @@ async function handleClientResponse(businessId, client, msg) {
 
   // Limpiar el texto entrante: quitar asteriscos, espacios y convertir a minúsculas
   const text = (msg.body || '').trim().toLowerCase().replace(/\*/g, '');
-  
+
   // 1. Obtener el teléfono del remitente de la forma más confiable posible
   let rawPhone = from.replace(/\D/g, '');
   let extractedFromLid = false;
-  
+
   // Si el ID parece ser un ID interno (muy largo) y no un teléfono, intentamos obtenerlo del contacto
   // o extraerlo del propio ID de WhatsApp (formato LID: numero@c.us o @lid)
   if (rawPhone.length > 15 || from.includes('@lid')) {
@@ -395,7 +446,7 @@ async function handleClientResponse(businessId, client, msg) {
       // WhatsApp LID IDs pueden contener el número en diferentes posiciones
       console.warn(`[WhatsApp] ⚠️ No se pudo obtener el contacto para el ID ${from}, intentando extraer del ID`);
     }
-    
+
     // Si aún no tenemos un número válido o sigue siendo muy largo,
     // intentar extraer los últimos 11-12 dígitos que podrían ser el número colombiano completo (57310xxxxxxx)
     if (rawPhone.length > 12) {
@@ -420,13 +471,13 @@ async function handleClientResponse(businessId, client, msg) {
     rawPhone = '3' + rawPhone.substring(1);
     console.log(`[WhatsApp] 📞 Normalizado número con prefijo 0: ${rawPhone}`);
   }
-  
+
   // Si tiene prefijo 57 (Colombia), quitarlo para comparar
   let cleanIncomingPhone = rawPhone;
   if (rawPhone.startsWith('57') && rawPhone.length === 12) {
     cleanIncomingPhone = rawPhone.substring(2);
   }
-  
+
   // Tomar los últimos 10 dígitos para comparación
   cleanIncomingPhone = cleanIncomingPhone.slice(-10);
   console.log(`[WhatsApp] 📥 Mensaje de: ${from} | Texto: "${text}" | Tel: ${cleanIncomingPhone} | BIZ: ${businessId}`);
@@ -434,7 +485,7 @@ async function handleClientResponse(businessId, client, msg) {
   // 2. Buscar citas para este negocio y sus sucursales (si comparten WhatsApp)
   // Obtenemos el ID del negocio "dueño" de la sesión para buscar en toda su red
   const sessionOwnerId = await Business.resolveWhatsAppBusinessId(businessId);
-  
+
   const sharingBusinesses = await Business.findAll({
     where: {
       [require('sequelize').Op.or]: [
@@ -447,64 +498,67 @@ async function handleClientResponse(businessId, client, msg) {
   const businessIds = sharingBusinesses.map(b => b.id);
 
   // Buscar primero citas ACTIVAS (para confirmación/cancelación) y luego citas DONE (para calificación)
+  const now = new Date();
   const activeAppts = await Appointment.findAll({
     where: { 
       businessId: { [require('sequelize').Op.in]: businessIds },
-      status: { [require('sequelize').Op.in]: ['pending', 'confirmed', 'attention'] }
+      status: { [require('sequelize').Op.in]: ['pending', 'confirmed', 'attention'] },
+      startTime: { [require('sequelize').Op.gte]: now } // Solo citas FUTURAS
     },
-    order: [['startTime', 'ASC']]
+    order: [['startTime', 'ASC']] // La más próxima primero
   });
 
   const doneAppts = await Appointment.findAll({
     where: { 
       businessId: { [require('sequelize').Op.in]: businessIds },
       status: 'done',
-      rating: null // Solo citas SIN calificar aún
+      rating: null, // Solo citas SIN calificar aún
+      updatedAt: { [require('sequelize').Op.gte]: new Date(now - 48 * 60 * 60 * 1000) } // Solo últimas 48h
     },
-    order: [['startTime', 'DESC']] // Las más recientes primero
+    order: [['updatedAt', 'DESC']] // Las más recientes primero
   });
 
   // Combinar: primero activas, luego done (para dar prioridad a confirmación sobre calificación)
   const recentAppts = [...activeAppts, ...doneAppts];
 
   console.log(`[WhatsApp] 🔍 Buscando en ${recentAppts.length} citas (${activeAppts.length} activas, ${doneAppts.length} sin calificar) de ${businessIds.length} negocios vinculados`);
-  
+
   // LOG CRÍTICO PARA DEPURACIÓN: Ver qué citas se están comparando
   recentAppts.forEach(a => {
     const dbPhone = String(a.clientPhone || '').replace(/\D/g, '');
-    console.log(`   -> Cita ${a.id.slice(0,8)} | Tel DB: ${dbPhone} | Status: ${a.status}`);
+    console.log(`   -> Cita ${a.id.slice(0, 8)} | Tel DB: ${dbPhone} | Status: ${a.status}`);
   });
 
   // 3. Filtrar por teléfono con lógica ultra-flexible
   const matchedAppt = recentAppts.find(appt => {
     if (!appt.clientPhone) return false;
-    
+
     const dbPhone = String(appt.clientPhone).replace(/\D/g, '');
     let dbPhoneLast10 = dbPhone.slice(-10);
-    
+
     // Normalizar número de DB si empieza con 0 (convertir a formato 3xx)
     if (dbPhoneLast10.length === 10 && dbPhoneLast10.startsWith('0')) {
       dbPhoneLast10 = '3' + dbPhoneLast10.substring(1);
     }
-    
+
     // A. Coincidencia exacta de últimos 10 dígitos (el caso más común)
     if (dbPhoneLast10 === cleanIncomingPhone) {
       console.log(`[WhatsApp] ✅ Match exacto: DB ${dbPhoneLast10} === Incoming ${cleanIncomingPhone}`);
       return true;
     }
-    
+
     // B. El teléfono de la DB está contenido en el ID largo de WhatsApp
     if (from.includes(dbPhoneLast10) && dbPhoneLast10.length >= 7) {
       console.log(`[WhatsApp] ✅ Match por contención en ID: ${dbPhoneLast10} en ${from}`);
       return true;
     }
-    
+
     // C. El ID de WhatsApp termina en el teléfono de la DB
     if (from.endsWith(dbPhone)) {
       console.log(`[WhatsApp] ✅ Match por terminación: ${from} termina en ${dbPhone}`);
       return true;
     }
-    
+
     // D. Comparar sin el prefijo 57 de Colombia
     if (dbPhone.startsWith('57')) {
       const dbNoPrefix = dbPhone.substring(2);
@@ -513,7 +567,7 @@ async function handleClientResponse(businessId, client, msg) {
         return true;
       }
     }
-    
+
     // E. Match parcial de últimos 7 dígitos (para números similares con prefijos diferentes)
     // Esto ayuda cuando el usuario tiene variaciones en su número (ej: 311... vs 350...)
     const dbPhoneLast7 = dbPhoneLast10.slice(-7);
@@ -538,28 +592,28 @@ async function handleClientResponse(businessId, client, msg) {
     // Extraer el primer dígito del mensaje (ignorando espacios, puntuación, emojis)
     const firstDigitMatch = text.match(/^\s*([12])\b/);
     const firstDigit = firstDigitMatch ? firstDigitMatch[1] : null;
-    
+
     const isConfirm = firstDigit === '1' || text.includes('si') || text.includes('confirm') || text.includes('sí');
     const isCancel = firstDigit === '2' || text.includes('no') || text.includes('cancel') || text.includes('cancelar');
 
     if (isConfirm) {
       console.log(`[WhatsApp] ✅ Confirmando cita ${matchedAppt.id}`);
-      await matchedAppt.update({ 
-        status: 'confirmed', 
-        confirmed: true, 
-        confirmedAt: new Date() 
+      await matchedAppt.update({
+        status: 'confirmed',
+        confirmed: true,
+        confirmedAt: new Date()
       });
-      
+
       const chat = await msg.getChat();
       await chat.sendStateTyping();
       setTimeout(async () => {
         try {
           await msg.reply(getRandomConfirmationTemplate());
         } catch (e) { console.error(`[WhatsApp] Error respuesta:`, e.message); }
-      }, 50000); // 50 segundos
+      }, 2 * 60 * 1000); // 2 minutos después
       return;
-    } 
-    
+    }
+
     if (isCancel) {
       console.log(`[WhatsApp] ❌ Cancelando cita ${matchedAppt.id}`);
       await matchedAppt.update({ status: 'cancelled' });
@@ -574,7 +628,7 @@ async function handleClientResponse(businessId, client, msg) {
           ];
           await msg.reply(templates[Math.floor(Math.random() * templates.length)]);
         } catch (e) { console.error(`[WhatsApp] Error respuesta:`, e.message); }
-      }, 50000); // 50 segundos
+      }, 2 * 60 * 1000); // 2 minutos después
       return;
     }
   }
@@ -586,13 +640,20 @@ async function handleClientResponse(businessId, client, msg) {
       const rating = parseInt(match[0]);
       console.log(`[WhatsApp] ⭐ Calificando cita ${matchedAppt.id} con ${rating}`);
       try {
-        await matchedAppt.update({ 
+        await matchedAppt.update({
           rating,
           status: 'done' // Asegurar que pase a terminada si aún no lo estaba
         });
-        
-        // Respuesta inmediata de agradecimiento
-        await msg.reply(`🌟 ¡Gracias por calificar con ${'⭐'.repeat(rating)}! Nos ayuda mucho.`);
+
+        // Respuesta de agradecimiento con delay de 2 minutos (comportamiento humano)
+        const chat = await msg.getChat();
+        await chat.sendStateTyping();
+        setTimeout(async () => {
+          try {
+            const randomTemplate = RATING_THANKS_TEMPLATES[Math.floor(Math.random() * RATING_THANKS_TEMPLATES.length)];
+            await msg.reply(randomTemplate(rating));
+          } catch (e) { console.error(`[WhatsApp] Error respuesta calificación:`, e.message); }
+        }, 2 * 60 * 1000); // 2 minutos
         
         // Programar mensaje de agradecimiento extendido para 1 hora después
         setTimeout(async () => {
@@ -609,7 +670,7 @@ async function handleClientResponse(businessId, client, msg) {
             console.error(`[WhatsApp] Error enviando agradecimiento post-calificación:`, thankErr.message);
           }
         }, 60 * 60 * 1000); // 1 hora
-        
+
         return;
       } catch (err) {
         console.error(`[WhatsApp] Error guardando calificación:`, err.message);
@@ -642,21 +703,21 @@ async function processQueue() {
     const colombiaOffset = -5 * 60 * 60 * 1000; // UTC-5
     const colombiaTime = new Date(now.getTime() + colombiaOffset);
     const colombiaHour = colombiaTime.getUTCHours();
-    
+
     // Calcular cuántos ms faltan para las 7 AM Colombia del día siguiente
     // next7AMColombia será 7 AM Colombia en tiempo UTC
     const next7AMColombia = new Date(now);
     next7AMColombia.setUTCHours(12, 0, 0, 0); // 12:00 UTC = 7:00 AM Colombia
-    
+
     // Si ya pasó las 7pm Colombia (12am UTC), ir al día siguiente
     if (colombiaHour >= 19 || colombiaHour < 7) {
       next7AMColombia.setUTCDate(next7AMColombia.getUTCDate() + 1);
     }
-    
+
     const delayToMorning = next7AMColombia - now;
     const queueSize = messageQueue.length;
-    console.log(`[WhatsApp] ⏰ Fuera de horario laboral Colombia (7am-7pm). ${queueSize} mensajes en cola. Reanudando a las 7am Colombia (${Math.round(delayToMorning/60000)} min)`);
-    
+    console.log(`[WhatsApp] ⏰ Fuera de horario laboral Colombia (7am-7pm). ${queueSize} mensajes en cola. Reanudando a las 7am Colombia (${Math.round(delayToMorning / 60000)} min)`);
+
     // Los mensajes quedan guardados en la cola para el siguiente día
     setTimeout(processQueue, delayToMorning);
     return;
@@ -664,7 +725,7 @@ async function processQueue() {
 
   isProcessingQueue = true;
   const { businessId, to, text } = messageQueue.shift();
-  
+
   // Verificar límite de mensajes por hora
   if (!canSendMessage(businessId)) {
     // Reencolar el mensaje para más tarde
@@ -673,7 +734,7 @@ async function processQueue() {
     setTimeout(processQueue, 60000); // Reintentar en 1 minuto
     return;
   }
-  
+
   const client = instances.get(businessId);
 
   // Verificar si el cliente existe y está realmente LISTO (ready)
@@ -684,9 +745,9 @@ async function processQueue() {
       // Limpiar número y asegurar formato internacional (Colombia +57 por defecto si no tiene prefijo)
       let cleanTo = to.replace(/\D/g, '');
       if (cleanTo.length === 10) cleanTo = `57${cleanTo}`;
-      
+
       const chatId = `${cleanTo}@c.us`;
-      
+
       // Verificar si el número existe en WhatsApp para evitar el error "No LID"
       // Usamos un try-catch específico para isRegisteredUser porque falla internamente en la librería a veces
       let isRegistered = false;
@@ -741,12 +802,12 @@ async function processQueue() {
   // Para evitar bloqueos, agregamos variabilidad adicional basada en el tamaño de la cola
   const baseDelay = getRandomDelay();
   const queueSize = messageQueue.length;
-  
+
   // Si hay muchos mensajes en cola, aumentamos el delay para espaciar más
   const additionalDelay = queueSize > 5 ? Math.random() * 60000 : 0; // Hasta 1 min extra si hay cola grande
   const nextDelay = baseDelay + additionalDelay;
-  
-  console.log(`[WhatsApp] ⏱️ Próximo mensaje en ${Math.round(nextDelay/1000)} segundos (${queueSize} pendientes)`);
+
+  console.log(`[WhatsApp] ⏱️ Próximo mensaje en ${Math.round(nextDelay / 1000)} segundos (${queueSize} pendientes)`);
   setTimeout(processQueue, nextDelay);
 }
 
@@ -755,16 +816,16 @@ async function processQueue() {
  */
 async function forceReconnect(businessId) {
   const authPath = path.join(__dirname, `../../sessions/${businessId}`);
-  
+
   // 1. Cerrar y eliminar la instancia actual
   const existingClient = instances.get(businessId);
   if (existingClient) {
     try {
       await existingClient.destroy();
-    } catch (e) {}
+    } catch (e) { }
     instances.delete(businessId);
   }
-  
+
   // 2. Borrar archivos de sesión
   if (fs.existsSync(authPath)) {
     try {
@@ -774,11 +835,11 @@ async function forceReconnect(businessId) {
       console.error(`[WhatsApp] Error limpiando sesión:`, e.message);
     }
   }
-  
+
   // 3. Actualizar estado en BD
   await WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
   currentQRs.delete(businessId);
-  
+
   // 4. Crear nueva instancia (generará QR fresco)
   console.log(`[WhatsApp] 🔄 Forzando nueva conexión para ${businessId}...`);
   await createInstance(businessId, true);

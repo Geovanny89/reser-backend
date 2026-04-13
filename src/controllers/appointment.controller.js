@@ -1,4 +1,4 @@
-const { Appointment, Service, Employee, User, Business, Promotion } = require('../models');
+const { Appointment, Service, Employee, User, Business, Promotion, ClientTag, ClientTagAssignment } = require('../models');
 const { Op } = require('sequelize');
 const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
@@ -401,21 +401,40 @@ exports.updateStatus = async (req, res) => {
                 if (session) {
                   const employeeName = freshAppt.Employee?.User?.name || 'nuestro profesional';
                   const businessName = freshAppt.Business?.name || 'nosotros';
+                  const businessSlug = freshAppt.Business?.slug || freshAppt.businessId;
                   const ratingTemplate = getRandomRatingTemplate();
-                  const text = `¡Hola *${freshAppt.clientName}*! 👋 Gracias por visitarnos en *${businessName}*.\n\n${ratingTemplate}\n\nServicio: *${employeeName}*`;
                   
-                  // Programar envío con 5 minutos de delay
+                  const baseUrl = process.env.FRONTEND_URL || 'https://k-dice.com';
+                  const reviewLink = `${baseUrl}/${businessSlug}?review=true`;
+                  
+                  // Mensaje 1: Calificación del empleado (5 minutos después)
+                  const ratingText = `¡Hola *${freshAppt.clientName}*! 👋 Gracias por visitarnos en *${businessName}*.\n\n${ratingTemplate}\n\nServicio: ${employeeName}`;
+                  
+                  // Mensaje 2: Calificación del negocio/reseña (1 hora después)
+                  const reviewText = `¡Hola *${freshAppt.clientName}*! 👋\n\n¿Quieres ayudar a *${businessName}* a crecer?\n\n💬 Deja una reseña pública y ayuda a otros clientes a conocernos:\n👉 ${reviewLink}\n\n¡Gracias por tu confianza! ❤️`;
+                  
+                  // Enviar calificación del empleado a los 5 minutos
                   setTimeout(async () => {
                     try {
-                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, text);
+                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, ratingText);
                       await freshAppt.update({ ratingSent: true });
-                      console.log(`[Done Action] Solicitud de calificación enviada (5min post-cita) para cita ${appt.id}`);
+                      console.log(`[Done Action] Solicitud de calificación EMPLEADO enviada (5min post-cita) para cita ${appt.id}`);
                     } catch (delayedErr) {
-                      console.error('[Done Action] Error enviando calificación post-delay:', delayedErr.message);
+                      console.error('[Done Action] Error enviando calificación empleado:', delayedErr.message);
                     }
                   }, 5 * 60 * 1000); // 5 minutos
                   
-                  console.log(`[Done Action] Solicitud de calificación programada para cita ${appt.id} (envío en 5 min)`);
+                  // Enviar solicitud de reseña del negocio a los 30 minutos
+                  setTimeout(async () => {
+                    try {
+                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, reviewText);
+                      console.log(`[Done Action] Solicitud de reseña NEGOCIO enviada (30min post-cita) para cita ${appt.id}`);
+                    } catch (reviewErr) {
+                      console.error('[Done Action] Error enviando solicitud reseña:', reviewErr.message);
+                    }
+                  }, 30 * 60 * 1000); // 30 minutos
+                  
+                  console.log(`[Done Action] Mensajes programados: Calificación empleado (5min) + Reseña negocio (30min) para cita ${appt.id}`);
                 }
               } catch (waErr) {
                 console.error('[Done Action] Error programando solicitud de calificación:', waErr.message);
@@ -1165,6 +1184,382 @@ exports.transferAppointment = async (req, res) => {
     });
   } catch (e) {
     console.error('Error transferring appointment:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Obtiene lista de clientes únicos con estadísticas para un negocio
+ * Agrupa por teléfono (o email si no hay teléfono)
+ */
+exports.getClientsByBusiness = async (req, res) => {
+  try {
+    const businessId = req.query.businessId || req.params.businessId;
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+
+    const { search } = req.query;
+
+    // Obtener todas las citas del negocio con datos de servicio
+    const where = { businessId };
+    
+    // Si hay búsqueda, filtrar por nombre, teléfono o email
+    if (search) {
+      where[Op.or] = [
+        { clientName: { [Op.like]: `%${search}%` } },
+        { clientPhone: { [Op.like]: `%${search}%` } },
+        { clientEmail: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const [appointments, tagAssignments, availableTags] = await Promise.all([
+      Appointment.findAll({
+        where,
+        include: [
+          { model: Service, attributes: ['id', 'name', 'price'] },
+          { model: Employee, include: [{ model: User, attributes: ['name'] }] }
+        ],
+        order: [['startTime', 'DESC']]
+      }),
+      ClientTagAssignment.findAll({
+        where: { businessId },
+        include: [{ model: ClientTag, as: 'Tag', where: { active: true }, required: false }]
+      }),
+      ClientTag.findAll({
+        where: { businessId, active: true },
+        attributes: ['id', 'name', 'color']
+      })
+    ]);
+
+    // Crear mapa de etiquetas por cliente (teléfono/email)
+    const tagsByClient = new Map();
+    tagAssignments.forEach(assignment => {
+      if (!assignment.Tag) return;
+      const key = assignment.clientPhone || assignment.clientEmail;
+      if (!key) return;
+      
+      if (!tagsByClient.has(key)) {
+        tagsByClient.set(key, []);
+      }
+      tagsByClient.get(key).push({
+        id: assignment.Tag.id,
+        name: assignment.Tag.name,
+        color: assignment.Tag.color,
+        assignmentId: assignment.id
+      });
+    });
+
+    // Agrupar por cliente (usar teléfono como identificador principal)
+    const clientsMap = new Map();
+
+    appointments.forEach(appt => {
+      // Usar teléfono como key, si no tiene usar email, si no tiene usar nombre
+      const key = appt.clientPhone || appt.clientEmail || appt.clientName || 'Sin contacto';
+      
+      if (!clientsMap.has(key)) {
+        clientsMap.set(key, {
+          id: appt.clientId,
+          name: appt.clientName || 'Sin nombre',
+          phone: appt.clientPhone || null,
+          email: appt.clientEmail || null,
+          totalAppointments: 0,
+          completedAppointments: 0,
+          cancelledAppointments: 0,
+          totalSpent: 0,
+          lastVisit: null,
+          firstVisit: null,
+          tags: tagsByClient.get(appt.clientPhone) || tagsByClient.get(appt.clientEmail) || [],
+          appointments: []
+        });
+      }
+
+      const client = clientsMap.get(key);
+      client.totalAppointments++;
+      
+      if (appt.status === 'done') {
+        client.completedAppointments++;
+        client.totalSpent += parseFloat(appt.finalPrice || appt.basePrice || 0);
+      } else if (appt.status === 'cancelled') {
+        client.cancelledAppointments++;
+      }
+
+      const apptDate = new Date(appt.startTime);
+      if (!client.lastVisit || apptDate > new Date(client.lastVisit)) {
+        client.lastVisit = appt.startTime;
+      }
+      if (!client.firstVisit || apptDate < new Date(client.firstVisit)) {
+        client.firstVisit = appt.startTime;
+      }
+
+      client.appointments.push({
+        id: appt.id,
+        date: appt.startTime,
+        service: appt.Service?.name || 'Sin servicio',
+        employee: appt.Employee?.User?.name || 'Sin empleado',
+        status: appt.status,
+        price: appt.finalPrice || appt.basePrice || 0
+      });
+    });
+
+    const clients = Array.from(clientsMap.values());
+
+    res.json({
+      total: clients.length,
+      availableTags,
+      clients: clients.sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit))
+    });
+  } catch (e) {
+    console.error('[getClientsByBusiness] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Obtiene todas las etiquetas de un negocio
+ */
+exports.getClientTags = async (req, res) => {
+  try {
+    const businessId = req.query.businessId;
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+
+    const tags = await ClientTag.findAll({
+      where: { businessId, active: true },
+      order: [['name', 'ASC']]
+    });
+
+    res.json(tags);
+  } catch (e) {
+    console.error('[getClientTags] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Crea una nueva etiqueta
+ */
+exports.createClientTag = async (req, res) => {
+  try {
+    const { businessId, name, color, description } = req.body;
+    
+    if (!businessId || !name) {
+      return res.status(400).json({ error: 'businessId y name son requeridos' });
+    }
+
+    const tag = await ClientTag.create({
+      businessId,
+      name: name.trim(),
+      color: color || '#667eea',
+      description: description || null,
+      active: true
+    });
+
+    res.status(201).json(tag);
+  } catch (e) {
+    console.error('[createClientTag] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Actualiza una etiqueta
+ */
+exports.updateClientTag = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, color, description } = req.body;
+
+    const tag = await ClientTag.findByPk(id);
+    if (!tag) return res.status(404).json({ error: 'Etiqueta no encontrada' });
+
+    await tag.update({
+      name: name !== undefined ? name.trim() : tag.name,
+      color: color || tag.color,
+      description: description !== undefined ? description : tag.description
+    });
+
+    res.json(tag);
+  } catch (e) {
+    console.error('[updateClientTag] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Elimina (desactiva) una etiqueta
+ */
+exports.deleteClientTag = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const tag = await ClientTag.findByPk(id);
+    if (!tag) return res.status(404).json({ error: 'Etiqueta no encontrada' });
+
+    // Desactivar en lugar de eliminar (para mantener historial)
+    await tag.update({ active: false });
+
+    // También eliminar todas las asignaciones de esta etiqueta
+    await ClientTagAssignment.destroy({
+      where: { clientTagId: id }
+    });
+
+    res.json({ success: true, message: 'Etiqueta eliminada' });
+  } catch (e) {
+    console.error('[deleteClientTag] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Asigna una etiqueta a un cliente
+ */
+exports.assignTagToClient = async (req, res) => {
+  try {
+    const { businessId, clientTagId, clientPhone, clientEmail, clientName, notes } = req.body;
+
+    if (!businessId || !clientTagId || (!clientPhone && !clientEmail)) {
+      return res.status(400).json({ error: 'businessId, clientTagId y clientPhone o clientEmail son requeridos' });
+    }
+
+    // Verificar que la etiqueta existe y pertenece al negocio
+    const tag = await ClientTag.findOne({
+      where: { id: clientTagId, businessId, active: true }
+    });
+    if (!tag) return res.status(404).json({ error: 'Etiqueta no encontrada' });
+
+    // Verificar si ya existe esta asignación
+    const existingAssignment = await ClientTagAssignment.findOne({
+      where: {
+        businessId,
+        clientTagId,
+        clientPhone: clientPhone || null,
+        clientEmail: clientEmail || null
+      }
+    });
+
+    if (existingAssignment) {
+      return res.status(409).json({ error: 'Esta etiqueta ya está asignada a este cliente' });
+    }
+
+    const assignment = await ClientTagAssignment.create({
+      businessId,
+      clientTagId,
+      clientPhone: clientPhone || null,
+      clientEmail: clientEmail || null,
+      clientName: clientName || null,
+      notes: notes || null
+    });
+
+    res.status(201).json({
+      success: true,
+      assignment: {
+        ...assignment.toJSON(),
+        Tag: tag
+      }
+    });
+  } catch (e) {
+    console.error('[assignTagToClient] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Remueve una etiqueta de un cliente
+ */
+exports.removeTagFromClient = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    const assignment = await ClientTagAssignment.findByPk(assignmentId);
+    if (!assignment) return res.status(404).json({ error: 'Asignación no encontrada' });
+
+    await assignment.destroy();
+
+    res.json({ success: true, message: 'Etiqueta removida del cliente' });
+  } catch (e) {
+    console.error('[removeTagFromClient] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Verificar si una cita puede ser calificada (público)
+ */
+exports.verifyForRating = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const appointment = await Appointment.findByPk(id, {
+      include: [
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: Business, attributes: ['name', 'slug'] }
+      ]
+    });
+
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    if (appointment.status !== 'done') {
+      return res.status(400).json({ error: 'Solo se pueden calificar citas completadas' });
+    }
+
+    if (appointment.rating) {
+      return res.status(400).json({ error: 'Esta cita ya fue calificada' });
+    }
+
+    res.json({
+      id: appointment.id,
+      employeeName: appointment.Employee?.User?.name || 'Profesional',
+      businessName: appointment.Business?.name,
+      status: appointment.status,
+      canRate: true
+    });
+  } catch (e) {
+    console.error('[verifyForRating] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Calificar empleado después de una cita (cliente - público)
+ */
+exports.rateAppointment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating, comment } = req.body;
+
+    // Validar rating
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'La calificación debe ser entre 1 y 5 estrellas' });
+    }
+
+    const appointment = await Appointment.findByPk(id);
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Solo permitir calificar citas completadas
+    if (appointment.status !== 'done') {
+      return res.status(400).json({ error: 'Solo se pueden calificar citas completadas' });
+    }
+
+    // Verificar si ya fue calificada
+    if (appointment.rating) {
+      return res.status(400).json({ error: 'Esta cita ya fue calificada' });
+    }
+
+    // Guardar calificación
+    await appointment.update({
+      rating,
+      ratingComment: comment || null
+    });
+
+    res.json({
+      success: true,
+      message: '¡Gracias por tu calificación!',
+      appointment: {
+        id: appointment.id,
+        rating,
+        ratingComment: comment
+      }
+    });
+  } catch (e) {
+    console.error('[rateAppointment] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };

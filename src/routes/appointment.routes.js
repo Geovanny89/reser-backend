@@ -122,6 +122,58 @@ router.get('/:id/confirm', ctrl.confirmAttendance);
  */
 router.get('/:id/cancel-from-email', ctrl.cancelFromEmail);
 
+/**
+ * @swagger
+ * /appointments/{id}/verify:
+ *   get:
+ *     summary: Verificar si una cita puede ser calificada (público)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Cita verificada
+ *       404:
+ *         description: Cita no encontrada
+ *       400:
+ *         description: Cita no completada o ya calificada
+ */
+router.get('/:id/verify', ctrl.verifyForRating);
+
+/**
+ * @swagger
+ * /appointments/{id}/rate:
+ *   post:
+ *     summary: Calificar empleado después de una cita (cliente - público)
+ *     tags: [Appointments]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [rating]
+ *             properties:
+ *               rating: { type: integer, minimum: 1, maximum: 5, description: 'Calificación 1-5 estrellas' }
+ *               comment: { type: string, description: 'Comentario opcional' }
+ *     responses:
+ *       200:
+ *         description: Calificación guardada exitosamente
+ *       404:
+ *         description: Cita no encontrada
+ *       400:
+ *         description: La cita no está completada o ya fue calificada
+ */
+router.post('/:id/rate', ctrl.rateAppointment);
+
 router.use(auth);
 
 /**
@@ -145,6 +197,13 @@ router.use(auth);
  */
 router.get('/', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 router.get('/consolidated', role('admin', 'admin_suc'), ctrl.getConsolidated);
+router.get('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientsByBusiness);
+router.get('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientTags);
+router.post('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.createClientTag);
+router.put('/client-tags/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClientTag);
+router.delete('/client-tags/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.deleteClientTag);
+router.post('/client-tags/assign', role('admin', 'admin_suc', 'superadmin'), ctrl.assignTagToClient);
+router.delete('/client-tags/assign/:assignmentId', role('admin', 'admin_suc', 'superadmin'), ctrl.removeTagFromClient);
 router.get('/business/:businessId', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 
 /**

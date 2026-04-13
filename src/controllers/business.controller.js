@@ -1,4 +1,4 @@
-const { Business, Service, Employee, User, Promotion } = require('../models');
+const { Business, Service, Employee, User, Promotion, Appointment } = require('../models');
 const { deleteFromCloudinary } = require('../config/cloudinary');
 const { sendEmail } = require('../config/email');
 const { Op } = require('sequelize');
@@ -290,6 +290,8 @@ exports.updateMyBusiness = async (req, res) => {
 
 exports.getBySlug = async (req, res) => {
   try {
+    const { BusinessReview } = require('../models');
+    
     const biz = await Business.findOne({
       where: { slug: req.params.slug },
       include: [
@@ -321,8 +323,30 @@ exports.getBySlug = async (req, res) => {
       include: [{ model: Service, attributes: ['name'] }]
     });
 
+    // Obtener reseñas aprobadas del negocio
+    const reviews = await BusinessReview.findAll({
+      where: { 
+        businessId: biz.id,
+        isApproved: true 
+      },
+      order: [['createdAt', 'DESC']],
+      limit: 10
+    });
+
     const bizJson = biz.toJSON();
     bizJson.Promotions = promotions;
+    bizJson.Reviews = reviews;
+    
+    // Calcular estadísticas de reseñas
+    const totalReviews = reviews.length;
+    const avgRating = totalReviews > 0 
+      ? (reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1)
+      : null;
+    
+    bizJson.ReviewStats = {
+      avgRating: avgRating ? parseFloat(avgRating) : null,
+      totalReviews
+    };
     
     // Asignar promociones a los servicios
     if (bizJson.Services) {
@@ -334,6 +358,7 @@ exports.getBySlug = async (req, res) => {
 
     res.json(bizJson);
   } catch (e) {
+    console.error('[getBySlug] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -863,6 +888,113 @@ exports.updateMissionVision = async (req, res) => {
       business 
     });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Crear una reseña para el negocio (público)
+exports.createReview = async (req, res) => {
+  try {
+    const { BusinessReview } = require('../models');
+    const { slug } = req.params;
+    const { clientName, rating, comment } = req.body;
+    
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'La calificación debe estar entre 1 y 5 estrellas' });
+    }
+    
+    // Buscar el negocio por slug
+    const business = await Business.findOne({ where: { slug } });
+    if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    const review = await BusinessReview.create({
+      businessId: business.id,
+      clientName: clientName || 'Cliente Anónimo',
+      rating,
+      comment: comment || null,
+      isApproved: true // Por defecto aprobadas, el admin puede desactivarlas luego
+    });
+    
+    res.status(201).json({
+      message: 'Reseña creada exitosamente',
+      review
+    });
+  } catch (e) {
+    console.error('[createReview] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Obtener reseñas del negocio (para admin)
+exports.getReviews = async (req, res) => {
+  try {
+    const { BusinessReview } = require('../models');
+    const { businessId } = req.query;
+    
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+    
+    const reviews = await BusinessReview.findAll({
+      where: { businessId },
+      order: [['createdAt', 'DESC']]
+    });
+    
+    res.json(reviews);
+  } catch (e) {
+    console.error('[getReviews] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Aprobar/desaprobar reseña
+exports.toggleReviewApproval = async (req, res) => {
+  try {
+    const { BusinessReview } = require('../models');
+    const { reviewId } = req.params;
+    
+    const review = await BusinessReview.findByPk(reviewId);
+    if (!review) return res.status(404).json({ error: 'Reseña no encontrada' });
+    
+    // Verificar que el usuario sea admin del negocio
+    const business = await Business.findByPk(review.businessId);
+    const isOwner = business.ownerId === req.user.id;
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: 'No autorizado' });
+    
+    review.isApproved = !review.isApproved;
+    await review.save();
+    
+    res.json({
+      message: `Reseña ${review.isApproved ? 'aprobada' : 'desaprobada'}`,
+      review
+    });
+  } catch (e) {
+    console.error('[toggleReviewApproval] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Eliminar reseña
+exports.deleteReview = async (req, res) => {
+  try {
+    const { BusinessReview } = require('../models');
+    const { reviewId } = req.params;
+    
+    const review = await BusinessReview.findByPk(reviewId);
+    if (!review) return res.status(404).json({ error: 'Reseña no encontrada' });
+    
+    // Verificar que el usuario sea admin del negocio
+    const business = await Business.findByPk(review.businessId);
+    const isOwner = business.ownerId === req.user.id;
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    
+    if (!isOwner && !isAdmin) return res.status(403).json({ error: 'No autorizado' });
+    
+    await review.destroy();
+    
+    res.json({ message: 'Reseña eliminada' });
+  } catch (e) {
+    console.error('[deleteReview] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };

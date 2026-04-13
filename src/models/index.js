@@ -11,6 +11,9 @@ const ClientDevice = require('./ClientDevice')(sequelize);
 const WhatsAppSession = require('./WhatsAppSession')(sequelize);
 const SystemSetting = require('./SystemSetting')(sequelize);
 const Promotion     = require('./Promotion')(sequelize);
+const ClientTag     = require('./ClientTag')(sequelize);
+const ClientTagAssignment = require('./ClientTagAssignment')(sequelize);
+const BusinessReview = require('./BusinessReview')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -53,4 +56,17 @@ Employee.hasMany(Appointment,    { foreignKey: 'employeeId' });
 Schedule.belongsTo(Employee, { foreignKey: 'employeeId' });
 Employee.hasMany(Schedule, { foreignKey: 'employeeId', as: 'Schedules' });
 
-module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion };
+// ClientTag — Business
+ClientTag.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(ClientTag, { foreignKey: 'businessId', as: 'ClientTags' });
+
+// ClientTagAssignment relationships
+ClientTagAssignment.belongsTo(ClientTag, { foreignKey: 'clientTagId', as: 'Tag' });
+ClientTag.hasMany(ClientTagAssignment, { foreignKey: 'clientTagId', as: 'Assignments' });
+ClientTagAssignment.belongsTo(Business, { foreignKey: 'businessId' });
+
+// BusinessReview — Business
+BusinessReview.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(BusinessReview, { foreignKey: 'businessId', as: 'Reviews' });
+
+module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview };

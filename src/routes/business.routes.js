@@ -85,6 +85,38 @@ router.get('/:slug/public', ctrl.getBySlug);
  */
 router.get('/:slug/availability', ctrl.getAvailability);
 
+/**
+ * @swagger
+ * /businesses/{slug}/reviews:
+ *   post:
+ *     summary: Crear una reseña para el negocio (público)
+ *     tags: [Businesses]
+ *     parameters:
+ *       - in: path
+ *         name: slug
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [rating]
+ *             properties:
+ *               clientName: { type: string, example: "María Rodriguez" }
+ *               rating: { type: integer, minimum: 1, maximum: 5, example: 5 }
+ *               comment: { type: string, example: "Un espacio muy bonito, me sentí como en casa" }
+ *     responses:
+ *       201:
+ *         description: Reseña creada exitosamente
+ *       400:
+ *         description: Datos inválidos
+ *       404:
+ *         description: Negocio no encontrado
+ */
+router.post('/:slug/reviews', ctrl.createReview);
+
 // Rutas protegidas
 router.use(auth);
 
@@ -342,5 +374,10 @@ router.post('/my/payment-screenshot', role('superadmin', 'admin'), upload.single
  *         description: Pago registrado y notificación enviada
  */
 router.post('/my/submit-payment', role('superadmin', 'admin'), upload.single('screenshot'), ctrl.submitPayment);
+
+// Gestión de reseñas (protegido)
+router.get('/my/reviews', role('superadmin', 'admin', 'admin_suc'), ctrl.getReviews);
+router.patch('/reviews/:reviewId/approve', role('superadmin', 'admin', 'admin_suc'), ctrl.toggleReviewApproval);
+router.delete('/reviews/:reviewId', role('superadmin', 'admin', 'admin_suc'), ctrl.deleteReview);
 
 module.exports = router;
