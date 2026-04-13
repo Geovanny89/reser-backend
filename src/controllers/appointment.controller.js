@@ -271,7 +271,7 @@ exports.create = async (req, res) => {
         if (owner?.pushToken) {
           await sendPushNotification(owner.pushToken, {
             title: '📅 Nueva Cita Agendada',
-            body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'} para ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+            body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'} para ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
           }, {
             type: 'new_appointment',
             appointmentId: fullAppt.id,
@@ -283,7 +283,7 @@ exports.create = async (req, res) => {
         if (fullAppt.Employee?.User?.pushToken) {
           await sendPushNotification(fullAppt.Employee.User.pushToken, {
             title: '📅 Nueva Cita Asignada',
-            body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'} el ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+            body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'} el ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
           }, {
             type: 'new_appointment',
             appointmentId: fullAppt.id,
@@ -923,7 +923,7 @@ exports.confirmAttendance = async (req, res) => {
     if (owner?.pushToken) {
       await sendPushNotification(owner.pushToken, {
         title: '✅ Cliente Confirmó Asistencia',
-        body: `${appt.clientName} confirmó que asistirá a la cita de ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+        body: `${appt.clientName} confirmó que asistirá a la cita de ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
       }, {
         type: 'appointment_confirmed',
         appointmentId: appt.id,
@@ -1144,7 +1144,7 @@ exports.transferAppointment = async (req, res) => {
     if (newEmployee.User?.pushToken) {
       await sendPushNotification(newEmployee.User.pushToken, {
         title: '📅 Cita Transferida',
-        body: `Se te ha asignado una cita de ${appt.clientName} - ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+        body: `Se te ha asignado una cita de ${appt.clientName} - ${appt.Service?.name} el ${new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
       }, {
         type: 'appointment_transferred',
         appointmentId: appt.id,

@@ -101,7 +101,7 @@ const sendCancellationNotification = async (fcmToken, appointmentData) => {
     fcmToken,
     {
       title: '❌ Cita Cancelada',
-      body: `${clientName} canceló su cita de ${serviceName} para ${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' })}`,
+      body: `${clientName} canceló su cita de ${serviceName} para ${new Date(startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
     },
     {
       type: 'appointment_cancelled',

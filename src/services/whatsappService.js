@@ -62,13 +62,17 @@ function getRandomDelay() {
 }
 
 /**
- * Verifica si es horario laboral (7am - 8pm Colombia)
+ * Verifica si es horario laboral (7am - 7pm Colombia)
  * WhatsApp puede bloquear números que envían fuera de horarios normales
+ * Colombia es UTC-5 (todo el año, no tiene horario de verano)
  */
 function isBusinessHours() {
   const now = new Date();
-  const hour = now.getHours();
-  return hour >= 7 && hour < 20; // 7am - 8pm
+  // Convertir UTC a hora Colombia (UTC-5)
+  const colombiaOffset = -5 * 60 * 60 * 1000; // -5 horas en ms
+  const colombiaTime = new Date(now.getTime() + colombiaOffset);
+  const hour = colombiaTime.getUTCHours(); // Usar getUTCHours porque ya convertimos
+  return hour >= 7 && hour < 19; // 7am - 7pm Colombia
 }
 
 /**
@@ -76,7 +80,10 @@ function isBusinessHours() {
  */
 function canSendMessage(businessId) {
   const now = new Date();
-  const currentHour = now.getHours();
+  // Convertir a hora Colombia (UTC-5)
+  const colombiaOffset = -5 * 60 * 60 * 1000;
+  const colombiaTime = new Date(now.getTime() + colombiaOffset);
+  const currentHour = colombiaTime.getUTCHours();
   
   const countData = messageCounts.get(businessId);
   if (!countData || countData.hour !== currentHour) {
@@ -628,20 +635,27 @@ async function processQueue() {
     return;
   }
 
-  // Verificar horario laboral - no enviar fuera de horario (7am - 8pm)
+  // Verificar horario laboral - no enviar fuera de horario (7am - 7pm Colombia)
   if (!isBusinessHours()) {
     const now = new Date();
-    const nextHour = new Date(now);
-    nextHour.setHours(7, 0, 0, 0); // Próximo día a las 7am
+    // Convertir UTC a hora Colombia para calcular cuándo es el próximo 7 AM Colombia
+    const colombiaOffset = -5 * 60 * 60 * 1000; // UTC-5
+    const colombiaTime = new Date(now.getTime() + colombiaOffset);
+    const colombiaHour = colombiaTime.getUTCHours();
     
-    // Si ya pasó las 8pm, programar para mañana a las 7am
-    if (now.getHours() >= 20 || now.getHours() < 7) {
-      nextHour.setDate(nextHour.getDate() + 1);
+    // Calcular cuántos ms faltan para las 7 AM Colombia del día siguiente
+    // next7AMColombia será 7 AM Colombia en tiempo UTC
+    const next7AMColombia = new Date(now);
+    next7AMColombia.setUTCHours(12, 0, 0, 0); // 12:00 UTC = 7:00 AM Colombia
+    
+    // Si ya pasó las 7pm Colombia (12am UTC), ir al día siguiente
+    if (colombiaHour >= 19 || colombiaHour < 7) {
+      next7AMColombia.setUTCDate(next7AMColombia.getUTCDate() + 1);
     }
     
-    const delayToMorning = nextHour - now;
+    const delayToMorning = next7AMColombia - now;
     const queueSize = messageQueue.length;
-    console.log(`[WhatsApp] ⏰ Fuera de horario laboral (7am-8pm). ${queueSize} mensajes en cola. Reanudando mañana a las 7am (${Math.round(delayToMorning/60000)} min)`);
+    console.log(`[WhatsApp] ⏰ Fuera de horario laboral Colombia (7am-7pm). ${queueSize} mensajes en cola. Reanudando a las 7am Colombia (${Math.round(delayToMorning/60000)} min)`);
     
     // Los mensajes quedan guardados en la cola para el siguiente día
     setTimeout(processQueue, delayToMorning);

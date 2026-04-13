@@ -17,6 +17,19 @@ const REMINDER_30M_MS = 30 * 60 * 1000;  // 30 minutos
 const CHECK_INTERVAL_MS = 60 * 1000;     // cada minuto
 const TOLERANCE_MS      = 60 * 1000;     // ±1 minuto
 
+// Opciones de zona horaria Colombia para toLocaleString
+const COLOMBIA_TIME_OPTIONS = { timeZone: 'America/Bogota' };
+
+/**
+ * Verifica si la hora actual en Colombia está dentro del horario permitido para enviar mensajes
+ * (7:00 AM - 7:00 PM Colombia)
+ */
+function isWithinBusinessHours() {
+  const now = new Date();
+  const hour = parseInt(now.toLocaleTimeString('en-CA', { ...COLOMBIA_TIME_OPTIONS, hour: '2-digit', hour12: false }));
+  return hour >= 7 && hour < 19; // 7 AM a 7 PM
+}
+
 let intervalId = null;
 
 const processingAppts = new Set(); // Prevenir duplicados en la misma ejecución
@@ -77,14 +90,14 @@ async function sendReminders() {
       
       await processReminder(appt, '2 horas', 'reminder2hSent');
       
-      // Enviar también por WhatsApp si el negocio tiene sesión activa
-      if (appt.clientPhone) {
+      // Enviar también por WhatsApp si el negocio tiene sesión activa y es horario permitido (7 AM - 7 PM Colombia)
+      if (appt.clientPhone && isWithinBusinessHours()) {
         const resolvedBizId = await Business.resolveWhatsAppBusinessId(appt.businessId);
         const session = await WhatsAppSession.findOne({ 
           where: { businessId: resolvedBizId, status: 'connected' } 
         });
         if (session) {
-          const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short' });
+          const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', timeZone: 'America/Bogota' });
           const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
           
           if (isConfirmed) {
@@ -164,7 +177,7 @@ async function processReminder24h(appt) {
     const businessName = appt.Business?.name || 'KDice';
     const serviceName = appt.Service?.name || 'Servicio';
     const employeeName = appt.Employee?.User?.name || 'Profesional';
-    const startTimeStr = new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short' });
+    const startTimeStr = new Date(appt.startTime).toLocaleString('es-CO', { dateStyle: 'long', timeStyle: 'short', ...COLOMBIA_TIME_OPTIONS });
     
     // Build confirmation and cancellation URLs
     const API_URL = process.env.API_URL || 'https://api-reservas.k-dice.com';
@@ -181,18 +194,18 @@ async function processReminder24h(appt) {
     if (clientPushToken) {
       await sendPushNotification(clientPushToken, {
         title: `📅 Recordatorio: Cita mañana`,
-        body: `Tienes una cita para ${serviceName} en ${businessName} mañana a las ${new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short' })}. Confirma tu asistencia.`,
+        body: `Tienes una cita para ${serviceName} en ${businessName} mañana a las ${new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', ...COLOMBIA_TIME_OPTIONS })}. Confirma tu asistencia.`,
       }, { type: 'appointment_reminder_24h', appointmentId: appt.id, confirmUrl });
     }
 
     // 3. WhatsApp al cliente (Recordatorio 24h SIMPLE - sin confirmación)
-    if (appt.clientPhone) {
+    if (appt.clientPhone && isWithinBusinessHours()) {
       const resolvedBizId = await Business.resolveWhatsAppBusinessId(appt.businessId);
       const session = await WhatsAppSession.findOne({ 
         where: { businessId: resolvedBizId, status: 'connected' } 
       });
       if (session) {
-        const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short' });
+        const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', ...COLOMBIA_TIME_OPTIONS });
         const text = `👋 Hola *${appt.clientName}*, te recordamos que tienes una cita para *${serviceName}* mañana a las *${timeStr}* en *${businessName}*.\n\n¡Te esperamos! 🗓️`;
         await queueMessage(appt.businessId, appt.clientPhone, text);
       }
@@ -211,7 +224,7 @@ async function processReminder(appt, timeLabel, fieldToUpdate) {
     const businessName = appt.Business?.name || 'KDice';
     const serviceName = appt.Service?.name || 'Servicio';
     const employeeName = appt.Employee?.User?.name || 'Profesional';
-    const startTimeStr = new Date(appt.startTime).toLocaleString('es-CO', { timeStyle: 'short' });
+    const startTimeStr = new Date(appt.startTime).toLocaleString('es-CO', { timeStyle: 'short', ...COLOMBIA_TIME_OPTIONS });
 
     // 1. Email al cliente (si es de 1h)
     if (timeLabel === '1 hora') {
