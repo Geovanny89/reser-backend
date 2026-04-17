@@ -21,11 +21,6 @@ const REMINDER_15M_MS = 15 * 60 * 1000;      // 15 minutos (técnicos)
 const CHECK_INTERVAL_MS = 60 * 1000;         // cada minuto
 const TOLERANCE_MS      = 60 * 1000;         // ±1 minuto
 
-// ─── ALERTAS DE ATRASO (cuando la cita no inicia a tiempo) ───
-const DELAYED_10M_MS = 10 * 60 * 1000;       // 10 minutos después de la hora
-const DELAYED_30M_MS = 30 * 60 * 1000;       // 30 minutos después de la hora
-const DELAYED_1H_MS  = 60 * 60 * 1000;       // 1 hora después de la hora
-
 // Opciones de zona horaria Colombia para toLocaleString
 const COLOMBIA_TIME_OPTIONS = { timeZone: 'America/Bogota' };
 
@@ -307,10 +302,6 @@ async function sendReminders() {
     // Solo para negocios con hasFieldTechnicians=true
     // Notificaciones push al técnico: 60min, 30min, 15min antes
     await sendTechnicianFieldReminders(now, processingAppts);
-
-    // ─── ALERTAS DE ATRASO (citas que no han iniciado a tiempo) ───
-    // Notificaciones push al dueño/empleado cuando una cita confirmada no inicia
-    await sendDelayedAppointmentAlerts(now, processingAppts);
 
   } catch (e) {
     console.error('[Reminder] ❌ Error en ciclo de recordatorios:', e.message);
@@ -743,140 +734,6 @@ async function processTechnicianReminder(appt, timeLabel, fieldToUpdate, alertEm
     await appt.update({ [fieldToUpdate]: true });
   } catch (e) {
     console.error(`[TechnicianReminder] ❌ Error procesando cita ${appt.id}:`, e.message);
-  }
-}
-
-/**
- * Envía alertas de atraso cuando una cita no ha iniciado a tiempo
- * Notifica al dueño y empleado cuando pasan 10min, 30min y 1h después de la hora programada
- * y el estado sigue siendo 'confirmed' o 'pending' (sin pasar a 'attention')
- */
-async function sendDelayedAppointmentAlerts(now, processingAppts) {
-  try {
-    // ─── ALERTA A LOS 10 MINUTOS ───
-    // Citas que debieron iniciar hace 10 minutos pero siguen sin atención
-    const win10MStart = new Date(now - DELAYED_10M_MS - TOLERANCE_MS);
-    const win10MEnd = new Date(now - DELAYED_10M_MS + TOLERANCE_MS);
-
-    const appts10M = await Appointment.findAll({
-      where: {
-        startTime: { [Op.lte]: win10MEnd, [Op.gte]: win10MStart },
-        status: { [Op.in]: ['pending', 'confirmed'] }, // No ha iniciado atención
-        delayedAlert10mSent: false,
-      },
-      include: [
-        { model: Service },
-        { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
-        { model: Business },
-        { model: User, as: 'Client', attributes: ['name'] },
-      ],
-    });
-
-    for (const appt of appts10M) {
-      if (!processingAppts.has(appt.id)) {
-        processingAppts.add(appt.id);
-        await processDelayedAlert(appt, '10 minutos', 'delayedAlert10mSent', '⚠️');
-      }
-    }
-
-    // ─── ALERTA A LOS 30 MINUTOS ───
-    const win30MStart = new Date(now - DELAYED_30M_MS - TOLERANCE_MS);
-    const win30MEnd = new Date(now - DELAYED_30M_MS + TOLERANCE_MS);
-
-    const appts30M = await Appointment.findAll({
-      where: {
-        startTime: { [Op.lte]: win30MEnd, [Op.gte]: win30MStart },
-        status: { [Op.in]: ['pending', 'confirmed'] },
-        delayedAlert30mSent: false,
-      },
-      include: [
-        { model: Service },
-        { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
-        { model: Business },
-        { model: User, as: 'Client', attributes: ['name'] },
-      ],
-    });
-
-    for (const appt of appts30M) {
-      if (!processingAppts.has(appt.id)) {
-        processingAppts.add(appt.id);
-        await processDelayedAlert(appt, '30 minutos', 'delayedAlert30mSent', '🚨');
-      }
-    }
-
-    // ─── ALERTA A LA 1 HORA ───
-    const win1HStart = new Date(now - DELAYED_1H_MS - TOLERANCE_MS);
-    const win1HEnd = new Date(now - DELAYED_1H_MS + TOLERANCE_MS);
-
-    const appts1H = await Appointment.findAll({
-      where: {
-        startTime: { [Op.lte]: win1HEnd, [Op.gte]: win1HStart },
-        status: { [Op.in]: ['pending', 'confirmed'] },
-        delayedAlert1hSent: false,
-      },
-      include: [
-        { model: Service },
-        { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
-        { model: Business },
-        { model: User, as: 'Client', attributes: ['name'] },
-      ],
-    });
-
-    for (const appt of appts1H) {
-      if (!processingAppts.has(appt.id)) {
-        processingAppts.add(appt.id);
-        await processDelayedAlert(appt, '1 hora', 'delayedAlert1hSent', '🔴');
-      }
-    }
-  } catch (e) {
-    console.error('[DelayedAlerts] ❌ Error en alertas de atraso:', e.message);
-  }
-}
-
-/**
- * Procesa una alerta de atraso enviando push al dueño y empleado
- */
-async function processDelayedAlert(appt, timeLabel, fieldToUpdate, alertEmoji) {
-  try {
-    const businessName = appt.Business?.name || 'Negocio';
-    const serviceName = appt.Service?.name || 'Servicio';
-    const clientName = appt.clientName || 'Cliente';
-    const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', ...COLOMBIA_TIME_OPTIONS });
-
-    // 1. Push al dueño del negocio
-    const owner = await User.findByPk(appt.Business?.ownerId);
-    if (owner?.pushToken) {
-      await sendPushNotification(owner.pushToken, {
-        title: `${alertEmoji} Cita Atrasada - ${timeLabel}`,
-        body: `La cita de ${clientName} (${serviceName}) programada para ${timeStr} lleva ${timeLabel} sin iniciar atención.`,
-      }, {
-        type: 'appointment_delayed',
-        appointmentId: appt.id,
-        urgency: timeLabel === '1 hora' ? 'high' : 'normal',
-        delayedTime: timeLabel,
-      });
-      console.log(`[DelayedAlert] ✅ Notificación ${timeLabel} enviada al dueño para cita ${appt.id}`);
-    }
-
-    // 2. Push al empleado asignado
-    const employeePushToken = appt.Employee?.User?.pushToken;
-    if (employeePushToken) {
-      await sendPushNotification(employeePushToken, {
-        title: `${alertEmoji} Tu Cita se Atrasó - ${timeLabel}`,
-        body: `La cita con ${clientName} (${serviceName}) de ${timeStr} lleva ${timeLabel} sin iniciar.`,
-      }, {
-        type: 'appointment_delayed',
-        appointmentId: appt.id,
-        urgency: timeLabel === '1 hora' ? 'high' : 'normal',
-        delayedTime: timeLabel,
-      });
-      console.log(`[DelayedAlert] ✅ Notificación ${timeLabel} enviada al empleado para cita ${appt.id}`);
-    }
-
-    // Marcar como enviado
-    await appt.update({ [fieldToUpdate]: true });
-  } catch (e) {
-    console.error(`[DelayedAlert] ❌ Error procesando cita ${appt.id}:`, e.message);
   }
 }
 

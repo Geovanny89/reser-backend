@@ -878,33 +878,15 @@ async function processAppointmentResponse(appt, text, msg, cleanIncomingPhone) {
 
   // 1. Lógica de Confirmación/Cancelación (para citas no terminadas)
   if (['pending', 'confirmed', 'attention'].includes(appt.status)) {
-    // Extraer el primer dígito del mensaje
-    const firstDigitMatch = text.match(/^\s*([12])/);
-    const firstDigit = firstDigitMatch ? firstDigitMatch[1] : null;
+    // Palabras clave para confirmar - usar regex robusto igual que handleClientResponse
+    // Regex flexible: SI o SÍ al inicio, permitiendo espacios y caracteres de puntuación después
+    const isConfirm = /^(si|sí)[\s\.\,\!\?]*$/i.test(text) ||
+                       /confirm|asistir[eé]|allá nos vemos|listo|^ok$|dale|perfecto/i.test(text);
 
-    // Palabras clave para confirmar
-    const isConfirm = firstDigit === '1' ||
-                       text.includes('si') ||
-                       text.includes('sí') ||
-                       text.includes('confirm') ||
-                       text.includes('ok') ||
-                       text.includes('vale') ||
-                       text.includes('bueno') ||
-                       text.includes('dale') ||
-                       text.includes('perfecto') ||
-                       text.includes('confirmo');
-
-    // Palabras clave para cancelar
-    const isCancel = firstDigit === '2' ||
-                      text.includes('no') ||
-                      text.includes('cancel') ||
-                      text.includes('cancelar') ||
-                      text.includes('eliminar') ||
-                      text.includes('borrar') ||
-                      text.includes('quitar') ||
-                      text.includes('no puedo') ||
-                      text.includes('no voy') ||
-                      text.includes('no asistiré');
+    // Palabras clave para cancelar - usar regex robusto igual que handleClientResponse
+    // Regex flexible: NO al inicio, permitiendo espacios y caracteres de puntuación después
+    const isCancel = /^(no)[\s\.\,\!\?]*$/i.test(text) ||
+                      /cancel|no puedo|no voy|no asistir[eé]|eliminar/i.test(text);
 
     if (isConfirm) {
       console.log(`[WhatsApp] ✅ Confirmando cita ${appt.id} (mensaje: "${msg.body}")`);
