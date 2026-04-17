@@ -1,4 +1,4 @@
-const { Business, Service, Employee, User, Promotion, Appointment, ServiceGroup } = require('../models');
+const { Business, Service, Employee, User, Promotion, Appointment, ServiceGroup, sequelize } = require('../models');
 const { deleteFromCloudinary } = require('../config/cloudinary');
 const { sendEmail } = require('../config/email');
 const { Op } = require('sequelize');
@@ -475,7 +475,7 @@ exports.getAvailability = async (req, res) => {
     const biz = await Business.findOne({ where: { slug: req.params.slug } });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-    const { Appointment, Schedule } = require('../models');
+    const { Appointment, Schedule, SpecialSchedule, sequelize } = require('../models');
     const { Op } = require('sequelize');
 
     // Calcular día de la semana en Colombia
@@ -496,8 +496,33 @@ exports.getAvailability = async (req, res) => {
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
     const isTargetToday = date === todayStr;
 
-    // Obtener todos los horarios del empleado para el día (incluyendo almuerzos y bloqueos)
-    const allSchedules = await Schedule.findAll({
+    // Verificar si hay horarios especiales para esta fecha (festivos, días especiales)
+    const [month, dayNum] = date.split('-').slice(1);
+    const allSpecialSchedules = await SpecialSchedule.findAll({
+      where: {
+        businessId: biz.id,
+        active: true,
+        [Op.or]: [
+          { specificDate: date },
+          { 
+            isRecurringYearly: true,
+            [Op.and]: [
+              sequelize.where(
+                sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "specificDate"')),
+                parseInt(month)
+              ),
+              sequelize.where(
+                sequelize.fn('EXTRACT', sequelize.literal('DAY FROM "specificDate"')),
+                parseInt(dayNum)
+              )
+            ]
+          }
+        ]
+      }
+    });
+
+    // Obtener todos los horarios regulares del negocio para el día
+    const allRegularSchedules = await Schedule.findAll({
       where: { businessId: biz.id, dayOfWeek, active: true }
     });
 
@@ -559,12 +584,38 @@ exports.getAvailability = async (req, res) => {
     });
 
     for (const emp of employees) {
-      const empSchedules = allSchedules.filter(s => String(s.employeeId) === String(emp.id));
       const empAppointments = dayAppointments.filter(a => String(a.employeeId) === String(emp.id));
 
-      const workSchedules = empSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
-      const lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
-      const blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+      // Buscar horarios especiales para este empleado
+      const empSpecialSchedules = allSpecialSchedules.filter(s => 
+        s.employeeId === null || String(s.employeeId) === String(emp.id)
+      );
+
+      let empSchedules;
+      let workSchedules = [];
+      let lunchRanges = [];
+      let blockedRanges = [];
+
+      if (empSpecialSchedules.length > 0) {
+        // Verificar si el empleado está cerrado ese día
+        const closedSchedule = empSpecialSchedules.find(s => s.type === 'closed');
+        if (closedSchedule) {
+          console.log(`[Availability] Empleado ${emp.id} cerrado el ${date}: ${closedSchedule.description}`);
+          continue; // Saltar a siguiente empleado
+        }
+
+        // Usar horarios especiales
+        empSchedules = empSpecialSchedules;
+        workSchedules = empSpecialSchedules.filter(s => s.type === 'work');
+        lunchRanges = empSpecialSchedules.filter(s => s.type === 'lunch');
+        blockedRanges = empSpecialSchedules.filter(s => s.type === 'blocked');
+      } else {
+        // Usar horarios regulares
+        empSchedules = allRegularSchedules.filter(s => String(s.employeeId) === String(emp.id));
+        workSchedules = empSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
+        lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
+        blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+      }
 
       for (const sched of workSchedules) {
         const workStart = toMinutes(sched.startTime);
@@ -607,8 +658,14 @@ exports.getAvailability = async (req, res) => {
           );
 
           if (conflictBlock) {
+            const blockEnd = toMinutes(conflictBlock.endTime);
+            // Si el bloqueo termina después de este workSchedule, salir del while
+            // para pasar al siguiente bloque de trabajo
+            if (blockEnd >= workEnd) {
+              break;
+            }
             // Saltar al final del bloqueo
-            current = toMinutes(conflictBlock.endTime);
+            current = blockEnd;
             continue;
           }
 

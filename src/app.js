@@ -43,6 +43,7 @@ app.use('/api/service-groups', checkBusinessStatus, require('./routes/serviceGro
 app.use('/api/employees',      checkBusinessStatus, require('./routes/employee.routes'));
 app.use('/api/appointments',   checkBusinessStatus, require('./routes/appointment.routes'));
 app.use('/api/schedules',      checkBusinessStatus, require('./routes/schedule.routes'));
+app.use('/api/special-schedules', checkBusinessStatus, require('./routes/specialSchedule.routes'));
 app.use('/api/upload',         require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));

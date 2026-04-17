@@ -1,4 +1,4 @@
-const { Promotion, Service, Business } = require('../models');
+const { Promotion, Service, Business, Appointment } = require('../models');
 const { Op } = require('sequelize');
 
 exports.create = async (req, res) => {
@@ -85,9 +85,16 @@ exports.delete = async (req, res) => {
     const promotion = await Promotion.findByPk(id);
     if (!promotion) return res.status(404).json({ error: 'Promoción no encontrada' });
     
+    // Desvincular citas de esta promoción antes de eliminar
+    await Appointment.update(
+      { promotionId: null },
+      { where: { promotionId: id } }
+    );
+    
     await promotion.destroy();
     res.json({ message: 'Promoción eliminada correctamente' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[Promotion] Error al eliminar:', e);
+    res.status(500).json({ error: 'Error al eliminar la promoción. ' + e.message });
   }
 };

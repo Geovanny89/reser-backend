@@ -24,6 +24,7 @@ const Deposit = require('./Deposit')(sequelize);
 const AppointmentEmployee = require('./AppointmentEmployee')(sequelize);
 const IncomingMessage = require('./IncomingMessage')(sequelize);
 const ServiceGroup = require('./ServiceGroup')(sequelize);
+const SpecialSchedule = require('./SpecialSchedule')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -84,6 +85,12 @@ Appointment.hasMany(AppointmentNote, { foreignKey: 'appointmentId', as: 'Notes' 
 Schedule.belongsTo(Employee, { foreignKey: 'employeeId' });
 Employee.hasMany(Schedule, { foreignKey: 'employeeId', as: 'Schedules' });
 
+// SpecialSchedule — Employee & Business
+SpecialSchedule.belongsTo(Employee, { foreignKey: 'employeeId' });
+SpecialSchedule.belongsTo(Business, { foreignKey: 'businessId' });
+Employee.hasMany(SpecialSchedule, { foreignKey: 'employeeId', as: 'SpecialSchedules' });
+Business.hasMany(SpecialSchedule, { foreignKey: 'businessId', as: 'SpecialSchedules' });
+
 // ClientTag — Business
 ClientTag.belongsTo(Business, { foreignKey: 'businessId' });
 Business.hasMany(ClientTag, { foreignKey: 'businessId', as: 'ClientTags' });
@@ -128,4 +135,4 @@ AppointmentEmployee.belongsTo(Employee, { foreignKey: 'employeeId' });
 Appointment.hasMany(AppointmentEmployee, { foreignKey: 'appointmentId', as: 'AdditionalEmployees' });
 Employee.hasMany(AppointmentEmployee, { foreignKey: 'employeeId', as: 'AppointmentsAsExtra' });
 
-module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup };
+module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup };
