@@ -1,8 +1,9 @@
-const { Appointment, Service, Employee, User, Business, Promotion, ClientTag, ClientTagAssignment } = require('../models');
+const { Appointment, Service, Employee, User, Business, Promotion, ClientTag, ClientTagAssignment, AppointmentNote, AppointmentEmployee, Deposit } = require('../models');
 const { Op } = require('sequelize');
 const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
 const { sendCancellationNotification, sendPushNotification } = require('../services/pushNotificationService');
+const { scheduleMessage } = require('../services/schedulerService');
 
 // Zona horaria Colombia: UTC-5 (no cambia con horario de verano)
 const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
@@ -56,7 +57,8 @@ exports.getByBusiness = async (req, res) => {
       where,
       include: [
         { model: Service },
-        { model: Employee, include: [{ model: User, attributes: ['name'] }] }
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
       ],
       order: [['startTime', 'ASC']]
     });
@@ -99,7 +101,8 @@ exports.getConsolidated = async (req, res) => {
       where: { businessId: { [Op.in]: businessIds } },
       include: [
         { model: Service },
-        { model: Employee, include: [{ model: User, attributes: ['name'] }] }
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
       ],
       order: [['startTime', 'DESC']]
     });
@@ -116,8 +119,17 @@ exports.getMyAppointments = async (req, res) => {
     if (!emp) return res.status(404).json({ error: 'Perfil de empleado no encontrado' });
 
     const appointments = await Appointment.findAll({
-      where: { employeeId: emp.id, status: { [Op.in]: ['pending', 'confirmed', 'attention'] } },
-      include: [{ model: Service }],
+      where: {
+        [Op.or]: [
+          { employeeId: emp.id },
+          { '$AdditionalEmployees.employeeId$': emp.id }
+        ],
+        status: { [Op.in]: ['pending', 'confirmed', 'attention'] }
+      },
+      include: [
+        { model: Service },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
+      ],
       order: [['startTime', 'ASC']]
     });
     res.json(appointments);
@@ -158,20 +170,55 @@ exports.getMyClientAppointments = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, startTime, notes, status } = req.body;
+    const { businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, startTime, notes, status, additionalEmployeeIds, depositAmount, depositAccepted } = req.body;
+    const additionalEmployees = additionalEmployeeIds || []; // Array de UUIDs de empleados adicionales
 
     console.log('[Create Appointment] Datos recibidos:', {
-      businessId,
-      serviceId,
-      employeeId,
-      startTime,
-      clientEmail,
-      clientName,
-      user: req.user ? { id: req.user.id, role: req.user.role } : 'no auth'
+      businessId, serviceId, employeeId, startTime, clientEmail, clientName, clientPhone, user: req.user?.id || 'no auth'
     });
 
     const service = await Service.findByPk(serviceId);
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    // ========== VALIDACIÓN: El empleado debe tener el servicio asignado (o ser generalista) ==========
+    if (employeeId) {
+      const { EmployeeService } = require('../models');
+      
+      // Verificar que el empleado existe y está activo
+      const employee = await Employee.findOne({
+        where: { id: employeeId, businessId, active: true }
+      });
+      
+      if (!employee) {
+        return res.status(404).json({ error: 'Empleado no encontrado o inactivo' });
+      }
+      
+      // Verificar si el empleado tiene ALGÚN servicio asignado
+      const employeeServicesCount = await EmployeeService.count({
+        where: { employeeId }
+      });
+      
+      // Si el empleado tiene servicios asignados, verificar que pueda hacer este específico
+      if (employeeServicesCount > 0) {
+        const hasService = await EmployeeService.findOne({
+          where: { employeeId, serviceId }
+        });
+        
+        if (!hasService) {
+          console.log(`[Create Appointment] ❌ Empleado ${employeeId} no tiene asignado el servicio ${serviceId}`);
+          return res.status(403).json({ 
+            error: 'Este empleado no puede realizar el servicio seleccionado',
+            details: 'El empleado no tiene asignado este servicio en su perfil'
+          });
+        }
+        
+        console.log(`[Create Appointment] ✅ Empleado ${employeeId} tiene el servicio ${serviceId} asignado`);
+      } else {
+        // El empleado no tiene servicios asignados = es generalista, puede hacer cualquier servicio
+        console.log(`[Create Appointment] ✅ Empleado ${employeeId} es generalista (sin servicios asignados), puede hacer cualquier servicio`);
+      }
+    }
+    // =============================================================================
 
     const start = new Date(startTime);
     const end = new Date(start.getTime() + service.durationMin * 60000);
@@ -227,8 +274,39 @@ exports.create = async (req, res) => {
 
     const cleanPhone = clientPhone ? clientPhone.replace(/\D/g, '').slice(-10) : null;
 
+    // Verificar que los empleados adicionales existan y estén activos
+    if (additionalEmployees.length > 0) {
+      for (const addEmpId of additionalEmployees) {
+        const addEmp = await Employee.findOne({
+          where: { id: addEmpId, businessId, active: true }
+        });
+        if (!addEmp) {
+          return res.status(404).json({ error: `Empleado adicional no encontrado o inactivo: ${addEmpId}` });
+        }
+        
+        // Verificar que no sea el mismo empleado principal
+        if (addEmpId === employeeId) {
+          return res.status(400).json({ error: 'No puede agregar el empleado principal como adicional' });
+        }
+        
+        // Verificar que el empleado adicional no tenga conflicto de horario
+        const addEmpConflict = await Appointment.findOne({
+          where: {
+            employeeId: addEmpId,
+            businessId,
+            status: { [Op.notIn]: ['cancelled'] },
+            startTime: { [Op.lt]: end },
+            endTime: { [Op.gt]: start },
+          }
+        });
+        if (addEmpConflict && !isExpress) {
+          return res.status(409).json({ error: `El empleado adicional ya tiene una cita en ese horario` });
+        }
+      }
+    }
+
     const appt = await Appointment.create({
-      businessId, serviceId, employeeId, clientName, 
+      businessId, serviceId, employeeId, clientName,
       clientPhone: cleanPhone,
       clientEmail: clientEmail ? clientEmail.toLowerCase().trim() : null,
       clientId: (req.user && req.user.role === 'client') ? req.user.id : (req.body.clientId || null),
@@ -236,13 +314,58 @@ exports.create = async (req, res) => {
       status: status || 'pending',
       basePrice, discountApplied, finalPrice, promotionId
     });
+
+    // Generar código de referencia único para WhatsApp
+    try {
+      const { generateUniqueReferenceCode } = require('../utils/referenceCode');
+      const referenceCode = await generateUniqueReferenceCode();
+      await appt.update({ referenceCode });
+      console.log('[Create Appointment] Código de referencia generado:', referenceCode);
+    } catch (refError) {
+      console.error('[Create Appointment] Error generando código de referencia:', refError.message);
+      // No fallar la creación de cita si el código falla
+    }
+    
+    // Crear registros de empleados adicionales
+    if (additionalEmployees.length > 0) {
+      const appointmentEmployees = additionalEmployees.map((addEmpId, index) => ({
+        appointmentId: appt.id,
+        employeeId: addEmpId,
+        role: index === 0 ? 'auxiliar' : 'apoyo'
+      }));
+      await AppointmentEmployee.bulkCreate(appointmentEmployees);
+      console.log('[Create Appointment] Empleados adicionales agregados:', additionalEmployees.length);
+    }
+    
+    // Crear depósito automáticamente si hay anticipo aceptado
+    if (depositAccepted && depositAmount > 0) {
+      try {
+        await Deposit.create({
+          businessId,
+          appointmentId: appt.id,
+          clientName,
+          clientPhone: cleanPhone,
+          amount: parseFloat(depositAmount),
+          date: new Date().toISOString().split('T')[0],
+          paymentMethod: 'cash', // Por defecto, se actualizará cuando se confirme el pago
+          status: 'held',
+          notes: `Anticipo generado automáticamente al crear cita. Pendiente de pago.`,
+          createdBy: req.user?.id
+        });
+        console.log('[Create Appointment] Depósito creado automáticamente:', depositAmount);
+      } catch (depositError) {
+        console.error('[Create Appointment] Error creando depósito:', depositError);
+        // No fallar la creación de cita si el depósito falla
+      }
+    }
     
     console.log('[Create Appointment] Cita creada exitosamente:', {
       id: appt.id,
       businessId: appt.businessId,
       startTime: appt.startTime,
       endTime: appt.endTime,
-      status: appt.status
+      status: appt.status,
+      additionalEmployees: additionalEmployees.length
     });
     
     // Notificaciones automáticas (sin bloquear la respuesta)
@@ -290,6 +413,27 @@ exports.create = async (req, res) => {
             businessName: String(fullAppt.Business?.name || ''),
           });
         }
+        
+        // Enviar push notification a empleados adicionales (citas grupales)
+        if (additionalEmployees.length > 0) {
+          const addEmps = await Employee.findAll({
+            where: { id: additionalEmployees },
+            include: [{ model: User, attributes: ['pushToken', 'name'] }]
+          });
+          
+          for (const addEmp of addEmps) {
+            if (addEmp?.User?.pushToken) {
+              await sendPushNotification(addEmp.User.pushToken, {
+                title: '🤝 Cita Grupal Asignada',
+                body: `Trabajarás con ${fullAppt.Employee?.User?.name || 'colega'} en cita de ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'}`,
+              }, {
+                type: 'group_appointment',
+                appointmentId: fullAppt.id,
+                businessName: String(fullAppt.Business?.name || ''),
+              });
+            }
+          }
+        }
         // Determinar el email del cliente: usuario registrado o email proporcionado en la reserva
         let clientEmailTo = null;
         if (appt.clientId) {
@@ -328,6 +472,7 @@ exports.updateStatus = async (req, res) => {
         { model: Service },
         { model: Employee, include: [{ model: User, attributes: ['name'] }] },
         { model: Business },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
       ],
     });
     if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
@@ -371,6 +516,7 @@ exports.updateStatus = async (req, res) => {
                 { model: Service },
                 { model: Employee, include: [{ model: User, attributes: ['name'] }] },
                 { model: Business },
+                { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] },
               ]
             });
 
@@ -391,11 +537,15 @@ exports.updateStatus = async (req, res) => {
             if (freshAppt.clientPhone && !freshAppt.ratingSent) {
               try {
                 const { WhatsAppSession, Business } = require('../models');
+                const { Op } = require('sequelize');
                 const { queueMessage, getRandomRatingTemplate } = require('../services/whatsappService');
                 
                 const resolvedBizId = await Business.resolveWhatsAppBusinessId(freshAppt.businessId);
                 const session = await WhatsAppSession.findOne({ 
-                  where: { businessId: resolvedBizId, status: 'connected' } 
+                  where: { 
+                    businessId: resolvedBizId,
+                    status: { [Op.in]: ['connected', 'session_saved'] }
+                  } 
                 });
                 
                 if (session) {
@@ -408,36 +558,57 @@ exports.updateStatus = async (req, res) => {
                   const reviewLink = `${baseUrl}/${businessSlug}?review=true`;
                   
                   // Mensaje 1: Calificación del empleado (5 minutos después)
-                  const ratingText = `¡Hola *${freshAppt.clientName}*! 👋 Gracias por visitarnos en *${businessName}*.\n\n${ratingTemplate}\n\nServicio: ${employeeName}`;
+                  const serviceDate = new Date(freshAppt.startTime).toLocaleDateString('es-CO', { 
+                    weekday: 'long', 
+                    day: 'numeric', 
+                    month: 'long' 
+                  });
+                  const ratingText = `¡Hola *${freshAppt.clientName}*! 👋\n\nGracias por tu visita el *${serviceDate}* a *${businessName}*.\n\n${ratingTemplate}\n\n💇 Servicio con: *${employeeName}*\n\nResponde con un número del *1 al 5* ⭐`;
+                  console.log(`[Done Action] Programando calificación para cita ${freshAppt.id} (${serviceDate} - ${employeeName})`);
                   
                   // Mensaje 2: Calificación del negocio/reseña (1 hora después)
                   const reviewText = `¡Hola *${freshAppt.clientName}*! 👋\n\n¿Quieres ayudar a *${businessName}* a crecer?\n\n💬 Deja una reseña pública y ayuda a otros clientes a conocernos:\n👉 ${reviewLink}\n\n¡Gracias por tu confianza! ❤️`;
                   
-                  // Enviar calificación del empleado a los 5 minutos
-                  setTimeout(async () => {
-                    try {
-                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, ratingText);
-                      await freshAppt.update({ ratingSent: true });
-                      console.log(`[Done Action] Solicitud de calificación EMPLEADO enviada (5min post-cita) para cita ${appt.id}`);
-                    } catch (delayedErr) {
-                      console.error('[Done Action] Error enviando calificación empleado:', delayedErr.message);
-                    }
-                  }, 5 * 60 * 1000); // 5 minutos
+                  // Programar calificación del empleado a los 5 minutos (persistente en BD)
+                  await scheduleMessage({
+                    businessId: freshAppt.businessId,
+                    appointmentId: freshAppt.id,
+                    phone: freshAppt.clientPhone,
+                    message: ratingText,
+                    type: 'rating',
+                    scheduledAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutos
+                  });
                   
-                  // Enviar solicitud de reseña del negocio a los 30 minutos
-                  setTimeout(async () => {
-                    try {
-                      await queueMessage(freshAppt.businessId, freshAppt.clientPhone, reviewText);
-                      console.log(`[Done Action] Solicitud de reseña NEGOCIO enviada (30min post-cita) para cita ${appt.id}`);
-                    } catch (reviewErr) {
-                      console.error('[Done Action] Error enviando solicitud reseña:', reviewErr.message);
-                    }
-                  }, 30 * 60 * 1000); // 30 minutos
+                  // Marcar cita como rating programado y actualizar flujo de mensajes
+                  await freshAppt.update({ 
+                    ratingSent: true,
+                    ratingSentAt: new Date(),
+                    messageFlowStatus: 'awaiting_rating' // El sistema ahora espera calificación 1-5
+                  });
+                  console.log(`[Done Action] Cita ${freshAppt.id} marcada como awaiting_rating`);
                   
-                  console.log(`[Done Action] Mensajes programados: Calificación empleado (5min) + Reseña negocio (30min) para cita ${appt.id}`);
+                  // Programar solicitud de reseña del negocio a las 2 horas
+                  await scheduleMessage({
+                    businessId: freshAppt.businessId,
+                    appointmentId: freshAppt.id,
+                    phone: freshAppt.clientPhone,
+                    message: reviewText,
+                    type: 'review',
+                    scheduledAt: new Date(Date.now() + 2 * 60 * 60 * 1000) // 2 horas
+                  });
+                  
+                  console.log(`[Done Action] Mensajes programados en BD: Calificación (5min) + Reseña (2h) para cita ${appt.id}`);
+                } else {
+                  console.log(`[Done Action] ℹ️ No se programa calificación: WhatsApp no configurado para el negocio ${freshAppt.businessId}`);
                 }
               } catch (waErr) {
                 console.error('[Done Action] Error programando solicitud de calificación:', waErr.message);
+              }
+            } else {
+              if (!freshAppt.clientPhone) {
+                console.log(`[Done Action] ℹ️ No se programa calificación: cita sin teléfono del cliente`);
+              } else if (freshAppt.ratingSent) {
+                console.log(`[Done Action] ℹ️ No se programa calificación: ya fue enviada anteriormente`);
               }
             }
             
@@ -1111,6 +1282,36 @@ exports.transferAppointment = async (req, res) => {
       return res.status(400).json({ error: 'El empleado destino no pertenece a este negocio' });
     }
 
+    // ========== VALIDACIÓN: El nuevo empleado debe tener el servicio asignado (o ser generalista) ==========
+    const { EmployeeService } = require('../models');
+    const serviceId = appt.serviceId;
+    
+    // Verificar si el empleado tiene ALGÚN servicio asignado
+    const employeeServicesCount = await EmployeeService.count({
+      where: { employeeId: newEmployeeId }
+    });
+    
+    // Si el empleado tiene servicios asignados, verificar que pueda hacer este específico
+    if (employeeServicesCount > 0) {
+      const hasService = await EmployeeService.findOne({
+        where: { employeeId: newEmployeeId, serviceId }
+      });
+      
+      if (!hasService) {
+        console.log(`[Transfer] ❌ Empleado ${newEmployeeId} no tiene asignado el servicio ${serviceId}`);
+        return res.status(403).json({ 
+          error: 'No se puede reasignar la cita',
+          details: 'El empleado seleccionado no tiene asignado este servicio. Asigna el servicio al empleado primero o selecciona otro empleado.'
+        });
+      }
+      
+      console.log(`[Transfer] ✅ Empleado ${newEmployeeId} tiene el servicio ${serviceId} asignado`);
+    } else {
+      // El empleado no tiene servicios asignados = es generalista, puede hacer cualquier servicio
+      console.log(`[Transfer] ✅ Empleado ${newEmployeeId} es generalista (sin servicios asignados), puede recibir cualquier cita`);
+    }
+    // ===================================================================================
+
     // Calculate start and end times (use new time if provided, otherwise keep original)
     let startTime = appt.startTime;
     let endTime = appt.endTime;
@@ -1560,6 +1761,579 @@ exports.rateAppointment = async (req, res) => {
     });
   } catch (e) {
     console.error('[rateAppointment] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Actualizar una cita existente (editar fecha, hora, servicio, etc.)
+ */
+exports.update = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { clientName, clientPhone, clientEmail, serviceId, employeeId, startTime, notes } = req.body;
+
+    const appointment = await Appointment.findByPk(id, {
+      include: [{ model: Service }]
+    });
+    
+    if (!appointment) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    // No permitir editar citas completadas o canceladas
+    if (['done', 'cancelled'].includes(appointment.status)) {
+      return res.status(400).json({ 
+        error: `No se puede editar una cita ${appointment.status === 'done' ? 'completada' : 'cancelada'}` 
+      });
+    }
+
+    const updateData = {};
+
+    // Actualizar datos del cliente
+    if (clientName !== undefined) updateData.clientName = clientName;
+    if (clientPhone !== undefined) {
+      updateData.clientPhone = clientPhone ? clientPhone.replace(/\D/g, '').slice(-10) : null;
+    }
+    if (clientEmail !== undefined) {
+      updateData.clientEmail = clientEmail ? clientEmail.toLowerCase().trim() : null;
+    }
+    if (notes !== undefined) updateData.notes = notes;
+
+    // Si cambia el servicio, recalcular precio y duración
+    if (serviceId && serviceId !== appointment.serviceId) {
+      const newService = await Service.findByPk(serviceId);
+      if (!newService) {
+        return res.status(404).json({ error: 'Servicio no encontrado' });
+      }
+      
+      updateData.serviceId = serviceId;
+      updateData.basePrice = parseFloat(newService.price || 0);
+      
+      // Recalcular precio final con promociones
+      const now = new Date();
+      const promotion = await Promotion.findOne({
+        where: {
+          businessId: appointment.businessId,
+          active: true,
+          startDate: { [Op.lte]: now },
+          endDate: { [Op.gte]: now },
+          [Op.or]: [
+            { serviceId },
+            { applyToAllServices: true }
+          ]
+        },
+        order: [['applyToAllServices', 'ASC']]
+      });
+
+      let discountApplied = 0;
+      if (promotion) {
+        if (promotion.discountType === 'percentage') {
+          discountApplied = updateData.basePrice * (parseFloat(promotion.discountValue) / 100);
+        } else {
+          discountApplied = parseFloat(promotion.discountValue);
+        }
+      }
+      
+      updateData.finalPrice = Math.max(0, updateData.basePrice - discountApplied);
+      
+      // Si también cambia la hora, recalcular endTime con la nueva duración
+      if (!startTime) {
+        const currentStart = new Date(appointment.startTime);
+        const newEnd = new Date(currentStart.getTime() + newService.durationMin * 60000);
+        updateData.endTime = newEnd;
+      }
+    }
+
+    // Si cambia el empleado
+    if (employeeId && employeeId !== appointment.employeeId) {
+      updateData.employeeId = employeeId;
+    }
+
+    // Si cambia la fecha/hora
+    if (startTime) {
+      const newStart = new Date(startTime);
+      const serviceDuration = serviceId 
+        ? (await Service.findByPk(serviceId))?.durationMin 
+        : appointment.Service?.durationMin;
+      
+      updateData.startTime = newStart;
+      updateData.endTime = new Date(newStart.getTime() + serviceDuration * 60000);
+
+      // Verificar conflictos si cambia hora o empleado
+      const checkEmployeeId = updateData.employeeId || appointment.employeeId;
+      const conflict = await Appointment.findOne({
+        where: {
+          id: { [Op.ne]: id }, // Excluir la cita actual
+          employeeId: checkEmployeeId,
+          businessId: appointment.businessId,
+          status: { [Op.notIn]: ['cancelled'] },
+          startTime: { [Op.lt]: updateData.endTime },
+          endTime: { [Op.gt]: updateData.startTime }
+        }
+      });
+
+      if (conflict) {
+        return res.status(409).json({ 
+          error: 'El empleado ya tiene una cita en el nuevo horario seleccionado' 
+        });
+      }
+    }
+
+    await appointment.update(updateData);
+
+    // Recargar la cita actualizada con relaciones
+    const updatedAppointment = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] }
+      ]
+    });
+
+    res.json(updatedAppointment);
+  } catch (e) {
+    console.error('[update] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Extender el tiempo de una cita en curso
+ */
+exports.extendTime = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { additionalMinutes } = req.body;
+
+    if (!additionalMinutes || additionalMinutes <= 0) {
+      return res.status(400).json({ error: 'Debe especificar minutos adicionales válidos' });
+    }
+
+    const appointment = await Appointment.findByPk(id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    // Solo permitir extender citas en estado 'attention' (en atención)
+    if (appointment.status !== 'attention') {
+      return res.status(400).json({ 
+        error: 'Solo se puede extender el tiempo de citas que están en atención' 
+      });
+    }
+
+    // Calcular nuevo endTime
+    const currentEndTime = new Date(appointment.endTime);
+    const newEndTime = new Date(currentEndTime.getTime() + additionalMinutes * 60000);
+
+    // Verificar que no haya conflicto con otra cita
+    const conflict = await Appointment.findOne({
+      where: {
+        id: { [Op.ne]: id },
+        employeeId: appointment.employeeId,
+        businessId: appointment.businessId,
+        status: { [Op.notIn]: ['cancelled', 'done'] },
+        startTime: { [Op.lt]: newEndTime },
+        endTime: { [Op.gt]: currentEndTime }
+      }
+    });
+
+    if (conflict) {
+      return res.status(409).json({ 
+        error: 'No se puede extender: hay otra cita programada que se solaparía' 
+      });
+    }
+
+    // Actualizar cita
+    const newExtendedDuration = (appointment.extendedDuration || 0) + additionalMinutes;
+    await appointment.update({
+      endTime: newEndTime,
+      extendedDuration: newExtendedDuration
+    });
+
+    res.json({
+      message: `Tiempo extendido en ${additionalMinutes} minutos`,
+      appointment: {
+        id: appointment.id,
+        endTime: newEndTime,
+        extendedDuration: newExtendedDuration,
+        newEndTimeFormatted: newEndTime.toLocaleString('es-CO', { 
+          dateStyle: 'short', 
+          timeStyle: 'short',
+          timeZone: 'America/Bogota'
+        })
+      }
+    });
+  } catch (e) {
+    console.error('[extendTime] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Obtener notas de una cita
+ */
+exports.getNotes = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const appointment = await Appointment.findByPk(id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    const notes = await AppointmentNote.findAll({
+      where: { appointmentId: id },
+      order: [['createdAt', 'DESC']]
+    });
+
+    res.json(notes);
+  } catch (e) {
+    console.error('[getNotes] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Agregar una nota a una cita
+ */
+exports.addNote = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+    const userId = req.user?.id;
+    const userName = req.user?.name;
+
+    if (!content || content.trim() === '') {
+      return res.status(400).json({ error: 'El contenido de la nota es requerido' });
+    }
+
+    const appointment = await Appointment.findByPk(id);
+    if (!appointment) {
+      return res.status(404).json({ error: 'Cita no encontrada' });
+    }
+
+    const note = await AppointmentNote.create({
+      appointmentId: id,
+      content: content.trim(),
+      authorId: userId,
+      authorName: userName || 'Sistema'
+    });
+
+    res.status(201).json(note);
+  } catch (e) {
+    console.error('[addNote] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Eliminar una nota de una cita
+ */
+exports.deleteNote = async (req, res) => {
+  try {
+    const { id, noteId } = req.params;
+
+    const note = await AppointmentNote.findOne({
+      where: { id: noteId, appointmentId: id }
+    });
+
+    if (!note) {
+      return res.status(404).json({ error: 'Nota no encontrada' });
+    }
+
+    await note.destroy();
+    res.json({ message: 'Nota eliminada exitosamente' });
+  } catch (e) {
+    console.error('[deleteNote] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Actualizar estado del técnico en campo (En Camino, Llegué, En Atención)
+ */
+exports.updateTechnicianStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const userId = req.user.id;
+
+    const validStatuses = ['on_the_way', 'arrived', 'in_progress'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Estado inválido. Use: on_the_way, arrived, in_progress' });
+    }
+
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['id', 'name', 'pushToken'] }] },
+        { model: Business }
+      ]
+    });
+
+    if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Verificar que el negocio sea de técnicos de campo
+    if (!appt.Business?.hasFieldTechnicians) {
+      return res.status(400).json({ error: 'Esta función solo está disponible para negocios con técnicos de campo' });
+    }
+
+    // Verificar permisos: admin o el empleado asignado
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    const isAssignedEmployee = appt.Employee?.User?.id === userId;
+
+    if (!isAdmin && !isAssignedEmployee) {
+      return res.status(403).json({ error: 'No tienes permiso para actualizar esta cita' });
+    }
+
+    const updateData = { technicianStatus: status };
+    
+    // Guardar timestamp según el estado
+    if (status === 'on_the_way' && !appt.travelStartTime) {
+      updateData.travelStartTime = new Date();
+    } else if (status === 'arrived' && !appt.arrivalTime) {
+      updateData.arrivalTime = new Date();
+    } else if (status === 'in_progress' && !appt.serviceStartTime) {
+      updateData.serviceStartTime = new Date();
+      updateData.status = 'attention'; // Actualizar estado de la cita
+    }
+
+    await appt.update(updateData);
+
+    // Notificar al admin/dueño del cambio de estado
+    const owner = await User.findByPk(appt.Business?.ownerId);
+    if (owner?.pushToken) {
+      const statusLabels = {
+        on_the_way: '🚗 En Camino',
+        arrived: '📍 Llegó al Destino',
+        in_progress: '🔧 Inició el Servicio'
+      };
+      
+      await sendPushNotification(owner.pushToken, {
+        title: `Técnico ${statusLabels[status]}`,
+        body: `${appt.Employee?.User?.name || 'Técnico'} ${status === 'on_the_way' ? 'va en camino a' : status === 'arrived' ? 'llegó a' : 'inició servicio con'} ${appt.clientName}`,
+      }, {
+        type: 'technician_status_update',
+        appointmentId: appt.id,
+        status: status
+      });
+    }
+
+    res.json({ 
+      message: 'Estado actualizado', 
+      technicianStatus: status,
+      travelStartTime: updateData.travelStartTime || appt.travelStartTime,
+      arrivalTime: updateData.arrivalTime || appt.arrivalTime,
+      serviceStartTime: updateData.serviceStartTime || appt.serviceStartTime
+    });
+  } catch (e) {
+    console.error('[updateTechnicianStatus] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Guardar reporte técnico con insumos usados
+ */
+exports.saveTechnicalReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { diagnosis, solution, recommendations, partsUsed } = req.body;
+    const userId = req.user.id;
+
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['id', 'name'] }] },
+        { model: Business }
+      ]
+    });
+
+    if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Verificar que el negocio sea de técnicos de campo
+    if (!appt.Business?.hasFieldTechnicians) {
+      return res.status(400).json({ error: 'Esta función solo está disponible para negocios con técnicos de campo' });
+    }
+
+    // Verificar permisos
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    const isAssignedEmployee = appt.Employee?.User?.id === userId;
+
+    if (!isAdmin && !isAssignedEmployee) {
+      return res.status(403).json({ error: 'No tienes permiso para guardar el reporte' });
+    }
+
+    // Guardar reporte
+    const workReport = {
+      diagnosis: diagnosis || '',
+      solution: solution || '',
+      recommendations: recommendations || '',
+      partsUsed: partsUsed || [],
+      savedAt: new Date().toISOString(),
+      savedBy: req.user.name || req.user.email
+    };
+
+    await appt.update({ workReport });
+
+    // Descontar insumos del inventario si se usaron
+    if (partsUsed && partsUsed.length > 0) {
+      const { InventoryItem, InventoryUsage } = require('../models');
+      
+      for (const part of partsUsed) {
+        if (part.itemId && part.quantity > 0) {
+          const item = await InventoryItem.findOne({
+            where: { id: part.itemId, businessId: appt.businessId }
+          });
+
+          if (item) {
+            // Descontar del stock
+            const newStock = parseFloat(item.currentStock) - parseFloat(part.quantity);
+            await item.update({ currentStock: Math.max(0, newStock) });
+
+            // Registrar uso en historial
+            await InventoryUsage.create({
+              businessId: appt.businessId,
+              itemId: part.itemId,
+              appointmentId: appt.id,
+              quantity: part.quantity,
+              date: new Date().toISOString().split('T')[0],
+              notes: `Usado en servicio - Cita ${appt.id}`,
+              usedBy: appt.employeeId
+            });
+          }
+        }
+      }
+    }
+
+    res.json({ message: 'Reporte técnico guardado exitosamente', workReport });
+  } catch (e) {
+    console.error('[saveTechnicalReport] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Obtener reporte técnico de una cita
+ */
+exports.getTechnicalReport = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const appt = await Appointment.findByPk(id, {
+      include: [
+        { model: Service },
+        { model: Employee, include: [{ model: User, attributes: ['id', 'name'] }] },
+        { model: Business }
+      ]
+    });
+
+    if (!appt) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Verificar permisos
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'admin_suc' || req.user.role === 'superadmin';
+    const isAssignedEmployee = appt.Employee?.User?.id === userId;
+    const isOwner = appt.Business?.ownerId === userId;
+
+    if (!isAdmin && !isAssignedEmployee && !isOwner) {
+      return res.status(403).json({ error: 'No tienes permiso para ver este reporte' });
+    }
+
+    if (!appt.workReport) {
+      return res.status(404).json({ error: 'No hay reporte técnico para esta cita' });
+    }
+
+    res.json({
+      workReport: appt.workReport,
+      technicianStatus: appt.technicianStatus,
+      travelStartTime: appt.travelStartTime,
+      arrivalTime: appt.arrivalTime,
+      serviceStartTime: appt.serviceStartTime
+    });
+  } catch (e) {
+    console.error('[getTechnicalReport] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Actualiza los datos de un cliente (nombre, teléfono, email)
+ * Actualiza todas las citas que coincidan con el teléfono/email original
+ */
+exports.updateClient = async (req, res) => {
+  try {
+    const { businessId } = req.query;
+    const { originalPhone, originalEmail, newName, newPhone, newEmail } = req.body;
+
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    if (!originalPhone && !originalEmail) {
+      return res.status(400).json({ error: 'Debe proporcionar originalPhone o originalEmail para identificar al cliente' });
+    }
+
+    // Construir condición de búsqueda para las citas existentes
+    const whereCondition = { businessId };
+    if (originalPhone) {
+      whereCondition.clientPhone = originalPhone;
+    }
+    if (originalEmail) {
+      whereCondition.clientEmail = originalEmail;
+    }
+
+    // Verificar que existe al menos una cita con esos datos
+    const existingAppointments = await Appointment.findAll({
+      where: whereCondition
+    });
+
+    if (existingAppointments.length === 0) {
+      return res.status(404).json({ error: 'No se encontraron citas con esos datos de cliente' });
+    }
+
+    // Preparar datos de actualización
+    const updateData = {};
+    if (newName !== undefined) updateData.clientName = newName;
+    if (newPhone !== undefined) updateData.clientPhone = newPhone;
+    if (newEmail !== undefined) updateData.clientEmail = newEmail;
+
+    // Actualizar todas las citas que coincidan
+    const [updatedCount] = await Appointment.update(updateData, {
+      where: whereCondition
+    });
+
+    // Si hay User asociado con ese email/teléfono, también actualizarlo
+    if (originalEmail || originalPhone) {
+      const userWhere = {};
+      if (originalEmail) userWhere.email = originalEmail;
+      // Nota: El usuario puede tener teléfono en otra tabla o campo, 
+      // pero en este modelo User solo tiene email como identificador único
+
+      const existingUser = await User.findOne({ where: userWhere });
+      if (existingUser) {
+        const userUpdateData = {};
+        if (newName !== undefined) userUpdateData.name = newName;
+        if (newEmail !== undefined && newEmail !== originalEmail) {
+          // Verificar que el nuevo email no esté en uso
+          const emailExists = await User.findOne({ where: { email: newEmail } });
+          if (emailExists && emailExists.id !== existingUser.id) {
+            return res.status(409).json({ error: 'El nuevo email ya está en uso por otro usuario' });
+          }
+          userUpdateData.email = newEmail;
+        }
+        await existingUser.update(userUpdateData);
+      }
+    }
+
+    res.json({
+      message: 'Datos del cliente actualizados correctamente',
+      updatedAppointments: updatedCount,
+      newData: updateData
+    });
+
+  } catch (e) {
+    console.error('[updateClient] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };

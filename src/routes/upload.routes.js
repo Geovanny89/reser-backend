@@ -84,4 +84,22 @@ router.delete('/gallery/remove', auth, role('admin', 'admin_suc'), async (req, r
   }
 });
 
+// Eliminar imagen individual de Cloudinary (para cualquier URL)
+router.delete('/image', auth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL de imagen requerida' });
+    
+    // Verificar que es una URL de Cloudinary válida
+    if (!url.includes('cloudinary.com')) {
+      return res.status(400).json({ error: 'Solo se pueden eliminar imágenes de Cloudinary' });
+    }
+    
+    await deleteFromCloudinary(url);
+    res.json({ message: 'Imagen eliminada correctamente' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

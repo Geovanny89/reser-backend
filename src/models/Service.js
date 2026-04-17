@@ -14,5 +14,11 @@ module.exports = (sequelize) => {
     priceOptional:      { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'El precio es opcional/cotizable' },
     hasEmployeeCommission: { type: DataTypes.BOOLEAN, defaultValue: true, comment: 'El empleado paga comisión por este servicio' },
     imageUrl: { type: DataTypes.STRING, comment: 'Imagen del servicio' },
+    color: { type: DataTypes.STRING, defaultValue: '#3b82f6', comment: 'Color para identificación visual en calendario (hex)' },
+    serviceGroupId: { 
+      type: DataTypes.UUID, 
+      allowNull: true,
+      comment: 'ID del grupo de servicios al que pertenece'
+    },
   });
 };

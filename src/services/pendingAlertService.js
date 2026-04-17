@@ -1,7 +1,8 @@
 /**
  * Servicio de alertas para citas pendientes no atendidas.
- * Revisa cada 30 minutos si hay citas con status 'scheduled' cuya hora de inicio ya pasó
- * y envía notificaciones al admin y empleado para que actualicen el estado.
+ * Revisa cada 5 minutos si hay citas con status 'pending' o 'confirmed' cuya hora de inicio ya pasó
+ * y envía notificaciones push al empleado y admin para que actualicen el estado.
+ * Alertas: 15min, 30min, 60min después de la hora de inicio.
  */
 
 const { Appointment, Service, Employee, User, Business } = require('../models');
@@ -25,7 +26,7 @@ async function sendPendingAlerts() {
     const appts15 = await Appointment.findAll({
       where: {
         startTime: { [Op.lt]: cutoff15 },
-        status: 'confirmed',
+        status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlertSent: false
       },
       include: includeOptions
@@ -37,7 +38,7 @@ async function sendPendingAlerts() {
     const appts30 = await Appointment.findAll({
       where: {
         startTime: { [Op.lt]: cutoff30 },
-        status: 'confirmed',
+        status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert30mSent: false
       },
       include: includeOptions
@@ -49,7 +50,7 @@ async function sendPendingAlerts() {
     const appts60 = await Appointment.findAll({
       where: {
         startTime: { [Op.lt]: cutoff60 },
-        status: 'confirmed',
+        status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert60mSent: false
       },
       include: includeOptions
@@ -88,22 +89,40 @@ async function processStuckAlert(appt, timeLabel, fieldToUpdate) {
       }
     }
 
-    // 2. Push al empleado
+    // 2. Push al empleado - Mensajes más específicos según tiempo
     const employeePushToken = appt.Employee?.User?.pushToken;
     if (employeePushToken) {
-      await sendPushNotification(employeePushToken, {
-        title: '⚠️ Cita sin iniciar',
-        body: `La cita de ${clientName} (${serviceName}) empezó hace ${timeLabel}. Por favor actualiza el estado.`,
-      }, { type: 'pending_alert', appointmentId: appt.id });
+      let title, body;
+      
+      if (timeLabel === '15 minutos') {
+        title = '⏰ Han pasado 15 min';
+        body = `La cita de ${clientName} (${serviceName}) empezó hace 15 min y no has cambiado el estado. ¡Actualízalo ahora!`;
+      } else if (timeLabel === '30 minutos') {
+        title = '🚨 ¡30 minutos! No has iniciado';
+        body = `La cita de ${clientName} (${serviceName}) lleva 30 min sin iniciar atención. ¡Cambia el estado a "En atención" ahora!`;
+      } else {
+        title = '🔴 ¡URGENTE! 1 hora sin atención';
+        body = `La cita de ${clientName} (${serviceName}) lleva 1 hora sin iniciar. ¡Actualiza el estado inmediatamente!`;
+      }
+      
+      await sendPushNotification(employeePushToken, { title, body }, { 
+        type: 'pending_alert', 
+        appointmentId: appt.id,
+        urgency: timeLabel === '15 minutos' ? 'low' : timeLabel === '30 minutos' ? 'medium' : 'high'
+      });
     }
 
     // 3. Push al admin
     const adminPushToken = appt.Business?.Owner?.pushToken;
     if (adminPushToken && adminPushToken !== employeePushToken) {
       await sendPushNotification(adminPushToken, {
-        title: '⚠️ Cita retrasada',
-        body: `La cita de ${clientName} con ${employeeName} no ha iniciado después de ${timeLabel}.`,
-      }, { type: 'pending_alert', appointmentId: appt.id });
+        title: timeLabel === '15 minutos' ? '⚠️ Cita retrasada' : timeLabel === '30 minutos' ? '🚨 Cita muy retrasada' : '🔴 Cita sin atención (1h)',
+        body: `La cita de ${clientName} con ${employeeName} (${serviceName}) lleva ${timeLabel} sin iniciar atención.`,
+      }, { 
+        type: 'pending_alert', 
+        appointmentId: appt.id,
+        urgency: timeLabel === '15 minutos' ? 'low' : timeLabel === '30 minutos' ? 'medium' : 'high'
+      });
     }
 
     await appt.update({ [fieldToUpdate]: true });

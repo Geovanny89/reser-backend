@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const { startReminderService } = require('./services/reminderService');
 const { startPendingAlertService } = require('./services/pendingAlertService');
 const { initWhatsAppManager } = require('./services/whatsappService');
+const { runScheduler, isBusinessHours } = require('./services/schedulerService');
 const { Op } = require('sequelize');
 const PORT = process.env.PORT || 4000;
 
@@ -50,6 +51,31 @@ async function seedSuperAdmin() {
     });
     console.log('✅  Usuario SuperAdmin verificado (contraseña preservada)');
   }
+}
+
+/**
+ * Inicia el scheduler de mensajes programados
+ * Ejecuta cada 5 minutos durante horario laboral (9am-11pm Colombia) PRUEBAS
+ */
+function startMessageScheduler() {
+  console.log('📅 Iniciando scheduler de mensajes programados');
+  
+  // Ejecutar inmediatamente si estamos en horario
+  if (isBusinessHours()) {
+    console.log('📅 Horario laboral detectado, ejecutando scheduler inicial...');
+    runScheduler().catch(err => console.error('[Scheduler] Error inicial:', err.message));
+  } else {
+    console.log('📅 Fuera de horario laboral, scheduler esperará...');
+  }
+  
+  // Programar ejecución cada 5 minutos
+  setInterval(async () => {
+    try {
+      await runScheduler();
+    } catch (err) {
+      console.error('[Scheduler] Error en ejecución programada:', err.message);
+    }
+  }, 5 * 60 * 1000); // 5 minutos
 }
 
 /**
@@ -99,7 +125,7 @@ async function start() {
     console.log('✅  Conexión a base de datos establecida');
     
     try {
-      await sequelize.sync({ alter: false });
+      await sequelize.sync({ alter: true });
       console.log('✅  Modelos sincronizados con la base de datos (alter: true)');
     } catch (syncErr) {
       console.error('⚠️  Error al sincronizar modelos (puede ser normal en PostgreSQL con ENUMs):', syncErr.message);
@@ -125,6 +151,10 @@ async function start() {
       
       // Iniciar instancias de WhatsApp
       initWhatsAppManager();
+      
+      // Iniciar scheduler de mensajes programados (cada 5 minutos)
+      startMessageScheduler();
+      console.log('📅 Scheduler de mensajes programado iniciado (cada 5 min)');
     });
   } catch (err) {
     console.error('❌  Error al iniciar:', err);

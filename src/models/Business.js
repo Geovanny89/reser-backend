@@ -98,6 +98,9 @@ module.exports = (sequelize) => {
     // === Campo para Servicios Técnicos ===
     isTechnicalServices: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si es negocio de servicios técnicos (genera OS en lugar de recibo)' },
     nit: { type: DataTypes.STRING, comment: 'NIT del negocio para recibos/OS' },
+    
+    // === Campo para Técnicos a Domicilio (Seguimiento en campo) ===
+    hasFieldTechnicians: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si envía técnicos a domicilio con seguimiento en tiempo real (deshabilita WhatsApp, menú especial)' },
 
     // === Campos para métodos de pago en landing ===
     showPaymentMethods: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Mostrar métodos de pago en la landing page' },
@@ -113,6 +116,27 @@ module.exports = (sequelize) => {
     
     // === Campo para Google Maps ===
     googleMapsUrl: { type: DataTypes.STRING, comment: 'URL de Google Maps para mostrar ubicación en la landing page' },
+
+    // === Configuración de módulos opcionales ===
+    enabledModules: { 
+      type: DataTypes.JSON, 
+      defaultValue: { expenses: false, inventory: false, deposits: false },
+      comment: 'Módulos opcionales habilitados: expenses, inventory, deposits'
+    },
+    
+    // === Configuración de anticipos/depositos ===
+    depositConfig: {
+      type: DataTypes.JSON,
+      defaultValue: {
+        required: false,              // ¿Anticipo obligatorio?
+        amount: 0,                  // Monto fijo (0 = usar porcentaje)
+        percentage: 30,             // Porcentaje del servicio (si amount = 0)
+        cancelationHours: 24,       // Horas antes para cancelar sin penalidad
+        penaltyEnabled: true,         // ¿Penalidad por no asistir?
+        termsText: 'El anticipo garantiza tu cita. Si cancelas con menos de 24 horas de anticipo o no asistes, el anticipo será retenido como penalidad. Puedes reagendar una vez sin costo adicional.'
+      },
+      comment: 'Configuración de anticipos: requerido, monto, condiciones de penalidad'
+    },
   });
 
   Business.resolveWhatsAppBusinessId = async function(businessId) {

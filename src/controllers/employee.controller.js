@@ -15,6 +15,13 @@ exports.getByBusiness = async (req, res) => {
           model: Appointment, 
           attributes: ['id', 'rating', 'clientName', 'updatedAt', 'status'],
           required: false
+        },
+        {
+          model: Service,
+          as: 'Services',
+          attributes: ['id', 'name', 'price', 'durationMin', 'imageUrl'],
+          through: { attributes: [] },
+          required: false
         }
       ],
       order: [
@@ -309,6 +316,50 @@ exports.getEmployeeInfo = async (req, res) => {
       where: { userId },
       include: [
         { model: User, attributes: ['id', 'name', 'email'] },
+        { model: Business, attributes: ['id', 'name', 'slug', 'type', 'logoUrl', 'isTechnicalServices'] },
+        { 
+          model: Service, 
+          as: 'Services',
+          attributes: ['id', 'name', 'price', 'durationMin', 'imageUrl'],
+          through: { attributes: [] }
+        }
+      ]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    res.json({
+      id: employee.id,
+      businessId: employee.businessId,
+      commissionPct: employee.commissionPct,
+      ownerPct: employee.ownerPct,
+      specialty: employee.specialty,
+      specialties: employee.specialties,
+      photoUrl: employee.photoUrl,
+      description: employee.description,
+      active: employee.active,
+      isManager: employee.isManager,
+      user: employee.User,
+      business: employee.Business,
+      services: employee.Services || []
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Actualizar perfil del empleado logueado
+exports.updateMyProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { specialty, description, photoUrl, specialties } = req.body;
+
+    const employee = await Employee.findOne({
+      where: { userId },
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
         { model: Business, attributes: ['id', 'name', 'slug', 'type'] }
       ]
     });
@@ -317,7 +368,27 @@ exports.getEmployeeInfo = async (req, res) => {
       return res.status(404).json({ error: 'Empleado no encontrado' });
     }
 
-    res.json(employee);
+    // Solo permitir actualizar ciertos campos
+    const updates = {};
+    if (specialty !== undefined) updates.specialty = specialty;
+    if (description !== undefined) updates.description = description;
+    if (photoUrl !== undefined) updates.photoUrl = photoUrl;
+    if (specialties !== undefined) updates.specialties = specialties;
+
+    await employee.update(updates);
+
+    res.json({
+      message: 'Perfil actualizado correctamente',
+      employee: {
+        id: employee.id,
+        specialty: employee.specialty,
+        specialties: employee.specialties,
+        photoUrl: employee.photoUrl,
+        description: employee.description,
+        user: employee.User,
+        business: employee.Business
+      }
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -336,6 +407,447 @@ const endOfMonth = (monthStr) => {
   d.setDate(0);
   d.setHours(23, 59, 59, 999);
   return d;
+};
+
+// ========== GESTIÓN DE SERVICIOS POR EMPLEADO ==========
+
+const { EmployeeService } = require('../models');
+
+// Obtener servicios asignados a un empleado
+exports.getEmployeeServices = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    
+    const employee = await Employee.findByPk(employeeId, {
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
+        { 
+          model: Service, 
+          as: 'Services',
+          attributes: ['id', 'name', 'description', 'price', 'durationMin', 'imageUrl'],
+          through: { attributes: [] } // No incluir datos de la tabla pivote
+        }
+      ]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    res.json({
+      employee: {
+        id: employee.id,
+        name: employee.User?.name,
+        specialty: employee.specialty,
+        photoUrl: employee.photoUrl
+      },
+      services: employee.Services || []
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Asignar servicios a un empleado (reemplaza todos los existentes)
+exports.setEmployeeServices = async (req, res) => {
+  try {
+    const { employeeId } = req.params;
+    const { serviceIds } = req.body; // Array de IDs de servicios
+    const businessId = req.body.businessId || req.query.businessId;
+
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    if (!Array.isArray(serviceIds)) {
+      return res.status(400).json({ error: 'serviceIds debe ser un array' });
+    }
+
+    const employee = await Employee.findOne({
+      where: { id: employeeId, businessId }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    // Verificar que todos los servicios pertenecen al negocio
+    const services = await Service.findAll({
+      where: { 
+        id: { [Op.in]: serviceIds },
+        businessId 
+      }
+    });
+
+    if (services.length !== serviceIds.length) {
+      return res.status(400).json({ error: 'Algunos servicios no existen o no pertenecen a este negocio' });
+    }
+
+    // Eliminar relaciones existentes
+    await EmployeeService.destroy({
+      where: { employeeId }
+    });
+
+    // Crear nuevas relaciones
+    if (serviceIds.length > 0) {
+      const employeeServices = serviceIds.map(serviceId => ({
+        employeeId,
+        serviceId,
+        businessId
+      }));
+
+      await EmployeeService.bulkCreate(employeeServices);
+    }
+
+    // Devolver empleado actualizado con sus servicios
+    const updatedEmployee = await Employee.findByPk(employeeId, {
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
+        { 
+          model: Service, 
+          as: 'Services',
+          attributes: ['id', 'name', 'description', 'price', 'durationMin', 'imageUrl'],
+          through: { attributes: [] }
+        }
+      ]
+    });
+
+    res.json({
+      message: 'Servicios actualizados correctamente',
+      employee: {
+        id: updatedEmployee.id,
+        name: updatedEmployee.User?.name,
+        specialty: updatedEmployee.specialty
+      },
+      services: updatedEmployee.Services || []
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Agregar un servicio específico a un empleado
+exports.addServiceToEmployee = async (req, res) => {
+  try {
+    const { employeeId, serviceId } = req.params;
+    const businessId = req.body.businessId || req.query.businessId;
+
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    // Verificar que el empleado existe
+    const employee = await Employee.findOne({
+      where: { id: employeeId, businessId }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    // Verificar que el servicio existe y pertenece al negocio
+    const service = await Service.findOne({
+      where: { id: serviceId, businessId }
+    });
+
+    if (!service) {
+      return res.status(404).json({ error: 'Servicio no encontrado' });
+    }
+
+    // Verificar si ya existe la relación
+    const existing = await EmployeeService.findOne({
+      where: { employeeId, serviceId }
+    });
+
+    if (existing) {
+      return res.status(400).json({ error: 'El empleado ya tiene asignado este servicio' });
+    }
+
+    // Crear la relación
+    await EmployeeService.create({ employeeId, serviceId, businessId });
+
+    res.json({ message: 'Servicio agregado al empleado correctamente' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Remover un servicio de un empleado
+exports.removeServiceFromEmployee = async (req, res) => {
+  try {
+    const { employeeId, serviceId } = req.params;
+    const businessId = req.body.businessId || req.query.businessId;
+
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    // Verificar que la relación existe
+    const employeeService = await EmployeeService.findOne({
+      where: { employeeId, serviceId, businessId }
+    });
+
+    if (!employeeService) {
+      return res.status(404).json({ error: 'Relación no encontrada' });
+    }
+
+    await employeeService.destroy();
+
+    res.json({ message: 'Servicio removido del empleado correctamente' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Obtener empleados que pueden realizar un servicio específico
+exports.getEmployeesByService = async (req, res) => {
+  try {
+    const { serviceId } = req.params;
+    const businessId = req.query.businessId;
+
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    // Verificar que el servicio existe
+    const service = await Service.findOne({
+      where: { id: serviceId, businessId }
+    });
+
+    if (!service) {
+      return res.status(404).json({ error: 'Servicio no encontrado' });
+    }
+
+    const employees = await Employee.findAll({
+      where: { businessId, active: true },
+      include: [
+        { model: User, attributes: ['id', 'name', 'email'] },
+        { 
+          model: Service, 
+          as: 'Services',
+          where: { id: serviceId },
+          required: true, // INNER JOIN - solo empleados que tienen este servicio
+          attributes: [] // No necesitamos los datos del servicio
+        }
+      ]
+    });
+
+    res.json({
+      service: {
+        id: service.id,
+        name: service.name
+      },
+      employees: employees.map(emp => ({
+        id: emp.id,
+        name: emp.User?.name,
+        specialty: emp.specialty,
+        photoUrl: emp.photoUrl,
+        commissionPct: emp.commissionPct
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// ========== COMISIONES PARA EMPLEADO (Ver sus propias comisiones) ==========
+
+// Helpers para fechas en zona horaria Colombia
+const getColombiaDate = (date = new Date()) => {
+  return new Date(date.toLocaleString("en-US", {timeZone: "America/Bogota"}));
+};
+
+const startOfDay = (dateStr) => {
+  const d = new Date(dateStr + 'T00:00:00-05:00');
+  return d;
+};
+
+const endOfDay = (dateStr) => {
+  const d = new Date(dateStr + 'T23:59:59.999-05:00');
+  return d;
+};
+
+const startOfWeek = (dateStr) => {
+  const d = new Date(dateStr + 'T00:00:00-05:00');
+  const day = d.getDay(); // 0 = domingo, 1 = lunes, etc.
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Ajustar para que la semana empiece en lunes
+  d.setDate(diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const endOfWeek = (dateStr) => {
+  const start = startOfWeek(dateStr);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+};
+
+exports.getMyCommissions = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { view = 'month', date, page = 1, limit = 8 } = req.query;
+    // view: 'day' | 'week' | 'month'
+    // date: YYYY-MM-DD para day/week, YYYY-MM para month
+
+    // Buscar el empleado asociado al usuario
+    const employee = await Employee.findOne({
+      where: { userId, active: true },
+      include: [{ model: User, attributes: ['name', 'email'] }]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    // Determinar rango de fechas según la vista
+    const now = getColombiaDate();
+    let start, end, periodLabel;
+
+    if (view === 'day') {
+      const targetDate = date || now.toISOString().slice(0, 10); // YYYY-MM-DD
+      start = startOfDay(targetDate);
+      end = endOfDay(targetDate);
+      periodLabel = targetDate;
+    } else if (view === 'week') {
+      const targetDate = date || now.toISOString().slice(0, 10);
+      start = startOfWeek(targetDate);
+      end = endOfWeek(targetDate);
+      const endStr = end.toISOString().slice(0, 10);
+      periodLabel = `${start.toISOString().slice(0, 10)} a ${endStr}`;
+    } else {
+      // month (default)
+      const targetMonth = date || now.toISOString().slice(0, 7); // YYYY-MM
+      start = startOfMonth(targetMonth);
+      end = endOfMonth(targetMonth);
+      periodLabel = targetMonth;
+    }
+
+    // Obtener info del negocio primero
+    const business = await Business.findByPk(employee.businessId);
+    const isTechnicalServices = business?.isTechnicalServices || false;
+    const hasFieldTechnicians = business?.hasFieldTechnicians || false;
+
+    // Para técnicos de campo, traemos TODAS las citas. Para otros, solo completadas.
+    const appointmentWhere = {
+      employeeId: employee.id,
+      startTime: { [Op.between]: [start, end] }
+    };
+    
+    // Si NO es técnico de campo, filtrar solo citas completadas
+    if (!hasFieldTechnicians) {
+      appointmentWhere.status = 'done';
+    }
+
+    // Buscar citas del empleado en el período
+    const allAppointments = await Appointment.findAll({
+      where: appointmentWhere,
+      include: [
+        { model: Service, attributes: ['name', 'price', 'hasEmployeeCommission'] },
+        { model: Business, attributes: ['name', 'isTechnicalServices'] }
+      ],
+      order: [['startTime', 'DESC']]
+    });
+
+    const commissionPct = (isTechnicalServices || hasFieldTechnicians) ? 0 : (parseFloat(employee.commissionPct) || 0);
+
+    // Calcular reporte completo para totales
+    const allReport = allAppointments.map(appt => {
+      const basePrice = parseFloat(appt.Service.price) || 0;
+      const additional = parseFloat(appt.additionalAmount) || 0;
+      const totalPrice = basePrice + additional;
+      
+      // En servicios técnicos o técnicos de campo no hay comisiones ni precios
+      const hideMoney = isTechnicalServices || hasFieldTechnicians;
+      const hasCommission = hideMoney ? false : (appt.Service.hasEmployeeCommission !== false);
+      const myCommission = hasCommission ? (totalPrice * commissionPct / 100) : 0;
+      
+      return {
+        id: appt.id,
+        date: appt.startTime,
+        service: appt.Service.name,
+        client: appt.clientName,
+        clientPhone: appt.clientPhone,
+        status: appt.status,
+        technicianStatus: appt.technicianStatus,
+        price: hideMoney ? 0 : totalPrice,
+        basePrice: hideMoney ? 0 : basePrice,
+        additional: hideMoney ? 0 : additional,
+        myCommission: hideMoney ? 0 : parseFloat(myCommission.toFixed(2)),
+        commissionPct: hasCommission ? commissionPct : 0,
+        hasCommission: hasCommission,
+        paymentMethod: appt.paymentMethod,
+        isTechnicalService: appt.Service.isTechnicalService || false
+      };
+    });
+
+    // Totales de todas las citas en el período
+    const totals = allReport.reduce((acc, r) => ({
+      totalServices:   acc.totalServices + r.price,
+      totalCommission: acc.totalCommission + r.myCommission,
+      count:           acc.count + 1
+    }), { totalServices: 0, totalCommission: 0, count: 0 });
+
+    totals.totalServices = parseFloat(totals.totalServices.toFixed(2));
+    totals.totalCommission = parseFloat(totals.totalCommission.toFixed(2));
+
+    // Para técnicos de campo, obtener estadísticas por estado (pending, confirmed, done, cancelled)
+    let statusStats = null;
+    if (hasFieldTechnicians) {
+      const allStatusAppointments = await Appointment.findAll({
+        where: {
+          employeeId: employee.id,
+          startTime: { [Op.between]: [start, end] }
+        },
+        attributes: ['status']
+      });
+      
+      statusStats = {
+        pending: allStatusAppointments.filter(a => a.status === 'pending').length,
+        confirmed: allStatusAppointments.filter(a => a.status === 'confirmed').length,
+        attention: allStatusAppointments.filter(a => a.status === 'attention').length,
+        done: allStatusAppointments.filter(a => a.status === 'done').length,
+        cancelled: allStatusAppointments.filter(a => a.status === 'cancelled').length,
+        total: allStatusAppointments.length
+      };
+    }
+
+    // Paginación
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 8;
+    const offset = (pageNum - 1) * limitNum;
+    const totalPages = Math.ceil(allReport.length / limitNum);
+    const paginatedAppointments = allReport.slice(offset, offset + limitNum);
+
+    res.json({
+      view,
+      period: periodLabel,
+      periodStart: start,
+      periodEnd: end,
+      isTechnicalServices,
+      hasFieldTechnicians,
+      statusStats,
+      employee: {
+        id: employee.id,
+        name: employee.User?.name,
+        commissionPct: commissionPct,
+        specialty: employee.specialty
+      },
+      appointments: paginatedAppointments,
+      totals,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: allReport.length,
+        totalPages: totalPages,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 };
 
 exports.getCommissionReport = async (req, res) => {
@@ -402,6 +914,144 @@ exports.getCommissionReport = async (req, res) => {
     totals.ownerTotal = parseFloat(totals.ownerTotal.toFixed(2));
 
     res.json({ appointments: report, totals });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// ========== CALIFICACIONES DEL EMPLEADO ==========
+
+exports.getMyRatings = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const employee = await Employee.findOne({
+      where: { userId, active: true },
+      include: [{ model: User, attributes: ['name', 'email'] }]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    // Buscar citas completadas con calificación
+    const ratedAppointments = await Appointment.findAll({
+      where: {
+        employeeId: employee.id,
+        status: 'done',
+        rating: { [Op.not]: null }
+      },
+      include: [
+        { model: Service, attributes: ['name'] }
+      ],
+      order: [['updatedAt', 'DESC']]
+    });
+
+    const ratings = ratedAppointments.map(apt => ({
+      id: apt.id,
+      date: apt.startTime,
+      rating: apt.rating,
+      comment: apt.ratingComment,
+      clientName: apt.clientName,
+      service: apt.Service.name,
+      createdAt: apt.updatedAt
+    }));
+
+    // Calcular estadísticas
+    const totalRatings = ratings.length;
+    const avgRating = totalRatings > 0 
+      ? (ratings.reduce((sum, r) => sum + r.rating, 0) / totalRatings).toFixed(1)
+      : 0;
+    
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    ratings.forEach(r => {
+      if (distribution[r.rating] !== undefined) distribution[r.rating]++;
+    });
+
+    res.json({
+      ratings,
+      stats: {
+        total: totalRatings,
+        avgRating: parseFloat(avgRating),
+        distribution
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// ========== CLIENTES FRECUENTES ==========
+
+exports.getMyFrequentClients = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const employee = await Employee.findOne({
+      where: { userId, active: true },
+      include: [{ model: User, attributes: ['name', 'email'] }]
+    });
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Empleado no encontrado' });
+    }
+
+    // Buscar todas las citas completadas
+    const appointments = await Appointment.findAll({
+      where: {
+        employeeId: employee.id,
+        status: 'done'
+      },
+      include: [
+        { model: Service, attributes: ['name', 'price'] }
+      ],
+      order: [['startTime', 'DESC']]
+    });
+
+    // Agrupar por cliente
+    const clientMap = new Map();
+    
+    appointments.forEach(apt => {
+      const key = apt.clientPhone || apt.clientEmail || apt.clientName;
+      if (!key) return;
+      
+      if (!clientMap.has(key)) {
+        clientMap.set(key, {
+          name: apt.clientName,
+          phone: apt.clientPhone,
+          email: apt.clientEmail,
+          visits: 0,
+          totalSpent: 0,
+          lastVisit: null,
+          services: new Set()
+        });
+      }
+      
+      const client = clientMap.get(key);
+      client.visits++;
+      const price = parseFloat(apt.Service?.price) || 0;
+      const additional = parseFloat(apt.additionalAmount) || 0;
+      client.totalSpent += price + additional;
+      client.services.add(apt.Service.name);
+      
+      if (!client.lastVisit || new Date(apt.startTime) > new Date(client.lastVisit)) {
+        client.lastVisit = apt.startTime;
+      }
+    });
+
+    // Convertir a array y ordenar por visitas
+    const clients = Array.from(clientMap.values())
+      .map(c => ({
+        ...c,
+        services: Array.from(c.services),
+        totalSpent: parseFloat(c.totalSpent.toFixed(2))
+      }))
+      .sort((a, b) => b.visits - a.visits);
+
+    res.json({
+      totalClients: clients.length,
+      clients: clients.slice(0, 50) // Limitar a 50 clientes más frecuentes
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

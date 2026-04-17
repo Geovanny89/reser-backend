@@ -1,4 +1,4 @@
-const { Business, Service, Employee, User, Promotion, Appointment } = require('../models');
+const { Business, Service, Employee, User, Promotion, Appointment, ServiceGroup } = require('../models');
 const { deleteFromCloudinary } = require('../config/cloudinary');
 const { sendEmail } = require('../config/email');
 const { Op } = require('sequelize');
@@ -265,9 +265,10 @@ exports.updateMyBusiness = async (req, res) => {
       'name', 'type', 'description', 'phone', 'address', 'logoUrl', 'bannerUrl',
       'whatsapp', 'whatsappCatalog', 'instagram', 'facebook', 'tiktok', 'twitter', 'pinterest', 'youtube', 'website',
       'gallery', 'primaryColor', 'secondaryColor', 'tagline', 'ctaText',
-      'businessHours', 'metaDescription', 'isTechnicalServices',
+      'businessHours', 'metaDescription', 'isTechnicalServices', 'hasFieldTechnicians',
       'showPaymentMethods', 'paymentMethods', 'useParentWhatsApp',
       'showMissionVision', 'mission', 'vision', 'googleMapsUrl',
+      'enabledModules', 'depositConfig',
     ];
     
     const updates = {};
@@ -300,12 +301,34 @@ exports.getBySlug = async (req, res) => {
           as: 'Services', 
           where: { active: true }, 
           required: false,
-          attributes: ['id', 'name', 'description', 'price', 'durationMin', 'isTechnicalService', 'priceOptional', 'imageUrl']
+          attributes: ['id', 'name', 'description', 'price', 'durationMin', 'isTechnicalService', 'priceOptional', 'imageUrl', 'serviceGroupId']
+        },
+        {
+          model: ServiceGroup,
+          as: 'ServiceGroups',
+          where: { active: true },
+          required: false,
+          include: [{
+            model: Service,
+            as: 'Services',
+            where: { active: true },
+            required: false,
+            attributes: ['id', 'name', 'description', 'price', 'durationMin', 'isTechnicalService', 'priceOptional', 'imageUrl']
+          }]
         },
         {
           model: Employee, as: 'Employees', where: { active: true }, required: false,
           attributes: ['id', 'businessId', 'userId', 'specialty', 'photoUrl', 'description', 'isManager', 'active'],
-          include: [{ model: User, attributes: ['id', 'name'] }]
+          include: [
+            { model: User, attributes: ['id', 'name'] },
+            { 
+              model: Service, 
+              as: 'Services',
+              attributes: ['id', 'name'], 
+              through: { attributes: [] },
+              required: false
+            }
+          ]
         }
       ]
     });
@@ -334,6 +357,18 @@ exports.getBySlug = async (req, res) => {
     });
 
     const bizJson = biz.toJSON();
+    
+    // Asegurar valores por defecto para módulos y configuración de anticipos
+    bizJson.enabledModules = bizJson.enabledModules || { expenses: false, inventory: false, deposits: false };
+    bizJson.depositConfig = bizJson.depositConfig || {
+      required: false,
+      amount: 0,
+      percentage: 30,
+      cancelationHours: 24,
+      penaltyEnabled: true,
+      termsText: 'El anticipo garantiza tu cita. Si cancelas con menos de 24 horas de anticipo o no asistes, el anticipo será retenido como penalidad.'
+    };
+    
     bizJson.Promotions = promotions;
     bizJson.Reviews = reviews;
     
@@ -349,10 +384,26 @@ exports.getBySlug = async (req, res) => {
     };
     
     // Asignar promociones a los servicios
+    // Convertir promociones a objetos planos para comparación correcta
+    const promotionsPlain = promotions.map(p => p.toJSON());
+    
     if (bizJson.Services) {
       bizJson.Services = bizJson.Services.map(svc => {
-        const svcPromos = promotions.filter(p => p.serviceId === svc.id || p.applyToAllServices);
+        const svcPromos = promotionsPlain.filter(p => p.serviceId === svc.id || p.applyToAllServices);
         return { ...svc, Promotions: svcPromos };
+      });
+    }
+    
+    // También asignar promociones a servicios dentro de los grupos
+    if (bizJson.ServiceGroups) {
+      bizJson.ServiceGroups = bizJson.ServiceGroups.map(group => {
+        if (group.Services) {
+          group.Services = group.Services.map(svc => {
+            const svcPromos = promotionsPlain.filter(p => p.serviceId === svc.id || p.applyToAllServices);
+            return { ...svc, Promotions: svcPromos };
+          });
+        }
+        return group;
       });
     }
 
@@ -371,7 +422,8 @@ exports.getByIdPublic = async (req, res) => {
         'id', 'name', 'slug', 'type', 'description', 'phone', 'address', 
         'logoUrl', 'bannerUrl', 'primaryColor', 'secondaryColor', 
         'whatsapp', 'whatsappCatalog', 'instagram', 'facebook', 'tiktok', 'twitter', 'website', 
-        'status', 'showMissionVision', 'mission', 'vision', 'googleMapsUrl'
+        'status', 'showMissionVision', 'mission', 'vision', 'googleMapsUrl',
+        'isTechnicalServices', 'hasFieldTechnicians'
       ]
     });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
@@ -494,6 +546,18 @@ exports.getAvailability = async (req, res) => {
     const nowMs = Date.now();
     const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de gracia
 
+    // DEBUG: Log para verificar zona horaria
+    console.log('[Availability DEBUG]', {
+      serverTime: new Date().toISOString(),
+      nowColombia: nowColombia.toISOString(),
+      todayStr,
+      requestedDate: date,
+      isTargetToday,
+      nowMs,
+      marginMs: MARGIN_MS,
+      threshold: nowMs - MARGIN_MS
+    });
+
     for (const emp of employees) {
       const empSchedules = allSchedules.filter(s => String(s.employeeId) === String(emp.id));
       const empAppointments = dayAppointments.filter(a => String(a.employeeId) === String(emp.id));
@@ -519,6 +583,7 @@ exports.getAvailability = async (req, res) => {
 
           // 1. Filtrar si ya pasó (si es hoy)
           if (isTargetToday && slotStart.getTime() <= (nowMs - MARGIN_MS)) {
+            console.log(`[Availability DEBUG] Slot ${timeStr} filtrado: slotStart=${slotStart.getTime()} <= threshold=${nowMs - MARGIN_MS}`);
             current += 5;
             continue;
           }

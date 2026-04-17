@@ -13,5 +13,7 @@ module.exports = (sequelize) => {
     description:   { type: DataTypes.TEXT, comment: 'Perfil o descripción profesional del empleado' },
     active:        { type: DataTypes.BOOLEAN, defaultValue: true },
     isManager:     { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si puede gestionar el negocio como administrador' },
+    // Campos de calificación del empleado
+   
   });
 };

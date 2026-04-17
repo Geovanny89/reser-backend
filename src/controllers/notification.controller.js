@@ -21,6 +21,11 @@ exports.sendPaymentSummary = async (req, res) => {
 
     const emp = employees.find(e => e.User?.name === employeeName);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+    
+    // Verificar que el empleado tenga email
+    if (!emp.User?.email) {
+      return res.status(400).json({ error: 'El empleado no tiene un correo electrónico registrado' });
+    }
 
     // Preparar adjuntos si se envió PDF
     const attachments = [];
@@ -42,15 +47,58 @@ exports.sendPaymentSummary = async (req, res) => {
         content: content,
         encoding: 'base64'
       });
+      console.log(`[Notification] PDF adjunto preparado: ${attachments[0].filename}, tamaño: ${content.length} chars`);
     }
 
-    await sendEmail(emp.User.email, 'paymentSummary', {
-      employeeName,
-      businessName: business.name,
-      month,
-      totalEarned: parseFloat(totalEarned),
-      appointmentsCount: parseInt(appointmentsCount),
-    }, attachments);
+    console.log(`[Notification] Enviando email a: ${emp.User.email}, template: paymentSummary, attachments: ${attachments.length}`);
+    
+    let emailResult;
+    try {
+      emailResult = await sendEmail(emp.User.email, 'paymentSummary', {
+        employeeName,
+        businessName: business.name,
+        month,
+        totalEarned: parseFloat(totalEarned),
+        appointmentsCount: parseInt(appointmentsCount),
+      }, attachments);
+      console.log('[Notification] ✅ Email enviado con PDF adjunto:', emailResult);
+    } catch (emailError) {
+      console.error('[Notification] ❌ Error enviando email con PDF:', emailError.message);
+      
+      // Si falla con el PDF, intentar enviar sin el PDF como fallback
+      if (attachments.length > 0) {
+        console.log('[Notification] 🔄 Intentando enviar email sin PDF adjunto...');
+        try {
+          emailResult = await sendEmail(emp.User.email, 'paymentSummary', {
+            employeeName,
+            businessName: business.name,
+            month,
+            totalEarned: parseFloat(totalEarned),
+            appointmentsCount: parseInt(appointmentsCount),
+          }, []);
+          console.log('[Notification] ✅ Email enviado sin PDF (fallback):', emailResult);
+          return res.json({ 
+            success: true, 
+            partial: true,
+            message: `Resumen enviado a ${emp.User.email} (sin PDF adjunto por restricciones del servidor)` 
+          });
+        } catch (fallbackError) {
+          console.error('[Notification] ❌ Error también en fallback:', fallbackError.message);
+          throw fallbackError;
+        }
+      } else {
+        throw emailError;
+      }
+    }
+
+    // Si el email fue simulado (sin credenciales configuradas), informar al usuario
+    if (emailResult.simulated) {
+      return res.status(200).json({ 
+        success: true, 
+        simulated: true,
+        message: 'Email simulado (credenciales SMTP no configuradas). Configure EMAIL_USER y EMAIL_PASS en el archivo .env para envíos reales.' 
+      });
+    }
 
     res.json({ success: true, message: `Resumen enviado a ${emp.User.email}` });
   } catch (e) {

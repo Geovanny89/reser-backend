@@ -1,4 +1,4 @@
-const { Service, Business, Promotion } = require('../models');
+const { Service, Business, Promotion, ServiceGroup } = require('../models');
 const { Op } = require('sequelize');
 const { deleteFromCloudinary } = require('../config/cloudinary');
 
@@ -33,6 +33,11 @@ exports.getByBusiness = async (req, res) => {
             endDate: { [Op.gte]: now }
           },
           required: false
+        },
+        {
+          model: ServiceGroup,
+          as: 'Group',
+          required: false
         }
       ]
     });
@@ -55,7 +60,7 @@ exports.getByBusiness = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl } = req.body;
+    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl, color } = req.body;
     const userId = req.user.id;
 
     // Si viene businessId, lo usamos. Si no, buscamos el negocio del usuario
@@ -92,7 +97,8 @@ exports.create = async (req, res) => {
       isTechnicalService: isTechnicalService || false,
       priceOptional: priceOptional || false,
       hasEmployeeCommission: hasEmployeeCommission !== false, // default true
-      imageUrl: imageUrl || null
+      imageUrl: imageUrl || null,
+      color: color || '#3b82f6'
     });
     res.status(201).json(service);
   } catch (e) {
@@ -123,6 +129,14 @@ exports.update = async (req, res) => {
     }
     if (updateData.hasEmployeeCommission !== undefined) {
       updateData.hasEmployeeCommission = updateData.hasEmployeeCommission !== false;
+    }
+    if (updateData.color !== undefined) {
+      updateData.color = updateData.color || '#3b82f6';
+    }
+    
+    // Manejar serviceGroupId: convertir string vacío a null
+    if (updateData.serviceGroupId !== undefined) {
+      updateData.serviceGroupId = updateData.serviceGroupId || null;
     }
 
     // ELIMINAR FOTO ANTERIOR DE CLOUDINARY SI CAMBIA
@@ -156,7 +170,16 @@ exports.update = async (req, res) => {
       console.log(`[ServiceUpdate] Forzada actualización de ${futureAppointments.length} citas por cambio a ${newDuration} min`);
     }
 
-    res.json(service);
+    // Recargar el servicio con su grupo para devolverlo actualizado
+    const updatedService = await Service.findByPk(service.id, {
+      include: [{
+        model: ServiceGroup,
+        as: 'Group',
+        required: false
+      }]
+    });
+
+    res.json(updatedService);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

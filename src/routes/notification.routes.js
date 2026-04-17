@@ -78,13 +78,33 @@ router.get('/whatsapp/status', auth, async (req, res) => {
     
     // Si en la DB dice conectado, verificar si la instancia realmente existe y está viva
     let actualStatus = session?.status || 'disconnected';
+    
     if (actualStatus === 'connected') {
       // Usar getInstance con fallback de seguridad
       const client = whatsappService.getInstance ? whatsappService.getInstance(businessId) : null;
       if (!client) {
+        // Chrome no está corriendo, pero puede haber sesión guardada
         actualStatus = 'disconnected';
-        // Auto-corregir DB si la instancia no existe
-        await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+        // Verificar si hay sesión guardada en disco
+        if (whatsappService.hasValidSession && whatsappService.hasValidSession(businessId)) {
+          actualStatus = 'session_saved';
+          // Actualizar BD
+          await models.WhatsAppSession.update({ status: 'session_saved' }, { where: { businessId } });
+        } else {
+          // No hay sesión válida
+          await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+        }
+      }
+    } else if (actualStatus === 'disconnected' || !session) {
+      // Verificar si hay sesión guardada en disco que no está reflejada en BD
+      if (whatsappService.hasValidSession && whatsappService.hasValidSession(businessId)) {
+        actualStatus = 'session_saved';
+        // Crear/actualizar registro en BD
+        await models.WhatsAppSession.upsert({ 
+          businessId, 
+          status: 'session_saved',
+          lastActivity: new Date()
+        });
       }
     }
 
@@ -106,6 +126,49 @@ router.post('/whatsapp/reset', auth, async (req, res) => {
     res.json({ message: 'Servicio reiniciado. Generando nuevo QR...' });
   } catch (e) {
     console.error('[WhatsApp Reset Error]:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Ruta para conectar rápidamente (sin QR) cuando hay sesión guardada
+router.post('/whatsapp/connect', auth, async (req, res) => {
+  try {
+    const { businessId } = req.query;
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+    
+    const session = await models.WhatsAppSession.findOne({ where: { businessId } });
+    
+    // Si ya está conectado, no hacer nada
+    if (session?.status === 'connected') {
+      return res.json({ status: 'connected', message: 'WhatsApp ya está conectado' });
+    }
+    
+    // Si hay sesión guardada, intentar conectar sin QR
+    if (session?.status === 'session_saved') {
+      console.log(`[WhatsApp Route] ⚡ Conectando rápidamente para ${businessId} (sesión guardada)...`);
+      try {
+        await whatsappService.createInstance(businessId, false); // forceFresh = false
+        return res.json({ status: 'connected', message: 'WhatsApp conectado exitosamente' });
+      } catch (err) {
+        console.error(`[WhatsApp Route] ❌ Error conectando:`, err.message);
+        // Si falla, marcar como desconectado y requerir QR
+        await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+        return res.status(400).json({ 
+          status: 'disconnected', 
+          error: 'No se pudo restaurar la sesión. Por favor escanea el QR nuevamente.',
+          requiresQR: true 
+        });
+      }
+    }
+    
+    // Si no hay sesión, requerir QR
+    res.status(400).json({ 
+      status: 'disconnected', 
+      error: 'No hay sesión guardada. Por favor escanea el QR para vincular.',
+      requiresQR: true 
+    });
+  } catch (e) {
+    console.error('[WhatsApp Connect Error]:', e);
     res.status(500).json({ error: e.message });
   }
 });

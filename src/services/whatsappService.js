@@ -22,6 +22,9 @@ let isProcessingQueue = false;
 const messageCounts = new Map(); // businessId -> { hour: number, count: number }
 const MAX_MESSAGES_PER_HOUR = 20; // Límite seguro de WhatsApp
 
+// Límite de instancias concurrentes para proteger memoria del servidor
+const MAX_INSTANCES = 3; // Máximo 3 negocios con WhatsApp simultáneo
+
 // Variaciones de mensajes para que no sean idénticos
 const GREETING_VARIATIONS = ['Hola', '¡Hola!', 'Buen día', '¡Buen día!', 'Hola 👋', '¡Hey!'];
 const FAREWELL_VARIATIONS = ['¡Gracias!', 'Gracias', '¡Que tenga buen día!', '¡Hasta pronto!', '¡Nos vemos!'];
@@ -75,9 +78,10 @@ function getRandomDelay() {
 }
 
 /**
- * Verifica si es horario laboral (7am - 7pm Colombia)
+ * Verifica si es horario laboral (7:00 AM - 11:00 PM Colombia)
  * WhatsApp puede bloquear números que envían fuera de horarios normales
  * Colombia es UTC-5 (todo el año, no tiene horario de verano)
+ * NOTA: Horario extendido hasta las 11 PM para pruebas
  */
 function isBusinessHours() {
   const now = new Date();
@@ -85,7 +89,7 @@ function isBusinessHours() {
   const colombiaOffset = -5 * 60 * 60 * 1000; // -5 horas en ms
   const colombiaTime = new Date(now.getTime() + colombiaOffset);
   const hour = colombiaTime.getUTCHours(); // Usar getUTCHours porque ya convertimos
-  return hour >= 7 && hour < 19; // 7am - 7pm Colombia
+  return hour >= 7 && hour < 23; // 7:00 AM - 11:00 PM Colombia (extendido para pruebas)
 }
 
 /**
@@ -167,24 +171,56 @@ function getRandomRatingTemplate() {
 }
 
 /**
+ * Verifica si un negocio tiene sesión de WhatsApp válida (archivos existen)
+ * Sin necesidad de tener Chrome corriendo
+ */
+function hasValidSession(businessId) {
+  const sessionDir = path.resolve(__dirname, `../../sessions/session-${businessId}`);
+  return fs.existsSync(sessionDir) && fs.existsSync(path.join(sessionDir, 'Default'));
+}
+
+/**
  * Inicializa el gestor de WhatsApp para todos los negocios que tengan sesión
+ * Modo 'bajo demanda' - Chrome solo se inicia cuando se necesita, no al arrancar
  */
 async function initWhatsAppManager() {
-  console.log('[WhatsApp] 🚀 Iniciando gestor de instancias...');
+  console.log('[WhatsApp] 🚀 Iniciando gestor de instancias (modo bajo demanda)...');
   try {
     const sessions = await WhatsAppSession.findAll();
+    
     for (const session of sessions) {
-      if (session.status === 'connected') {
-        try {
-          await createInstance(session.businessId);
-        } catch (err) {
-          console.error(`[WhatsApp] ❌ Error inicializando sesión para ${session.businessId}:`, err.message);
-        }
+      // Verificar si tiene sesión válida en disco
+      const isSessionValid = hasValidSession(session.businessId);
+      
+      if (isSessionValid) {
+        // Hay sesión guardada pero Chrome NO está corriendo
+        // Estado especial: 'session_saved' = listo para conectar con 1 clic
+        await WhatsAppSession.update(
+          { status: 'session_saved', lastActivity: new Date() },
+          { where: { businessId: session.businessId } }
+        );
+        console.log(`[WhatsApp] 💾 Sesión guardada disponible para ${session.businessId} (listo para conectar)`);
+      } else {
+        // No hay archivos de sesión válidos
+        await WhatsAppSession.update(
+          { status: 'disconnected' },
+          { where: { businessId: session.businessId } }
+        );
+        console.log(`[WhatsApp] ⚠️ Sin sesión para ${session.businessId}`);
       }
     }
+    
+    console.log(`[WhatsApp] 📊 Gestor listo. Las sesiones se conectarán bajo demanda (0 Chrome activos).`);
   } catch (err) {
     console.error('[WhatsApp] ❌ Error crítico en initWhatsAppManager:', err.message);
   }
+
+  // Iniciar monitoreo de memoria cada 5 minutos
+  setInterval(() => {
+    const used = process.memoryUsage();
+    const instancesCount = instances.size;
+    console.log(`[WhatsApp] 📊 Memoria - Heap: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB | RSS: ${Math.round(used.rss / 1024 / 1024)}MB | Instancias: ${instancesCount}/${MAX_INSTANCES}`);
+  }, 5 * 60 * 1000);
 }
 
 /**
@@ -214,6 +250,12 @@ async function createInstance(businessId, forceFresh = false) {
   const authPath = path.join(sessionsDir, `session-${businessId}`);
 
   if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
+
+  // Verificar límite de instancias para proteger memoria del servidor
+  if (instances.size >= MAX_INSTANCES && !instances.has(businessId)) {
+    console.error(`[WhatsApp] ❌ Límite de ${MAX_INSTANCES} instancias alcanzado. No se puede crear sesión para ${businessId}`);
+    throw new Error(`Límite de ${MAX_INSTANCES} instancias de WhatsApp alcanzado. Desconecta otra sesión primero.`);
+  }
 
   // 1. Cierre forzoso de instancia previa si existe en el MAP
   const existingClient = instances.get(businessId);
@@ -256,7 +298,7 @@ async function createInstance(businessId, forceFresh = false) {
       dataPath: sessionsDir
     }),
     puppeteer: {
-      headless: true,
+      headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -274,13 +316,15 @@ async function createInstance(businessId, forceFresh = false) {
         '--disable-renderer-backgrounding',
         '--disable-features=TranslateUI',
         '--disable-ipc-flooding-protection',
-        '--window-size=1920,1080',
+        '--js-flags=--max-old-space-size=256 --max-semi-space-size=32',
+        '--memory-pressure-off',
+        '--window-size=1280,720',
         '--start-maximized'
       ],
       executablePath: process.env.CHROME_PATH || undefined,
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 },
-      defaultViewport: { width: 1920, height: 1080 }
+      viewport: { width: 1280, height: 720 },
+      defaultViewport: { width: 1280, height: 720 }
     }
   });
 
@@ -482,6 +526,43 @@ async function handleClientResponse(businessId, client, msg) {
   cleanIncomingPhone = cleanIncomingPhone.slice(-10);
   console.log(`[WhatsApp] 📥 Mensaje de: ${from} | Texto: "${text}" | Tel: ${cleanIncomingPhone} | BIZ: ${businessId}`);
 
+  // 1.5. Buscar primero por CÓDIGO DE REFERENCIA en el mensaje
+  const { extractReferenceCode } = require('../utils/referenceCode');
+  const refCode = extractReferenceCode(text);
+
+  if (refCode) {
+    console.log(`[WhatsApp] 🔍 Código de referencia detectado: ${refCode}`);
+
+    // Buscar cita directamente por código de referencia
+    const sessionOwnerId = await Business.resolveWhatsAppBusinessId(businessId);
+    const sharingBusinesses = await Business.findAll({
+      where: {
+        [require('sequelize').Op.or]: [
+          { id: sessionOwnerId },
+          { parentBusinessId: sessionOwnerId, useParentWhatsApp: true }
+        ]
+      },
+      attributes: ['id']
+    });
+    const businessIds = sharingBusinesses.map(b => b.id);
+
+    const apptByRef = await Appointment.findOne({
+      where: {
+        referenceCode: refCode,
+        businessId: { [require('sequelize').Op.in]: businessIds }
+      }
+    });
+
+    if (apptByRef) {
+      console.log(`[WhatsApp] ✅ Cita encontrada por código de referencia: ${apptByRef.id.slice(0, 8)}`);
+      // Procesar esta cita específica
+      await processAppointmentResponse(apptByRef, text, msg, cleanIncomingPhone);
+      return; // Terminar aquí, ya procesamos la cita específica
+    } else {
+      console.log(`[WhatsApp] ⚠️ Código ${refCode} no encontrado en BD, continuando con búsqueda por teléfono...`);
+    }
+  }
+
   // 2. Buscar citas para este negocio y sus sucursales (si comparten WhatsApp)
   // Obtenemos el ID del negocio "dueño" de la sesión para buscar en toda su red
   const sessionOwnerId = await Business.resolveWhatsAppBusinessId(businessId);
@@ -513,15 +594,16 @@ async function handleClientResponse(businessId, client, msg) {
       businessId: { [require('sequelize').Op.in]: businessIds },
       status: 'done',
       rating: null, // Solo citas SIN calificar aún
-      updatedAt: { [require('sequelize').Op.gte]: new Date(now - 48 * 60 * 60 * 1000) } // Solo últimas 48h
+      ratingSent: true, // Solo citas donde se ENVIÓ la solicitud
+      ratingSentAt: { [require('sequelize').Op.gte]: new Date(now - 48 * 60 * 60 * 1000) } // Solo últimas 48h
     },
-    order: [['updatedAt', 'DESC']] // Las más recientes primero
+    order: [['ratingSentAt', 'DESC']] // Priorizar la cita cuya solicitud se envió más recientemente
   });
 
   // Combinar: primero activas, luego done (para dar prioridad a confirmación sobre calificación)
   const recentAppts = [...activeAppts, ...doneAppts];
 
-  console.log(`[WhatsApp] 🔍 Buscando en ${recentAppts.length} citas (${activeAppts.length} activas, ${doneAppts.length} sin calificar) de ${businessIds.length} negocios vinculados`);
+  console.log(`[WhatsApp] 🔍 Buscando en ${recentAppts.length} citas (${activeAppts.length} activas, ${doneAppts.length} con solicitud enviada) de ${businessIds.length} negocios vinculados`);
 
   // LOG CRÍTICO PARA DEPURACIÓN: Ver qué citas se están comparando
   recentAppts.forEach(a => {
@@ -529,8 +611,8 @@ async function handleClientResponse(businessId, client, msg) {
     console.log(`   -> Cita ${a.id.slice(0, 8)} | Tel DB: ${dbPhone} | Status: ${a.status}`);
   });
 
-  // 3. Filtrar por teléfono con lógica ultra-flexible
-  const matchedAppt = recentAppts.find(appt => {
+  // 3. Filtrar por teléfono con lógica ultra-flexible - OBTENER TODAS las citas coincidentes
+  const matchedAppointments = recentAppts.filter(appt => {
     if (!appt.clientPhone) return false;
 
     const dbPhone = String(appt.clientPhone).replace(/\D/g, '');
@@ -542,143 +624,415 @@ async function handleClientResponse(businessId, client, msg) {
     }
 
     // A. Coincidencia exacta de últimos 10 dígitos (el caso más común)
-    if (dbPhoneLast10 === cleanIncomingPhone) {
-      console.log(`[WhatsApp] ✅ Match exacto: DB ${dbPhoneLast10} === Incoming ${cleanIncomingPhone}`);
-      return true;
-    }
+    if (dbPhoneLast10 === cleanIncomingPhone) return true;
 
     // B. El teléfono de la DB está contenido en el ID largo de WhatsApp
-    if (from.includes(dbPhoneLast10) && dbPhoneLast10.length >= 7) {
-      console.log(`[WhatsApp] ✅ Match por contención en ID: ${dbPhoneLast10} en ${from}`);
-      return true;
-    }
+    if (from.includes(dbPhoneLast10) && dbPhoneLast10.length >= 7) return true;
 
     // C. El ID de WhatsApp termina en el teléfono de la DB
-    if (from.endsWith(dbPhone)) {
-      console.log(`[WhatsApp] ✅ Match por terminación: ${from} termina en ${dbPhone}`);
-      return true;
-    }
+    if (from.endsWith(dbPhone)) return true;
 
     // D. Comparar sin el prefijo 57 de Colombia
     if (dbPhone.startsWith('57')) {
       const dbNoPrefix = dbPhone.substring(2);
-      if (dbNoPrefix === cleanIncomingPhone || dbNoPrefix.slice(-10) === cleanIncomingPhone) {
-        console.log(`[WhatsApp] ✅ Match sin prefijo 57: ${dbNoPrefix} === ${cleanIncomingPhone}`);
-        return true;
-      }
+      if (dbNoPrefix === cleanIncomingPhone || dbNoPrefix.slice(-10) === cleanIncomingPhone) return true;
     }
 
     // E. Match parcial de últimos 7 dígitos (para números similares con prefijos diferentes)
-    // Esto ayuda cuando el usuario tiene variaciones en su número (ej: 311... vs 350...)
     const dbPhoneLast7 = dbPhoneLast10.slice(-7);
     const incomingLast7 = cleanIncomingPhone.slice(-7);
-    if (dbPhoneLast7 === incomingLast7 && dbPhoneLast7.length >= 7) {
-      console.log(`[WhatsApp] ⚠️ Match parcial (últimos 7 dígitos): ${dbPhoneLast10} ~ ${cleanIncomingPhone}`);
-      return true;
-    }
+    if (dbPhoneLast7 === incomingLast7 && dbPhoneLast7.length >= 7) return true;
 
     return false;
   });
 
-  if (!matchedAppt) {
+  if (matchedAppointments.length === 0) {
     console.log(`[WhatsApp] 🔍 Sin coincidencias para tel: ${cleanIncomingPhone} (ID: ${from}) en BIZ: ${businessId}`);
+    console.log(`[WhatsApp] 💾 Guardando mensaje entrante para procesamiento posterior...`);
+    
+    // Guardar mensaje en BD para procesarlo cuando haya citas
+    try {
+      const { IncomingMessage } = require('../models');
+      await IncomingMessage.create({
+        businessId: businessId,
+        phone: cleanIncomingPhone,
+        message: text,
+        whatsappMessageId: msg.id?._serialized || null,
+        status: 'pending'
+      });
+      console.log(`[WhatsApp] ✅ Mensaje entrante guardado en BD para tel: ${cleanIncomingPhone}`);
+    } catch (saveErr) {
+      console.error(`[WhatsApp] ❌ Error guardando mensaje entrante:`, saveErr.message);
+    }
     return;
   }
 
-  console.log(`[WhatsApp] 📍 Cita encontrada ID:${matchedAppt.id} Estado:${matchedAppt.status} Cliente:${matchedAppt.clientName}`);
+  console.log(`[WhatsApp] 📍 Encontradas ${matchedAppointments.length} citas para tel:${cleanIncomingPhone}`);
+  console.log(`[WhatsApp] 📝 MENSAJE RECIBIDO: "${text}" (length: ${text.length})`);
+  matchedAppointments.forEach((appt, idx) => {
+    const sentAt = appt.ratingSentAt ? new Date(appt.ratingSentAt).toLocaleTimeString('es-CO', {hour: '2-digit', minute:'2-digit'}) : 'N/A';
+    console.log(`   -> [${idx + 1}] ID:${appt.id.slice(0, 8)} | status:${appt.status} | flow:${appt.messageFlowStatus} | ${appt.clientName} | ratingSent:${appt.ratingSent} @ ${sentAt}`);
+  });
 
-  // 4. Lógica de Confirmación/Cancelación (para citas no terminadas)
-  if (['pending', 'confirmed', 'attention'].includes(matchedAppt.status)) {
-    // Extraer el primer dígito del mensaje (ignorando espacios, puntuación, emojis)
-    const firstDigitMatch = text.match(/^\s*([12])\b/);
-    const firstDigit = firstDigitMatch ? firstDigitMatch[1] : null;
-
-    const isConfirm = firstDigit === '1' || text.includes('si') || text.includes('confirm') || text.includes('sí');
-    const isCancel = firstDigit === '2' || text.includes('no') || text.includes('cancel') || text.includes('cancelar');
-
-    if (isConfirm) {
-      console.log(`[WhatsApp] ✅ Confirmando cita ${matchedAppt.id}`);
-      await matchedAppt.update({
-        status: 'confirmed',
-        confirmed: true,
-        confirmedAt: new Date()
-      });
-
-      const chat = await msg.getChat();
-      await chat.sendStateTyping();
-      setTimeout(async () => {
-        try {
-          await msg.reply(getRandomConfirmationTemplate());
-        } catch (e) { console.error(`[WhatsApp] Error respuesta:`, e.message); }
-      }, 2 * 60 * 1000); // 2 minutos después
-      return;
-    }
-
-    if (isCancel) {
-      console.log(`[WhatsApp] ❌ Cancelando cita ${matchedAppt.id}`);
-      await matchedAppt.update({ status: 'cancelled' });
-      const chat = await msg.getChat();
-      await chat.sendStateTyping();
-      setTimeout(async () => {
-        try {
-          const templates = [
-            '✅ Cita cancelada exitosamente.',
-            '👍 Confirmamos la cancelación. ¡Hasta pronto!',
-            '📅 Cita cancelada. Escríbenos si necesitas reagendar.'
-          ];
-          await msg.reply(templates[Math.floor(Math.random() * templates.length)]);
-        } catch (e) { console.error(`[WhatsApp] Error respuesta:`, e.message); }
-      }, 2 * 60 * 1000); // 2 minutos después
-      return;
-    }
+  // Usar messageFlowStatus para determinar la acción - mucho más simple y confiable
+  // messageFlowStatus: 'not_started' | 'awaiting_confirmation' | 'awaiting_rating' | 'completed'
+  
+  // Detectar si el mensaje es un número (1-5) - SOLO para calificación
+  // Confirmación/Cancelación ahora usa SI/NO (texto), no números
+  const numberMatch = text.match(/^\s*([1-5])\s*$/);
+  const number = numberMatch ? parseInt(numberMatch[1]) : null;
+  const isRatingNumber = number && (number >= 1 && number <= 5);
+  
+  let matchedAppt = null;
+  let actionType = 'unknown';
+  
+  // 3.1. Buscar citas por messageFlowStatus
+  const awaitingConfirmation = matchedAppointments.filter(a => a.messageFlowStatus === 'awaiting_confirmation');
+  const awaitingRating = matchedAppointments.filter(a => a.messageFlowStatus === 'awaiting_rating');
+  
+  // 3.2. Decidir qué cita procesar
+  if (isRatingNumber && awaitingRating.length > 0) {
+    // Número 1-5 con cita esperando calificación → CALIFICAR
+    matchedAppt = awaitingRating[0];
+    actionType = 'rating';
+    console.log(`[WhatsApp] ⭐ Número ${number} detectado → CALIFICACIÓN: ${matchedAppt.id.slice(0, 8)}`);
+  } else if (awaitingConfirmation.length > 0) {
+    // Hay cita esperando confirmación (SI/NO)
+    matchedAppt = awaitingConfirmation[0];
+    actionType = 'confirm_cancel';
+    console.log(`[WhatsApp] 🎯 Cita esperando confirmación (SI/NO): ${matchedAppt.id.slice(0, 8)}`);
+  } else if (awaitingRating.length > 0) {
+    // Solo hay cita esperando calificación
+    matchedAppt = awaitingRating[0];
+    actionType = 'rating';
+    console.log(`[WhatsApp] ⭐ Solo cita esperando calificación: ${matchedAppt.id.slice(0, 8)}`);
+  } else {
+    // Fallback: buscar cita pendiente o completada
+    const pendingAppt = matchedAppointments.find(a => ['pending', 'confirmed', 'attention'].includes(a.status) && !a.confirmed);
+    const recentDoneAppt = matchedAppointments.find(a => a.status === 'done' && !a.rating);
+    matchedAppt = pendingAppt || recentDoneAppt || matchedAppointments[0];
+    actionType = 'fallback';
+    console.log(`[WhatsApp] 🎯 Fallback: ${matchedAppt.id.slice(0, 8)} | messageFlowStatus: ${matchedAppt.messageFlowStatus || 'not_started'}`);
   }
 
-  // 5. Lógica de Calificación (para citas terminadas o que acaban de terminar)
-  if (['done', 'attention'].includes(matchedAppt.status) && !matchedAppt.rating) {
-    const match = text.match(/[1-5]/);
-    if (match) {
-      const rating = parseInt(match[0]);
-      console.log(`[WhatsApp] ⭐ Calificando cita ${matchedAppt.id} con ${rating}`);
+  // 4. Lógica de Confirmación/Cancelación (para citas no terminadas)
+  // Permitir confirmar si: está en status pendiente/confirmed/attention Y (no está confirmada O está esperando confirmación)
+  const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(matchedAppt.status) && 
+                           (!matchedAppt.confirmed || matchedAppt.messageFlowStatus === 'awaiting_confirmation');
+  
+  console.log(`[WhatsApp] 🔍 Verificando confirmación: status=${matchedAppt.status}, confirmed=${matchedAppt.confirmed}, messageFlowStatus=${matchedAppt.messageFlowStatus}, canConfirmCancel=${canConfirmCancel}`);
+  
+  if (canConfirmCancel) {
+    // Palabras clave para confirmar - ahora usamos SI/NO en lugar de 1/2 para evitar confusión con calificación 1-5
+    // Regex flexible: SI o SÍ al inicio, permitiendo espacios y caracteres de puntuación después
+    const isConfirm = /^(si|sí)[\s\.\,\!\?]*$/i.test(text) || 
+                       /confirm|asistir[eé]|allá nos vemos|listo|^ok$|dale|perfecto/i.test(text);
+    
+    // Palabras clave para cancelar - ahora usamos SI/NO en lugar de 1/2
+    // Regex flexible: NO al inicio, permitiendo espacios y caracteres de puntuación después
+    const isCancel = /^(no)[\s\.\,\!\?]*$/i.test(text) || 
+                      /cancel|no puedo|no voy|no asistir[eé]|eliminar/i.test(text);
+    
+    console.log(`[WhatsApp] 🔍 isConfirm=${isConfirm}, isCancel=${isCancel}, texto="${text}"`);
+
+    if (isConfirm) {
+      console.log(`[WhatsApp] ✅ Confirmando cita ${matchedAppt.id} (mensaje: "${msg.body}")`);
       try {
         await matchedAppt.update({
-          rating,
-          status: 'done' // Asegurar que pase a terminada si aún no lo estaba
+          status: 'confirmed',
+          confirmed: true,
+          confirmedAt: new Date(),
+          messageFlowStatus: 'not_started' // Ya no esperamos más respuestas por ahora
         });
+        // ... rest of logic ...
 
-        // Respuesta de agradecimiento con delay de 2 minutos (comportamiento humano)
+        console.log(`[WhatsApp] ✅ Cita ${matchedAppt.id} confirmada exitosamente en BD`);
+
         const chat = await msg.getChat();
         await chat.sendStateTyping();
         setTimeout(async () => {
           try {
-            const randomTemplate = RATING_THANKS_TEMPLATES[Math.floor(Math.random() * RATING_THANKS_TEMPLATES.length)];
-            await msg.reply(randomTemplate(rating));
-          } catch (e) { console.error(`[WhatsApp] Error respuesta calificación:`, e.message); }
-        }, 2 * 60 * 1000); // 2 minutos
+            await msg.reply(getRandomConfirmationTemplate());
+            console.log(`[WhatsApp] ✅ Respuesta de confirmación enviada a cliente`);
+          } catch (e) { 
+            console.error(`[WhatsApp] Error enviando respuesta confirmación:`, e.message); 
+          }
+        }, 2000); // 2 segundos (más rápido para mejor UX)
+        return; // IMPORTANTE: Salir aquí para no caer en calificación
+      } catch (confirmErr) {
+        console.error(`[WhatsApp] ❌ Error actualizando cita en BD:`, confirmErr.message);
+        return;
+      }
+    }
+
+    if (isCancel) {
+      console.log(`[WhatsApp] ❌ Cancelando cita ${matchedAppt.id} (mensaje: "${msg.body}")`);
+      try {
+        await matchedAppt.update({ 
+          status: 'cancelled',
+          messageFlowStatus: 'completed' // Flujo terminado
+        });
+        console.log(`[WhatsApp] ✅ Cita ${matchedAppt.id} cancelada exitosamente en BD | messageFlowStatus: completed`);
         
-        // Programar mensaje de agradecimiento extendido para 1 hora después
+        const chat = await msg.getChat();
+        await chat.sendStateTyping();
         setTimeout(async () => {
           try {
-            const thankYouTemplates = [
-              `🙏 ¡Hola de nuevo *${matchedAppt.clientName}*! Queríamos agradecerte por tomarte el tiempo de calificar nuestro servicio. Tu opinión nos ayuda a mejorar cada día. ¡Te esperamos pronto! ✨`,
-              `💫 *${matchedAppt.clientName}*, gracias por tu calificación. Valoramos mucho tu feedback y trabajamos constantemente para ofrecerte la mejor experiencia. ¡Hasta la próxima! 🌟`,
-              `🎉 ¡Gracias *${matchedAppt.clientName}*! Tu calificación ha sido recibida. Nos motiva a seguir dando lo mejor. ¡Que tengas un excelente día! ☀️`
+            const templates = [
+              '✅ Cita cancelada exitosamente.',
+              '👍 Confirmamos la cancelación. ¡Hasta pronto!',
+              '📅 Cita cancelada. Escríbenos si necesitas reagendar.'
             ];
-            const randomThankYou = thankYouTemplates[Math.floor(Math.random() * thankYouTemplates.length)];
-            await queueMessage(matchedAppt.businessId, cleanIncomingPhone, randomThankYou);
-            console.log(`[WhatsApp] 🙏 Mensaje de agradecimiento enviado 1h post-calificación para cita ${matchedAppt.id}`);
-          } catch (thankErr) {
-            console.error(`[WhatsApp] Error enviando agradecimiento post-calificación:`, thankErr.message);
+            await msg.reply(templates[Math.floor(Math.random() * templates.length)]);
+          } catch (e) { 
+            console.error(`[WhatsApp] Error enviando respuesta cancelación:`, e.message); 
           }
-        }, 60 * 60 * 1000); // 1 hora
+        }, 2000);
+        return;
+      } catch (cancelErr) {
+        console.error(`[WhatsApp] ❌ Error cancelando cita en BD:`, cancelErr.message);
+        return;
+      }
+    }
+    
+    // Si llegó aquí, el mensaje no fue ni confirmación ni cancelación válida
+    // Continuar a otras lógicas (como calificación si aplica)
+  }
+
+  // 5. Lógica de Calificación (SOLO para citas terminadas o esperando calificación)
+  const canRate = (matchedAppt.messageFlowStatus === 'awaiting_rating') || 
+                  (matchedAppt.status === 'done' && !matchedAppt.rating);
+
+  if (canRate) {
+    // Regex estricto para calificación: el número debe estar solo o ser lo único relevante
+    const match = text.match(/^\s*([1-5])\s*$/);
+    
+    if (match) {
+      const rating = parseInt(match[1]);
+      console.log(`[WhatsApp] ⭐ Calificando cita ${matchedAppt.id} con ${rating} (mensaje: "${msg.body}")`);
+      try {
+        // Actualizar con rating y marcar ratingSent para evitar duplicados
+        await matchedAppt.update({
+          rating,
+          ratingSent: true,
+          status: 'done',
+          messageFlowStatus: 'completed'
+        });
+        console.log(`[WhatsApp] ✅ Calificación guardada en BD para cita ${matchedAppt.id}`);
+
+        // Programar mensaje de agradecimiento extendido usando scheduler (persistente)
+        // Solo para calificaciones 1-5 (no para cancelaciones que pueden usar otros números)
+        try {
+          const { scheduleMessage } = require('./schedulerService');
+          const thankYouTemplates = [
+            `🙏 ¡Hola de nuevo *${matchedAppt.clientName}*! Queríamos agradecerte por tomarte el tiempo de calificar nuestro servicio. Tu opinión nos ayuda a mejorar cada día. ¡Te esperamos pronto! ✨`,
+            `💫 *${matchedAppt.clientName}*, gracias por tu calificación. Valoramos mucho tu feedback y trabajamos constantemente para ofrecerte la mejor experiencia. ¡Hasta la próxima! 🌟`,
+            `🎉 ¡Gracias *${matchedAppt.clientName}*! Tu calificación ha sido recibida. Nos motiva a seguir dando lo mejor. ¡Que tengas un excelente día! ☀️`
+          ];
+          const randomThankYou = thankYouTemplates[Math.floor(Math.random() * thankYouTemplates.length)];
+
+          // Enviar mensaje de agradecimiento 1 minuto después (solo para calificaciones 1-5)
+          const thankYouTime = new Date(Date.now() + 60 * 1000); // 1 minuto después
+          await scheduleMessage({
+            businessId: matchedAppt.businessId,
+            appointmentId: matchedAppt.id,
+            phone: cleanIncomingPhone,
+            message: randomThankYou,
+            type: 'custom',
+            scheduledAt: thankYouTime
+          });
+
+          // Marcar en la cita que se programó el mensaje de agradecimiento
+          await matchedAppt.update({
+            thankYouMessageSent: true,
+            thankYouMessageSentAt: thankYouTime
+          });
+
+          console.log(`[WhatsApp] 💚 Mensaje de agradecimiento programado en BD (1min) para cita ${matchedAppt.id}`);
+        } catch (scheduleErr) {
+          console.error(`[WhatsApp] Error programando agradecimiento:`, scheduleErr.message);
+        }
 
         return;
       } catch (err) {
-        console.error(`[WhatsApp] Error guardando calificación:`, err.message);
+        console.error(`[WhatsApp] ❌ Error guardando calificación:`, err.message);
       }
+    } else {
+      // El mensaje contiene un número pero no es formato válido de calificación
+      console.log(`[WhatsApp] ℹ️ Mensaje contiene número pero no es calificación válida (formato: 1-5 solos). Msg: "${msg.body}"`);
     }
+  } else if (matchedAppt.rating) {
+    // Cita ya calificada (tiene valor en rating), ignorar mensaje silenciosamente
+    console.log(`[WhatsApp] ℹ️ Cita ${matchedAppt.id} ya calificada con ${matchedAppt.rating}⭐, ignorando mensaje`);
   }
 
   console.log(`[WhatsApp] ℹ️ Mensaje de ${matchedAppt.clientName} no activó ninguna acción (Estado: ${matchedAppt.status})`);
+}
+
+/**
+ * Procesa la respuesta de un cliente para una cita específica
+ * Usado cuando se encuentra la cita por código de referencia o por teléfono
+ */
+async function processAppointmentResponse(appt, text, msg, cleanIncomingPhone) {
+  console.log(`[WhatsApp] 🔄 Procesando respuesta para cita ${appt.id.slice(0, 8)} | Estado: ${appt.status} | Ref: ${appt.referenceCode || 'N/A'}`);
+
+  // 1. Lógica de Confirmación/Cancelación (para citas no terminadas)
+  if (['pending', 'confirmed', 'attention'].includes(appt.status)) {
+    // Extraer el primer dígito del mensaje
+    const firstDigitMatch = text.match(/^\s*([12])/);
+    const firstDigit = firstDigitMatch ? firstDigitMatch[1] : null;
+
+    // Palabras clave para confirmar
+    const isConfirm = firstDigit === '1' ||
+                       text.includes('si') ||
+                       text.includes('sí') ||
+                       text.includes('confirm') ||
+                       text.includes('ok') ||
+                       text.includes('vale') ||
+                       text.includes('bueno') ||
+                       text.includes('dale') ||
+                       text.includes('perfecto') ||
+                       text.includes('confirmo');
+
+    // Palabras clave para cancelar
+    const isCancel = firstDigit === '2' ||
+                      text.includes('no') ||
+                      text.includes('cancel') ||
+                      text.includes('cancelar') ||
+                      text.includes('eliminar') ||
+                      text.includes('borrar') ||
+                      text.includes('quitar') ||
+                      text.includes('no puedo') ||
+                      text.includes('no voy') ||
+                      text.includes('no asistiré');
+
+    if (isConfirm) {
+      console.log(`[WhatsApp] ✅ Confirmando cita ${appt.id} (mensaje: "${msg.body}")`);
+      try {
+        await appt.update({
+          status: 'confirmed',
+          confirmed: true,
+          confirmedAt: new Date(),
+          messageFlowStatus: 'not_started' // Resetear flujo, esperará calificación después del servicio
+        });
+        console.log(`[WhatsApp] ✅ Cita ${appt.id} confirmada exitosamente en BD | messageFlowStatus: not_started`);
+
+        const chat = await msg.getChat();
+        await chat.sendStateTyping();
+        setTimeout(async () => {
+          try {
+            await msg.reply(getRandomConfirmationTemplate());
+            console.log(`[WhatsApp] ✅ Respuesta de confirmación enviada a cliente`);
+          } catch (e) {
+            console.error(`[WhatsApp] Error enviando respuesta confirmación:`, e.message);
+          }
+        }, 2000);
+        return;
+      } catch (confirmErr) {
+        console.error(`[WhatsApp] ❌ Error actualizando cita en BD:`, confirmErr.message);
+        return;
+      }
+    }
+
+    if (isCancel) {
+      console.log(`[WhatsApp] ❌ Cancelando cita ${appt.id} (mensaje: "${msg.body}")`);
+      try {
+        await appt.update({ 
+          status: 'cancelled',
+          messageFlowStatus: 'completed' // Flujo terminado
+        });
+        console.log(`[WhatsApp] ✅ Cita ${appt.id} cancelada exitosamente en BD | messageFlowStatus: completed`);
+
+        const chat = await msg.getChat();
+        await chat.sendStateTyping();
+        setTimeout(async () => {
+          try {
+            const templates = [
+              '✅ Cita cancelada exitosamente.',
+              '👍 Confirmamos la cancelación. ¡Hasta pronto!',
+              '📅 Cita cancelada. Escríbenos si necesitas reagendar.'
+            ];
+            await msg.reply(templates[Math.floor(Math.random() * templates.length)]);
+          } catch (e) {
+            console.error(`[WhatsApp] Error enviando respuesta cancelación:`, e.message);
+          }
+        }, 2000);
+        return;
+      } catch (cancelErr) {
+        console.error(`[WhatsApp] ❌ Error cancelando cita en BD:`, cancelErr.message);
+        return;
+      }
+    }
+
+    // Si llegó aquí con cita activa, el mensaje no fue confirmación/cancelación válida
+    console.log(`[WhatsApp] ℹ️ Mensaje no reconocido como confirmación/cancelación para cita activa`);
+    return;
+  }
+
+  // 2. Lógica de Calificación (SOLO para citas terminadas o esperando calificación)
+  // Condición consistente con handleClientResponse: awaiting_rating O done sin rating
+  const canRate = (appt.messageFlowStatus === 'awaiting_rating') || 
+                  (['done', 'attention'].includes(appt.status) && !appt.rating);
+  
+  if (canRate) {
+
+    // Regex: solo números 1-5 solos
+    const match = text.match(/^\s*([1-5])\s*$/);
+
+    if (match) {
+      const rating = parseInt(match[1]);
+      console.log(`[WhatsApp] ⭐ Calificando cita ${appt.id} con ${rating} (mensaje: "${msg.body}")`);
+      try {
+        await appt.update({
+          rating,
+          ratingSent: true,
+          status: 'done',
+          messageFlowStatus: 'completed' // Flujo terminado, ya recibió calificación
+        });
+        console.log(`[WhatsApp] ✅ Calificación guardada en BD para cita ${appt.id} | messageFlowStatus: completed`);
+
+        // Programar mensaje de agradecimiento extendido
+        try {
+          const { scheduleMessage } = require('./schedulerService');
+          const thankYouTemplates = [
+            `🙏 ¡Hola de nuevo *${appt.clientName}*! Queríamos agradecerte por tomarte el tiempo de calificar nuestro servicio. Tu opinión nos ayuda a mejorar cada día. ¡Te esperamos pronto! ✨`,
+            `💫 *${appt.clientName}*, gracias por tu calificación. Valoramos mucho tu feedback y trabajamos constantemente para ofrecerte la mejor experiencia. ¡Hasta la próxima! 🌟`,
+            `🎉 ¡Gracias *${appt.clientName}*! Tu calificación ha sido recibida. Nos motiva a seguir dando lo mejor. ¡Que tengas un excelente día! ☀️`
+          ];
+          const randomThankYou = thankYouTemplates[Math.floor(Math.random() * thankYouTemplates.length)];
+
+          const thankYouTime = new Date(Date.now() + 60 * 1000);
+          await scheduleMessage({
+            businessId: appt.businessId,
+            appointmentId: appt.id,
+            phone: cleanIncomingPhone,
+            message: randomThankYou,
+            type: 'custom',
+            scheduledAt: thankYouTime
+          });
+
+          await appt.update({
+            thankYouMessageSent: true,
+            thankYouMessageSentAt: thankYouTime
+          });
+
+          console.log(`[WhatsApp] 💚 Mensaje de agradecimiento programado en BD (1min) para cita ${appt.id}`);
+        } catch (scheduleErr) {
+          console.error(`[WhatsApp] Error programando agradecimiento:`, scheduleErr.message);
+        }
+
+        return;
+      } catch (err) {
+        console.error(`[WhatsApp] ❌ Error guardando calificación:`, err.message);
+      }
+    } else {
+      console.log(`[WhatsApp] ℹ️ Mensaje no es calificación válida (formato: 1-5 solos)`);
+    }
+  } else if (appt.rating) {
+    console.log(`[WhatsApp] ℹ️ Cita ${appt.id} ya calificada con ${appt.rating}⭐`);
+  }
+
+  console.log(`[WhatsApp] ℹ️ No se activó ninguna acción para cita ${appt.id.slice(0, 8)}`);
 }
 
 /**
@@ -696,7 +1050,7 @@ async function processQueue() {
     return;
   }
 
-  // Verificar horario laboral - no enviar fuera de horario (7am - 7pm Colombia)
+  // Verificar horario laboral - no enviar fuera de horario (7:00 AM - 8:00 PM Colombia)
   if (!isBusinessHours()) {
     const now = new Date();
     // Convertir UTC a hora Colombia para calcular cuándo es el próximo 7 AM Colombia
@@ -704,19 +1058,19 @@ async function processQueue() {
     const colombiaTime = new Date(now.getTime() + colombiaOffset);
     const colombiaHour = colombiaTime.getUTCHours();
 
-    // Calcular cuántos ms faltan para las 7 AM Colombia del día siguiente
-    // next7AMColombia será 7 AM Colombia en tiempo UTC
+    // Calcular cuántos ms faltan para las 7:00 AM Colombia del día siguiente
+    // 7:00 AM Colombia = 12:00 UTC
     const next7AMColombia = new Date(now);
     next7AMColombia.setUTCHours(12, 0, 0, 0); // 12:00 UTC = 7:00 AM Colombia
 
-    // Si ya pasó las 7pm Colombia (12am UTC), ir al día siguiente
-    if (colombiaHour >= 19 || colombiaHour < 7) {
+    // Si ya pasó las 8pm Colombia (1am UTC) o es antes de las 7am, ir al día siguiente
+    if (colombiaHour >= 20 || colombiaHour < 7) {
       next7AMColombia.setUTCDate(next7AMColombia.getUTCDate() + 1);
     }
 
     const delayToMorning = next7AMColombia - now;
     const queueSize = messageQueue.length;
-    console.log(`[WhatsApp] ⏰ Fuera de horario laboral Colombia (7am-7pm). ${queueSize} mensajes en cola. Reanudando a las 7am Colombia (${Math.round(delayToMorning / 60000)} min)`);
+    console.log(`[WhatsApp] ⏰ Fuera de horario laboral Colombia (7am-8pm). ${queueSize} mensajes en cola. Reanudando a las 7am Colombia (${Math.round(delayToMorning / 60000)} min)`);
 
     // Los mensajes quedan guardados en la cola para el siguiente día
     setTimeout(processQueue, delayToMorning);
@@ -791,10 +1145,31 @@ async function processQueue() {
       }
     }
   } else {
-    console.error(`[WhatsApp] ❌ Cliente no listo para ${businessId}. Reencolando...`);
-    messageQueue.unshift({ businessId, to, text });
-    // Si no está listo, esperamos un poco más para que inicialice
-    setTimeout(processQueue, 15000);
+    // Cliente no está listo (modo bajo demanda - scheduler lo maneja)
+    // En lugar de reencolar en memoria, usar scheduler para persistir en BD
+    console.log(`[WhatsApp] ⏸️ Cliente ${businessId} no activo, enviando a scheduler para procesar en próximo ciclo...`);
+    
+    try {
+      const { scheduleMessage } = require('./schedulerService');
+      await scheduleMessage({
+        businessId,
+        phone: to,
+        message: text,
+        type: 'queue_fallback',
+        scheduledAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutos (próximo ciclo del scheduler)
+      });
+      console.log(`[WhatsApp] 📅 Mensaje enviado a scheduler para procesar en próximo ciclo`);
+    } catch (schedulerErr) {
+      console.error(`[WhatsApp] ❌ Error enviando a scheduler:`, schedulerErr.message);
+      // Solo como último recurso, reencolar con delay largo
+      messageQueue.unshift({ businessId, to, text });
+      setTimeout(processQueue, 5 * 60 * 1000); // 5 minutos
+      return;
+    }
+    
+    // Continuar con el siguiente mensaje en cola inmediatamente
+    // (el scheduler manejará este mensaje más tarde)
+    setTimeout(processQueue, 1000);
     return;
   }
 
@@ -872,4 +1247,121 @@ function getInstance(businessId) {
   return instances.get(businessId);
 }
 
-module.exports = { initWhatsAppManager, createInstance, stopInstance, queueMessage, currentQRs, forceReconnect, instances, getInstance, getRandomConfirmationTemplate, getRandomReminderTemplate, getRandomRatingTemplate, getRandomDelay, isBusinessHours };
+/**
+ * Envía un mensaje directamente sin pasar por la cola.
+ * Usado por el scheduler para enviar mensajes inmediatamente cuando tiene el cliente conectado.
+ */
+async function sendMessageDirect(businessId, to, text, retryCount = 0) {
+  const resolvedId = await Business.resolveWhatsAppBusinessId(businessId);
+  const client = instances.get(resolvedId);
+  
+  if (!client) {
+    throw new Error('Cliente no está inicializado');
+  }
+  
+  // Esperar a que el cliente esté listo (máximo 30 segundos)
+  let attempts = 0;
+  const maxAttempts = 30;
+  
+  while (!client.info || !client.info.wid) {
+    if (attempts >= maxAttempts) {
+      throw new Error('Timeout esperando cliente listo');
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    attempts++;
+  }
+  
+  // Formatear número - asegurar formato correcto para Colombia
+  let cleanTo = to.replace(/\D/g, '');
+  
+  // Si el número no tiene prefijo de país, agregar 57 (Colombia)
+  if (cleanTo.length === 10 && cleanTo.startsWith('3')) {
+    cleanTo = '57' + cleanTo;
+  }
+  
+  const chatId = `${cleanTo}@c.us`;
+  
+  try {
+    console.log(`[WhatsApp] 📤 Intentando enviar a chatId: ${chatId}`);
+    
+    // Intentar obtener el chat (verifica que el número existe en WhatsApp)
+    let chat;
+    let chatExists = false;
+    try {
+      chat = await client.getChatById(chatId);
+      chatExists = true;
+      console.log(`[WhatsApp] ✅ Chat encontrado para ${cleanTo}`);
+    } catch (chatError) {
+      console.log(`[WhatsApp] ⚠️ Chat no encontrado para ${cleanTo}, intentando enviar directamente...`);
+    }
+    
+    // Verificar si el número está registrado en WhatsApp
+    try {
+      const isRegistered = await client.isRegisteredUser(chatId);
+      console.log(`[WhatsApp] 📋 Número ${cleanTo} registrado en WhatsApp: ${isRegistered}`);
+      if (!isRegistered) {
+        throw new Error(`El número ${cleanTo} no está registrado en WhatsApp`);
+      }
+    } catch (regError) {
+      console.log(`[WhatsApp] ⚠️ Error verificando registro: ${regError.message}`);
+      // Continuar de todos modos, a veces isRegisteredUser falla
+    }
+    
+    // Simular "escribiendo..." solo si tenemos el chat
+    if (chat) {
+      try {
+        await chat.sendStateTyping();
+        await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 2000));
+        await chat.clearState();
+      } catch (typingError) {
+        console.log(`[WhatsApp] ⚠️ Error en typing: ${typingError.message}`);
+      }
+    }
+    
+    // Enviar mensaje
+    console.log(`[WhatsApp] 📨 Enviando mensaje a ${chatId}...`);
+    const result = await client.sendMessage(chatId, text);
+    console.log(`[WhatsApp] ✅ Mensaje enviado directamente a ${cleanTo} (Negocio: ${businessId})`);
+    console.log(`[WhatsApp] 📄 Resultado:`, result ? `ID: ${result.id?._serialized || 'N/A'}` : 'Sin ID');
+    
+    // Verificar que el mensaje realmente se envió esperando y chequeando el chat
+    if (result && result.id) {
+      console.log(`[WhatsApp] ⏳ Esperando confirmación de sincronización (3s)...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      try {
+        // Intentar obtener el mensaje para verificar que existe
+        const chat = await client.getChatById(chatId);
+        const messages = await chat.fetchMessages({ limit: 5 });
+        const foundMsg = messages.find(m => m.id._serialized === result.id._serialized);
+        
+        if (foundMsg) {
+          console.log(`[WhatsApp] ✅ Mensaje verificado en chat: ${foundMsg.id._serialized}`);
+          console.log(`[WhatsApp] 📊 Estado del mensaje: ack=${foundMsg.ack} (0=pending, 1=server, 2=device, 3=read, 4=played)`);
+        } else {
+          console.warn(`[WhatsApp] ⚠️ Mensaje no encontrado en el chat después de enviar`);
+        }
+      } catch (verifyError) {
+        console.log(`[WhatsApp] ⚠️ No se pudo verificar el mensaje: ${verifyError.message}`);
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    // Si es error de "No LID for user" y no hemos reintentado, esperar y reintentar
+    if (error.message && error.message.includes('No LID for user') && retryCount < 2) {
+      console.log(`[WhatsApp] ⚠️ Error 'No LID for user', esperando 5s y reintentando (${retryCount + 1}/2)...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return sendMessageDirect(businessId, to, text, retryCount + 1);
+    }
+    
+    // Si el error indica que el número no está en WhatsApp
+    if (error.message && (error.message.includes('No LID for user') || error.message.includes('not registered'))) {
+      throw new Error(`El número ${cleanTo} no tiene WhatsApp o no está registrado`);
+    }
+    
+    throw error;
+  }
+}
+
+module.exports = { initWhatsAppManager, createInstance, stopInstance, queueMessage, sendMessageDirect, currentQRs, forceReconnect, instances, getInstance, getRandomConfirmationTemplate, getRandomReminderTemplate, getRandomRatingTemplate, getRandomDelay, isBusinessHours, hasValidSession };

@@ -198,6 +198,7 @@ router.use(auth);
 router.get('/', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 router.get('/consolidated', role('admin', 'admin_suc'), ctrl.getConsolidated);
 router.get('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientsByBusiness);
+router.put('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClient);
 router.get('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientTags);
 router.post('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.createClientTag);
 router.put('/client-tags/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClientTag);
@@ -245,6 +246,113 @@ router.get('/my', role('employee'), ctrl.getMyAppointments);
  *         description: Estado actualizado
  */
 router.patch('/:id/status', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.updateStatus);
+
+/**
+ * @swagger
+ * /appointments/{id}:
+ *   put:
+ *     summary: Editar una cita existente (fecha, hora, servicio, empleado)
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               clientName: { type: string }
+ *               clientPhone: { type: string }
+ *               clientEmail: { type: string }
+ *               serviceId: { type: string, format: uuid }
+ *               employeeId: { type: string, format: uuid }
+ *               startTime: { type: string, format: date-time }
+ *               notes: { type: string }
+ *     responses:
+ *       200:
+ *         description: Cita actualizada
+ *       404:
+ *         description: Cita no encontrada
+ *       409:
+ *         description: Conflicto de horario
+ */
+router.put('/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.update);
+
+/**
+ * @swagger
+ * /appointments/{id}/extend-time:
+ *   patch:
+ *     summary: Extender el tiempo de una cita en curso
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               additionalMinutes: { type: number, example: 15, description: 'Minutos adicionales a agregar' }
+ *     responses:
+ *       200:
+ *         description: Tiempo extendido exitosamente
+ *       400:
+ *         description: La cita no está en atención o minutos inválidos
+ *       409:
+ *         description: Hay conflicto con otra cita
+ */
+router.patch('/:id/extend-time', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.extendTime);
+
+/**
+ * @swagger
+ * /appointments/{id}/notes:
+ *   get:
+ *     summary: Obtener notas de una cita
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Lista de notas
+ *   post:
+ *     summary: Agregar una nota a la cita
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               content: { type: string, description: 'Contenido de la nota' }
+ *     responses:
+ *       201:
+ *         description: Nota creada
+ */
+router.get('/:id/notes', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getNotes);
+router.post('/:id/notes', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.addNote);
+router.delete('/:id/notes/:noteId', role('admin', 'admin_suc', 'superadmin'), ctrl.deleteNote);
 
 /**
  * @swagger
@@ -376,5 +484,81 @@ router.post('/:id/send-receipt', role('admin', 'admin_suc', 'superadmin'), ctrl.
  *         description: Lista de horarios disponibles
  */
 router.get('/availability', role('admin', 'superadmin'), ctrl.getAvailability);
+
+/**
+ * @swagger
+ * /appointments/{id}/technician-status:
+ *   patch:
+ *     summary: Actualizar estado del técnico en campo (En Camino, Llegué, En Atención)
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status: { type: string, enum: [on_the_way, arrived, in_progress], description: 'Estado del técnico' }
+ *     responses:
+ *       200:
+ *         description: Estado actualizado
+ *       400:
+ *         description: Estado inválido o cita no encontrada
+ */
+router.patch('/:id/technician-status', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.updateTechnicianStatus);
+
+/**
+ * @swagger
+ * /appointments/{id}/technical-report:
+ *   post:
+ *     summary: Guardar reporte técnico con insumos usados
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               diagnosis: { type: string, description: 'Diagnóstico del problema' }
+ *               solution: { type: string, description: 'Solución aplicada' }
+ *               recommendations: { type: string, description: 'Recomendaciones al cliente' }
+ *               partsUsed: { type: array, items: { type: object }, description: 'Insumos usados [{itemId, name, quantity, unit}]' }
+ *     responses:
+ *       200:
+ *         description: Reporte guardado y stock actualizado
+ *       400:
+ *         description: Datos inválidos
+ *   get:
+ *     summary: Obtener reporte técnico de la cita
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Reporte técnico
+ *       404:
+ *         description: No hay reporte para esta cita
+ */
+router.post('/:id/technical-report', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.saveTechnicalReport);
+router.get('/:id/technical-report', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getTechnicalReport);
 
 module.exports = router;

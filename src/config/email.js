@@ -624,11 +624,19 @@ const sendEmail = async (to, templateName, data, attachments = []) => {
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error(`[Email] ❌ Error enviando a ${to}:`, err.message);
+    console.error(`[Email] Código de error:`, err.code);
+    
     if (err.code === 'ETIMEDOUT') {
       console.error('[Email] 💡 Sugerencia: El puerto SMTP (465) podría estar bloqueado en el VPS. Prueba cambiando a EMAIL_PORT=587 en el .env');
     }
     if (err.code === 'EAUTH') {
       console.error('[Email] 💡 Sugerencia: Las credenciales de email son incorrectas o están bloqueadas.');
+    }
+    if (err.code === 'EMESSAGE' || err.message?.includes('size') || err.message?.includes('attachment')) {
+      console.error('[Email] 💡 Sugerencia: El attachment puede ser demasiado grande para el servidor SMTP. Intenta sin adjuntos.');
+    }
+    if (err.code === 'EENVELOPE') {
+      console.error('[Email] 💡 Sugerencia: Error en el formato del email. Revisa la plantilla y los datos.');
     }
     throw err;
   }

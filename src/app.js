@@ -38,13 +38,22 @@ app.use('/api/businesses',     require('./routes/business.routes'));
 app.use('/api/business-types', require('./routes/businessType.routes'));
 
 const checkBusinessStatus = require('./middleware/checkBusinessStatus');
-app.use('/api/services',      checkBusinessStatus, require('./routes/service.routes'));
-app.use('/api/employees',     checkBusinessStatus, require('./routes/employee.routes'));
-app.use('/api/appointments',  checkBusinessStatus, require('./routes/appointment.routes'));
-app.use('/api/schedules',     checkBusinessStatus, require('./routes/schedule.routes'));
-app.use('/api/upload',        require('./routes/upload.routes'));
+app.use('/api/services',       checkBusinessStatus, require('./routes/service.routes'));
+app.use('/api/service-groups', checkBusinessStatus, require('./routes/serviceGroup.routes'));
+app.use('/api/employees',      checkBusinessStatus, require('./routes/employee.routes'));
+app.use('/api/appointments',   checkBusinessStatus, require('./routes/appointment.routes'));
+app.use('/api/schedules',      checkBusinessStatus, require('./routes/schedule.routes'));
+app.use('/api/upload',         require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));
+
+// Módulos opcionales configurables
+app.use('/api/expenses',   checkBusinessStatus, require('./routes/expense.routes'));
+app.use('/api/inventory',  checkBusinessStatus, require('./routes/inventory.routes'));
+app.use('/api/deposits',   checkBusinessStatus, require('./routes/deposit.routes'));
+
+// Informe financiero integrado
+app.use('/api/financial-report', checkBusinessStatus, require('./routes/financialReport.routes'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '3.0.0', timestamp: new Date() }));
 
