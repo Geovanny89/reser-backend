@@ -368,9 +368,13 @@ exports.impersonateUser = async (req, res) => {
 
     if (user.role === 'admin' && user.Businesses && user.Businesses.length > 0) {
       business = user.Businesses[0];
-    } else if ((user.role === 'employee' || user.role === 'admin_suc') && user.Employee) {
-      business = user.Employee.Business;
-      isManager = user.Employee.isManager;
+    } else if ((user.role === 'employee' || user.role === 'admin_suc')) {
+      // Employee puede venir como array (Employees) o singular (Employee)
+      const employee = Array.isArray(user.Employees) ? user.Employees[0] : (user.Employee || user.Employees);
+      if (employee) {
+        business = employee.Business;
+        isManager = employee.isManager;
+      }
     }
 
     // Calcular días restantes de suscripción
