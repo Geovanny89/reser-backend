@@ -28,7 +28,7 @@ async function runMigration() {
     try {
       await sequelize.query(`
         ALTER TABLE "Businesses" 
-        ADD COLUMN IF NOT EXISTS "includedUsers" INTEGER DEFAULT 2
+        ADD COLUMN IF NOT EXISTS "includedUsers" INTEGER DEFAULT 3
       `);
       console.log('✅ Campo includedUsers agregado');
     } catch (e) {
@@ -73,7 +73,7 @@ async function runMigration() {
     await sequelize.query(`
       UPDATE "Businesses" 
       SET "subscriptionPlan" = 'basic',
-          "includedUsers" = 2,
+          "includedUsers" = 3,
           "additionalUsers" = 0,
           "additionalUserPrice" = 20000,
           "monthlyTotal" = 70000

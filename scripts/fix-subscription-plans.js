@@ -1,7 +1,7 @@
 /**
  * Script para corregir los planes de suscripción de las empresas existentes
  * Actualiza los valores de includedUsers según el plan:
- * - basic: 2 empleados
+ * - basic: 3 empleados
  * - pro: 5 empleados  
  * - premium: 10 empleados
  */
@@ -11,7 +11,7 @@ const { sequelize } = require('../src/models');
 const { Business } = require('../src/models');
 
 const SUBSCRIPTION_PLANS = {
-  basic: { name: 'Básico', price: 70000, includedUsers: 2 },
+  basic: { name: 'Básico', price: 70000, includedUsers: 3 },
   pro: { name: 'Pro', price: 90000, includedUsers: 5 },
   premium: { name: 'Premium', price: 130000, includedUsers: 10 }
 };

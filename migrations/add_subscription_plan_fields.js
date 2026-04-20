@@ -1,6 +1,6 @@
 /**
  * Migration: Agregar campos de plan de suscripción por usuarios a Business
- * Planes: basic (2 users), pro (3 users), premium (5 users)
+ * Planes: basic (3 users), pro (5 users), premium (10 users)
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
@@ -14,7 +14,7 @@ module.exports = {
     // Usuarios incluidos según el plan
     await queryInterface.addColumn('Businesses', 'includedUsers', {
       type: Sequelize.INTEGER,
-      defaultValue: 2,
+      defaultValue: 3,
       allowNull: false
     });
     

@@ -73,11 +73,11 @@ module.exports = (sequelize) => {
     subscriptionPlan: { 
       type: DataTypes.ENUM('basic', 'pro', 'premium'), 
       defaultValue: 'basic',
-      comment: 'Plan de suscripción: basic (2 users), pro (5 users), premium (10 users)' 
+      comment: 'Plan de suscripción: basic (3 users), pro (5 users), premium (10 users)' 
     },
     includedUsers: { 
       type: DataTypes.INTEGER, 
-      defaultValue: 2,
+      defaultValue: 3,
       comment: 'Usuarios incluidos según el plan' 
     },
     additionalUsers: { 

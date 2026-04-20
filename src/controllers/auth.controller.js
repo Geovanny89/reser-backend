@@ -30,7 +30,7 @@ exports.registerVendor = async (req, res) => {
     
     // Configuración de planes de suscripción
     const SUBSCRIPTION_PLANS = {
-      basic: { name: 'Básico', price: 70000, includedUsers: 2 },
+      basic: { name: 'Básico', price: 70000, includedUsers: 3 },
       pro: { name: 'Pro', price: 90000, includedUsers: 5 },
       premium: { name: 'Premium', price: 130000, includedUsers: 10 }
     };
