@@ -586,6 +586,146 @@ const templates = {
     `, 'KDice POS'),
   }),
 
+  // Cliente califica al técnico después del servicio
+  serviceCompletedRating: ({ 
+    clientName, 
+    businessName, 
+    serviceName, 
+    employeeName, 
+    ratingBaseUrl,
+    appointmentId 
+  }) => ({
+    subject: `⭐ ¿Cómo fue tu experiencia en ${businessName}?`,
+    html: baseTemplate(`
+      <h2>¡Tu servicio ha finalizado!</h2>
+      <p>Hola <strong>${clientName}</strong>, el técnico <strong>${employeeName}</strong> ha marcado tu servicio como completado.</p>
+      
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Negocio</span>
+          <span class="info-value">${businessName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Servicio</span>
+          <span class="info-value">${serviceName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Técnico</span>
+          <span class="info-value">${employeeName}</span>
+        </div>
+      </div>
+
+      <p style="text-align:center; font-size:16px; margin: 24px 0 16px;">
+        <strong>¿Cómo calificarías la atención recibida?</strong>
+      </p>
+
+      <div style="text-align:center; margin: 24px 0;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
+          <tr>
+            <td style="padding: 6px;">
+              <a href="${ratingBaseUrl}?appointmentId=${appointmentId}&rating=1" 
+                 style="display:inline-block;background:#ef4444;color:#fff;text-decoration:none;
+                 padding:14px 18px;border-radius:8px;font-size:20px;font-weight:bold;">
+                1⭐
+              </a>
+            </td>
+            <td style="padding: 6px;">
+              <a href="${ratingBaseUrl}?appointmentId=${appointmentId}&rating=2" 
+                 style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;
+                 padding:14px 18px;border-radius:8px;font-size:20px;font-weight:bold;">
+                2⭐
+              </a>
+            </td>
+            <td style="padding: 6px;">
+              <a href="${ratingBaseUrl}?appointmentId=${appointmentId}&rating=3" 
+                 style="display:inline-block;background:#eab308;color:#fff;text-decoration:none;
+                 padding:14px 18px;border-radius:8px;font-size:20px;font-weight:bold;">
+                3⭐
+              </a>
+            </td>
+            <td style="padding: 6px;">
+              <a href="${ratingBaseUrl}?appointmentId=${appointmentId}&rating=4" 
+                 style="display:inline-block;background:#22c55e;color:#fff;text-decoration:none;
+                 padding:14px 18px;border-radius:8px;font-size:20px;font-weight:bold;">
+                4⭐
+              </a>
+            </td>
+            <td style="padding: 6px;">
+              <a href="${ratingBaseUrl}?appointmentId=${appointmentId}&rating=5" 
+                 style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;
+                 padding:14px 18px;border-radius:8px;font-size:20px;font-weight:bold;">
+                5⭐
+              </a>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="text-align:center; color:#64748b; font-size:13px;">
+        Tu opinión nos ayuda a mejorar nuestro servicio y reconocer el trabajo de nuestros técnicos.
+      </p>
+
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;padding:16px;border-radius:8px;margin-top:20px;">
+        <p style="margin:0;font-size:13px;color:#64748b;text-align:center;">
+          Si los botones no funcionan, puedes ingresar directamente aquí:
+        </p>
+        <p style="margin-top:8px;text-align:center;word-break:break-all;font-size:12px;color:#4f46e5;">
+          ${ratingBaseUrl}?appointmentId=${appointmentId}
+        </p>
+      </div>
+    `, businessName),
+  }),
+
+  // Notificación al empleado cuando recibe una calificación
+  employeeRated: ({ 
+    employeeName, 
+    clientName, 
+    businessName, 
+    serviceName, 
+    rating, 
+    comment 
+  }) => {
+    const stars = '⭐'.repeat(rating);
+    return {
+      subject: `🌟 ¡Nueva calificación recibida! ${stars}`,
+      html: baseTemplate(`
+        <h2>¡Felicidades ${employeeName}!</h2>
+        <p>Has recibido una nueva calificación de un cliente.</p>
+        
+        <div style="text-align:center; padding: 24px 0; background: #f0fdf4; border-radius: 12px; margin: 20px 0;">
+          <div style="font-size: 48px; margin-bottom: 8px;">${stars}</div>
+          <div style="font-size: 24px; font-weight: bold; color: #166534;">${rating} de 5 estrellas</div>
+        </div>
+
+        <div class="info-box">
+          <div class="info-row">
+            <span class="info-label">Cliente</span>
+            <span class="info-value">${clientName}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Servicio</span>
+            <span class="info-value">${serviceName || 'No especificado'}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Negocio</span>
+            <span class="info-value">${businessName}</span>
+          </div>
+        </div>
+
+        ${comment ? `
+        <div style="background:#fefce8;border:1px solid #fde047;padding:16px;border-radius:8px;margin:16px 0;">
+          <p style="margin:0 0 8px 0;font-size:13px;color:#854d0e;font-weight:600;">💬 Comentario del cliente:</p>
+          <p style="margin:0;font-size:14px;color:#a16207;font-style:italic;">"${comment}"</p>
+        </div>
+        ` : ''}
+
+        <p style="text-align:center; color:#64748b; font-size:14px; margin-top: 24px;">
+          Sigue así, tu trabajo es reconocido por los clientes. ¡Excelente servicio! 🎉
+        </p>
+      `, businessName),
+    };
+  },
+
 };
 
 // ============================================================

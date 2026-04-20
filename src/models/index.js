@@ -25,6 +25,8 @@ const AppointmentEmployee = require('./AppointmentEmployee')(sequelize);
 const IncomingMessage = require('./IncomingMessage')(sequelize);
 const ServiceGroup = require('./ServiceGroup')(sequelize);
 const SpecialSchedule = require('./SpecialSchedule')(sequelize);
+const ActivityLog = require('./ActivityLog')(sequelize);
+const EmployeeVacation = require('./EmployeeVacation')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -91,6 +93,12 @@ SpecialSchedule.belongsTo(Business, { foreignKey: 'businessId' });
 Employee.hasMany(SpecialSchedule, { foreignKey: 'employeeId', as: 'SpecialSchedules' });
 Business.hasMany(SpecialSchedule, { foreignKey: 'businessId', as: 'SpecialSchedules' });
 
+// EmployeeVacation — Employee & Business
+EmployeeVacation.belongsTo(Employee, { foreignKey: 'employeeId' });
+EmployeeVacation.belongsTo(Business, { foreignKey: 'businessId' });
+Employee.hasMany(EmployeeVacation, { foreignKey: 'employeeId', as: 'Vacations' });
+Business.hasMany(EmployeeVacation, { foreignKey: 'businessId', as: 'EmployeeVacations' });
+
 // ClientTag — Business
 ClientTag.belongsTo(Business, { foreignKey: 'businessId' });
 Business.hasMany(ClientTag, { foreignKey: 'businessId', as: 'ClientTags' });
@@ -135,4 +143,10 @@ AppointmentEmployee.belongsTo(Employee, { foreignKey: 'employeeId' });
 Appointment.hasMany(AppointmentEmployee, { foreignKey: 'appointmentId', as: 'AdditionalEmployees' });
 Employee.hasMany(AppointmentEmployee, { foreignKey: 'employeeId', as: 'AppointmentsAsExtra' });
 
-module.exports = { sequelize, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup };
+// ActivityLog — User
+ActivityLog.belongsTo(User, { foreignKey: 'userId', as: 'User' });
+User.hasMany(ActivityLog, { foreignKey: 'userId', as: 'ActivityLogs' });
+
+const { Op } = require('sequelize');
+
+module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation };

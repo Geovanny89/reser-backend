@@ -380,4 +380,21 @@ router.get('/my/reviews', role('superadmin', 'admin', 'admin_suc'), ctrl.getRevi
 router.patch('/reviews/:reviewId/approve', role('superadmin', 'admin', 'admin_suc'), ctrl.toggleReviewApproval);
 router.delete('/reviews/:reviewId', role('superadmin', 'admin', 'admin_suc'), ctrl.deleteReview);
 
+// ========== GESTIÓN DE PLANES DE SUSCRIPCIÓN ==========
+
+// Obtener información del plan actual
+router.get('/:id/subscription-info', role('superadmin', 'admin', 'admin_suc'), ctrl.getSubscriptionInfo);
+router.get('/my/subscription-info', role('superadmin', 'admin', 'admin_suc'), ctrl.getSubscriptionInfo);
+
+// Actualizar plan de suscripción
+router.put('/:id/subscription-plan', role('superadmin', 'admin'), ctrl.updateSubscriptionPlan);
+router.put('/my/subscription-plan', role('superadmin', 'admin'), ctrl.updateSubscriptionPlan);
+
+// Agregar usuarios adicionales
+router.post('/:id/additional-users', role('superadmin', 'admin'), ctrl.addAdditionalUsers);
+router.post('/my/additional-users', role('superadmin', 'admin'), ctrl.addAdditionalUsers);
+
+// Obtener planes disponibles (público)
+router.get('/plans/available', ctrl.getAvailablePlans);
+
 module.exports = router;

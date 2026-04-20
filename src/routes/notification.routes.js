@@ -1,7 +1,9 @@
 const router = require('express').Router();
 const auth = require('../middleware/auth');
+const role = require('../middleware/role');
 const whatsappService = require('../services/whatsappService');
 const models = require('../models');
+const notificationController = require('../controllers/notification.controller');
 
 // Ruta para obtener o generar QR de WhatsApp
 router.get('/whatsapp/qr', auth, async (req, res) => {
@@ -99,12 +101,17 @@ router.get('/whatsapp/status', auth, async (req, res) => {
       // Verificar si hay sesión guardada en disco que no está reflejada en BD
       if (whatsappService.hasValidSession && whatsappService.hasValidSession(businessId)) {
         actualStatus = 'session_saved';
-        // Crear/actualizar registro en BD
-        await models.WhatsAppSession.upsert({ 
-          businessId, 
-          status: 'session_saved',
-          lastActivity: new Date()
-        });
+        // Verificar que el negocio existe antes de crear/actualizar registro en BD
+        const businessExists = await models.Business.findByPk(businessId);
+        if (businessExists) {
+          await models.WhatsAppSession.upsert({
+            businessId,
+            status: 'session_saved',
+            lastActivity: new Date()
+          });
+        } else {
+          console.log(`⚠️ No se puede guardar sesión WhatsApp: negocio ${businessId} no existe`);
+        }
       }
     }
 
@@ -221,5 +228,8 @@ router.post('/whatsapp/logout', auth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Ruta para enviar resumen de pagos a empleado
+router.post('/payment-summary', auth, role('admin', 'admin_suc', 'superadmin'), notificationController.sendPaymentSummary);
 
 module.exports = router;

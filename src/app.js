@@ -44,9 +44,11 @@ app.use('/api/employees',      checkBusinessStatus, require('./routes/employee.r
 app.use('/api/appointments',   checkBusinessStatus, require('./routes/appointment.routes'));
 app.use('/api/schedules',      checkBusinessStatus, require('./routes/schedule.routes'));
 app.use('/api/special-schedules', checkBusinessStatus, require('./routes/specialSchedule.routes'));
+app.use('/api/employee-vacations', checkBusinessStatus, require('./routes/employeeVacation.routes'));
 app.use('/api/upload',         require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));
+app.use('/api/superadmin', require('./routes/superAdmin.routes'));
 
 // Módulos opcionales configurables
 app.use('/api/expenses',   checkBusinessStatus, require('./routes/expense.routes'));
@@ -55,6 +57,9 @@ app.use('/api/deposits',   checkBusinessStatus, require('./routes/deposit.routes
 
 // Informe financiero integrado
 app.use('/api/financial-report', checkBusinessStatus, require('./routes/financialReport.routes'));
+
+// Socket.io management endpoints
+app.use('/api/socket', require('./routes/socket.routes'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '3.0.0', timestamp: new Date() }));
 

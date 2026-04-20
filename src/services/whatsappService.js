@@ -25,6 +25,17 @@ const MAX_MESSAGES_PER_HOUR = 20; // Límite seguro de WhatsApp
 // Límite de instancias concurrentes para proteger memoria del servidor
 const MAX_INSTANCES = 3; // Máximo 3 negocios con WhatsApp simultáneo
 
+// Control de memoria - límites para evitar consumo excesivo (8GB en VPS)
+const MEMORY_LIMITS = {
+  rssMB: 800,      // RSS máximo antes de alerta
+  rssCritical: 1200, // RSS crítico - forzar desconexión de instancias
+  heapMB: 500      // Heap máximo
+};
+
+// Tiempo máximo de conexión continua (15 minutos) para evitar fugas de memoria
+const MAX_CONNECTION_TIME_MS = 15 * 60 * 1000; // 15 minutos
+const connectionStartTimes = new Map(); // businessId -> timestamp de inicio
+
 // Variaciones de mensajes para que no sean idénticos
 const GREETING_VARIATIONS = ['Hola', '¡Hola!', 'Buen día', '¡Buen día!', 'Hola 👋', '¡Hey!'];
 const FAREWELL_VARIATIONS = ['¡Gracias!', 'Gracias', '¡Que tenga buen día!', '¡Hasta pronto!', '¡Nos vemos!'];
@@ -215,12 +226,141 @@ async function initWhatsAppManager() {
     console.error('[WhatsApp] ❌ Error crítico en initWhatsAppManager:', err.message);
   }
 
-  // Iniciar monitoreo de memoria cada 5 minutos
-  setInterval(() => {
+  // Iniciar monitoreo de memoria cada 2 minutos (más frecuente para controlar consumo)
+  setInterval(async () => {
     const used = process.memoryUsage();
     const instancesCount = instances.size;
-    console.log(`[WhatsApp] 📊 Memoria - Heap: ${Math.round(used.heapUsed / 1024 / 1024)}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB | RSS: ${Math.round(used.rss / 1024 / 1024)}MB | Instancias: ${instancesCount}/${MAX_INSTANCES}`);
+    const heapUsedMB = Math.round(used.heapUsed / 1024 / 1024);
+    const rssMB = Math.round(used.rss / 1024 / 1024);
+    
+    console.log(`[WhatsApp] 📊 Memoria - Heap: ${heapUsedMB}MB / ${Math.round(used.heapTotal / 1024 / 1024)}MB | RSS: ${rssMB}MB | Instancias: ${instancesCount}/${MAX_INSTANCES}`);
+    
+    // Alerta si el consumo es alto
+    if (rssMB > MEMORY_LIMITS.rssMB) {
+      console.warn(`[WhatsApp] ⚠️ CONSUMO DE MEMORIA ALTO: ${rssMB}MB RSS (límite: ${MEMORY_LIMITS.rssMB}MB)`);
+    }
+    
+    // CRÍTICO: Forzar desconexión si se excede el límite crítico
+    if (rssMB > MEMORY_LIMITS.rssCritical && instancesCount > 0) {
+      console.error(`[WhatsApp] 🚨 MEMORIA CRÍTICA: ${rssMB}MB RSS. Forzando desconexión de instancias...`);
+      await forceDisconnectAllInstances('memoria_critica');
+    }
+    
+    // Verificar tiempo máximo de conexión para cada instancia
+    const now = Date.now();
+    for (const [businessId, startTime] of connectionStartTimes.entries()) {
+      const connectedTime = now - startTime;
+      if (connectedTime > MAX_CONNECTION_TIME_MS) {
+        console.log(`[WhatsApp] ⏱️ Instancia ${businessId} conectada por ${Math.round(connectedTime/60000)}min, desconectando por límite de tiempo...`);
+        await stopInstance(businessId);
+        connectionStartTimes.delete(businessId);
+      }
+    }
+  }, 2 * 60 * 1000); // Cada 2 minutos
+  
+  // Limpieza automática de Chrome zombie cada 5 minutos (más frecuente para VPS con poca RAM)
+  setInterval(async () => {
+    await cleanChromeZombies();
+    // Forzar garbage collection si está disponible
+    if (global.gc) {
+      global.gc();
+      console.log(`[WhatsApp] 🧹 Garbage collection ejecutado`);
+    }
   }, 5 * 60 * 1000);
+  
+  console.log(`[WhatsApp] 📊 Gestor listo. Las sesiones se conectarán bajo demanda (0 Chrome activos).`);
+  console.log(`[WhatsApp] 🧹 Limpieza automática de Chrome zombie cada 5 minutos activada`);
+  console.log(`[WhatsApp] ⏱️ Límite de conexión: 15 minutos máximo por instancia`);
+  console.log(`[WhatsApp] 🚨 Límite de memoria: ${MEMORY_LIMITS.rssMB}MB alerta / ${MEMORY_LIMITS.rssCritical}MB crítico`);
+}
+
+/**
+ * Limpia procesos Chrome zombie (huérfanos) que quedaron de ejecuciones previas
+ * SOLO elimina procesos cuyo proceso padre ya no existe
+ * NUNCA toca las instancias activas del backend actual
+ */
+async function cleanChromeZombies() {
+  try {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execAsync = util.promisify(exec);
+    
+    // Si hay instancias activas, NO hacer limpieza agresiva
+    // Solo limpiar archivos de lock, no matar procesos
+    if (instances.size > 0) {
+      console.log(`[WhatsApp] ℹ️ Hay ${instances.size} instancias activas, saltando limpieza de procesos`);
+      // Solo limpiar archivos de lock huérfanos
+      for (const [businessId] of instances) {
+        await cleanLockFiles(businessId);
+      }
+      return;
+    }
+    
+    // Solo si NO hay instancias activas, buscar zombies de ejecuciones anteriores
+    let killed = 0;
+    
+    if (process.platform === 'win32') {
+      // Windows: buscar chrome.exe huérfanos (sin proceso padre válido)
+      // Esto es más seguro que matar todos los chrome
+      try {
+        const { stdout } = await execAsync(
+          `wmic process where "name='chrome.exe' and CommandLine like '%session-%'" get ProcessId,ParentProcessId /format:csv`
+        );
+        
+        // Analizar cada proceso y verificar si su padre existe
+        const lines = stdout.trim().split('\n').filter(l => l.includes('chrome'));
+        for (const line of lines) {
+          const parts = line.split(',');
+          if (parts.length >= 3) {
+            const pid = parts[1]?.trim();
+            const ppid = parts[2]?.trim();
+            
+            // Verificar si el proceso padre existe
+            try {
+              await execAsync(`tasklist /FI "PID eq ${ppid}" 2>nul | findstr ${ppid}`);
+              // El padre existe, no tocar
+            } catch {
+              // El padre NO existe, es zombie - matarlo
+              try {
+                await execAsync(`taskkill /F /PID ${pid} 2>nul`);
+                killed++;
+              } catch {}
+            }
+          }
+        }
+      } catch (e) {}
+    } else {
+      // Linux/Mac: usar ps para encontrar huérfanos
+      try {
+        // Buscar procesos chrome cuyo PPID es 1 (adoptados por init) o no existe
+        const { stdout } = await execAsync(
+          `ps -eo pid,ppid,comm,args | grep chrome | grep session | grep -v grep || true`
+        );
+        
+        const lines = stdout.trim().split('\n').filter(l => l.includes('chrome'));
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[0];
+          const ppid = parts[1];
+          
+          // Si PPID es 1 (init) o el padre no existe, es zombie
+          if (ppid === '1') {
+            try {
+              process.kill(parseInt(pid), 0); // Verificar si existe
+              process.kill(parseInt(pid), 'SIGTERM');
+              killed++;
+            } catch {}
+          }
+        }
+      } catch (e) {}
+    }
+    
+    if (killed > 0) {
+      console.log(`[WhatsApp] 🧹 ${killed} procesos Chrome zombie (huérfanos) eliminados`);
+    }
+  } catch (e) {
+    console.log(`[WhatsApp] ⚠️ Limpieza zombie (info): ${e.message}`);
+  }
 }
 
 /**
@@ -361,6 +501,10 @@ async function createInstance(businessId, forceFresh = false) {
     currentQRs.delete(businessId);
     await WhatsAppSession.update({ status: 'connected' }, { where: { businessId } });
     
+    // Registrar tiempo de conexión para límite de 15 minutos
+    connectionStartTimes.set(businessId, Date.now());
+    console.log(`[WhatsApp] ⏱️ Temporizador de conexión iniciado para ${businessId} (máx 15min)`);
+    
     // Ocultar señales de automatización para evitar detección
     try {
       if (client.pupPage) {
@@ -419,6 +563,7 @@ async function createInstance(businessId, forceFresh = false) {
   // Inicializar cliente con manejo de errores y retry
   let initAttempts = 0;
   const maxInitAttempts = 3;
+  const INIT_TIMEOUT_MS = 45000; // 45 segundos máximo para inicializar
 
   while (initAttempts < maxInitAttempts) {
     initAttempts++;
@@ -426,7 +571,15 @@ async function createInstance(businessId, forceFresh = false) {
       console.log(`[WhatsApp] 🔄 Intento de inicialización ${initAttempts}/${maxInitAttempts} para ${businessId}...`);
       // Dar tiempo a que Chrome se cargue completamente
       await new Promise(resolve => setTimeout(resolve, 2000));
-      await client.initialize();
+
+      // Inicializar con timeout para evitar bloqueos infinitos
+      await Promise.race([
+        client.initialize(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout: inicialización excedió ${INIT_TIMEOUT_MS/1000}s`)), INIT_TIMEOUT_MS)
+        )
+      ]);
+
       instances.set(businessId, client);
       console.log(`[WhatsApp] ✅ Cliente ${businessId} inicializado correctamente`);
       return client;
@@ -646,24 +799,26 @@ async function handleClientResponse(businessId, client, msg) {
     return false;
   });
 
+  // Guardar SIEMPRE el mensaje entrante en BD para registro histórico
+  // Independientemente de si hay citas coincidentes o no
+  try {
+    const { IncomingMessage } = require('../models');
+    await IncomingMessage.create({
+      businessId: businessId,
+      phone: cleanIncomingPhone,
+      message: text,
+      whatsappMessageId: msg.id?._serialized || null,
+      status: matchedAppointments.length === 0 ? 'pending' : 'processed',
+      processedAt: matchedAppointments.length === 0 ? null : new Date()
+    });
+    console.log(`[WhatsApp] ✅ Mensaje entrante guardado en BD para tel: ${cleanIncomingPhone}`);
+  } catch (saveErr) {
+    console.error(`[WhatsApp] ❌ Error guardando mensaje entrante:`, saveErr.message);
+  }
+
   if (matchedAppointments.length === 0) {
     console.log(`[WhatsApp] 🔍 Sin coincidencias para tel: ${cleanIncomingPhone} (ID: ${from}) en BIZ: ${businessId}`);
-    console.log(`[WhatsApp] 💾 Guardando mensaje entrante para procesamiento posterior...`);
-    
-    // Guardar mensaje en BD para procesarlo cuando haya citas
-    try {
-      const { IncomingMessage } = require('../models');
-      await IncomingMessage.create({
-        businessId: businessId,
-        phone: cleanIncomingPhone,
-        message: text,
-        whatsappMessageId: msg.id?._serialized || null,
-        status: 'pending'
-      });
-      console.log(`[WhatsApp] ✅ Mensaje entrante guardado en BD para tel: ${cleanIncomingPhone}`);
-    } catch (saveErr) {
-      console.error(`[WhatsApp] ❌ Error guardando mensaje entrante:`, saveErr.message);
-    }
+    console.log(`[WhatsApp] ℹ️ Mensaje guardado como 'pending' para procesamiento posterior`);
     return;
   }
 
@@ -1215,11 +1370,63 @@ async function stopInstance(businessId) {
     }
     instances.delete(businessId);
     currentQRs.delete(businessId);
+    connectionStartTimes.delete(businessId); // Limpiar tiempo de conexión
     await WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
     console.log(`[WhatsApp] ⏸️ Instancia detenida para ${businessId} (archivos preservados)`);
     return true;
   }
   return false;
+}
+
+/**
+ * Fuerza la desconexión de TODAS las instancias activas
+ * Usado cuando se detecta consumo crítico de memoria
+ */
+async function forceDisconnectAllInstances(reason = 'manual') {
+  console.log(`[WhatsApp] 🚨 Forzando desconexión de todas las instancias. Razón: ${reason}`);
+  
+  const instanceIds = Array.from(instances.keys());
+  let disconnectedCount = 0;
+  
+  for (const businessId of instanceIds) {
+    try {
+      await stopInstance(businessId);
+      disconnectedCount++;
+      console.log(`[WhatsApp] ⏸️ Instancia ${businessId} desconectada (forzado)`);
+    } catch (e) {
+      console.error(`[WhatsApp] ❌ Error desconectando ${businessId}:`, e.message);
+    }
+  }
+  
+  // Limpiar cualquier proceso Chrome restante
+  await killAllChromeProcesses();
+  
+  console.log(`[WhatsApp] ✅ ${disconnectedCount} instancias desconectadas forzosamente`);
+  return disconnectedCount;
+}
+
+/**
+ * Mata todos los procesos Chrome relacionados con sesiones (emergencia)
+ */
+async function killAllChromeProcesses() {
+  try {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execAsync = util.promisify(exec);
+    
+    if (process.platform === 'win32') {
+      try {
+        await execAsync(`taskkill /F /IM chrome.exe /FI "WINDOWTITLE eq *whatsapp*" 2>nul || taskkill /F /IM chrome.exe 2>nul || true`);
+      } catch (e) {}
+    } else {
+      try {
+        await execAsync(`pkill -f "chrome.*session-" 2>/dev/null || pkill chrome 2>/dev/null || true`);
+      } catch (e) {}
+    }
+    console.log(`[WhatsApp] 🧹 Procesos Chrome terminados (emergencia)`);
+  } catch (e) {
+    console.warn(`[WhatsApp] ⚠️ Error matando Chrome:`, e.message);
+  }
 }
 
 /**
@@ -1346,4 +1553,4 @@ async function sendMessageDirect(businessId, to, text, retryCount = 0) {
   }
 }
 
-module.exports = { initWhatsAppManager, createInstance, stopInstance, queueMessage, sendMessageDirect, currentQRs, forceReconnect, instances, getInstance, getRandomConfirmationTemplate, getRandomReminderTemplate, getRandomRatingTemplate, getRandomDelay, isBusinessHours, hasValidSession };
+module.exports = { initWhatsAppManager, createInstance, stopInstance, queueMessage, sendMessageDirect, currentQRs, forceReconnect, forceDisconnectAllInstances, instances, getInstance, getRandomConfirmationTemplate, getRandomReminderTemplate, getRandomRatingTemplate, getRandomDelay, isBusinessHours, hasValidSession };

@@ -8,7 +8,7 @@ exports.getAll = async (req, res) => {
     const businesses = await Business.findAll({
       include: [
         { model: User, as: 'Owner', attributes: ['id', 'name', 'email'] },
-        { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+        { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp', 'hasFieldTechnicians'] }
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -35,7 +35,7 @@ exports.getMyBusiness = async (req, res) => {
             model: Employee, as: 'Employees', where: { active: true }, required: false,
             include: [{ model: User, attributes: ['id', 'name', 'email'] }]
           },
-          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp', 'hasFieldTechnicians'] }
         ]
       });
 
@@ -62,7 +62,7 @@ exports.getMyBusiness = async (req, res) => {
             model: Employee, as: 'Employees', where: { active: true }, required: false,
             include: [{ model: User, attributes: ['id', 'name', 'email'] }]
           },
-          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+          { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp', 'hasFieldTechnicians'] }
         ],
         order: [['isBranch', 'ASC']] // Primero negocios principales
       });
@@ -82,7 +82,7 @@ exports.getMyBusiness = async (req, res) => {
                 model: Employee, as: 'Employees', where: { active: true }, required: false,
                 include: [{ model: User, attributes: ['id', 'name', 'email'] }]
               },
-              { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp'] }
+              { model: Business, as: 'ParentBusiness', attributes: ['id', 'name', 'whatsapp', 'hasFieldTechnicians'] }
             ]
           });
         }
@@ -90,7 +90,14 @@ exports.getMyBusiness = async (req, res) => {
     }
 
     if (!biz) return res.status(404).json({ error: 'No tienes un negocio registrado o asignado' });
-    res.json(biz);
+    
+    // Agregar parentHasFieldTechnicians como campo calculado para facilitar el uso en frontend
+    const bizData = biz.toJSON();
+    if (bizData.isBranch && bizData.ParentBusiness) {
+      bizData.parentHasFieldTechnicians = bizData.ParentBusiness.hasFieldTechnicians;
+    }
+    
+    res.json(bizData);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -159,7 +166,12 @@ exports.requestBranch = async (req, res) => {
       isBranch: true,
       branchStatus: 'pending_approval',
       status: 'blocked',
-      subscriptionStatus: 'pending',
+      subscriptionStatus: parentBiz.subscriptionStatus,
+      subscriptionPlan: parentBiz.subscriptionPlan,
+      includedUsers: parentBiz.includedUsers,
+      additionalUsers: parentBiz.additionalUsers,
+      monthlyTotal: parentBiz.monthlyTotal,
+      additionalUserPrice: parentBiz.additionalUserPrice,
       branchPaymentScreenshot // Este campo es el que lee el superadmin
     });
 
@@ -475,7 +487,7 @@ exports.getAvailability = async (req, res) => {
     const biz = await Business.findOne({ where: { slug: req.params.slug } });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-    const { Appointment, Schedule, SpecialSchedule, sequelize } = require('../models');
+    const { Appointment, Schedule, SpecialSchedule, EmployeeVacation, sequelize } = require('../models');
     const { Op } = require('sequelize');
 
     // Calcular día de la semana en Colombia
@@ -571,19 +583,21 @@ exports.getAvailability = async (req, res) => {
     const nowMs = Date.now();
     const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de gracia
 
-    // DEBUG: Log para verificar zona horaria
-    console.log('[Availability DEBUG]', {
-      serverTime: new Date().toISOString(),
-      nowColombia: nowColombia.toISOString(),
-      todayStr,
-      requestedDate: date,
-      isTargetToday,
-      nowMs,
-      marginMs: MARGIN_MS,
-      threshold: nowMs - MARGIN_MS
-    });
-
     for (const emp of employees) {
+      // Verificar si el empleado está de vacaciones en esta fecha
+      const isOnVacation = await EmployeeVacation.count({
+        where: {
+          employeeId: emp.id,
+          active: true,
+          startDate: { [Op.lte]: date },
+          endDate: { [Op.gte]: date }
+        }
+      });
+
+      if (isOnVacation > 0) {
+        continue; // Saltar empleado en vacaciones
+      }
+
       const empAppointments = dayAppointments.filter(a => String(a.employeeId) === String(emp.id));
 
       // Buscar horarios especiales para este empleado
@@ -600,7 +614,6 @@ exports.getAvailability = async (req, res) => {
         // Verificar si el empleado está cerrado ese día
         const closedSchedule = empSpecialSchedules.find(s => s.type === 'closed');
         if (closedSchedule) {
-          console.log(`[Availability] Empleado ${emp.id} cerrado el ${date}: ${closedSchedule.description}`);
           continue; // Saltar a siguiente empleado
         }
 
@@ -634,7 +647,6 @@ exports.getAvailability = async (req, res) => {
 
           // 1. Filtrar si ya pasó (si es hoy)
           if (isTargetToday && slotStart.getTime() <= (nowMs - MARGIN_MS)) {
-            console.log(`[Availability DEBUG] Slot ${timeStr} filtrado: slotStart=${slotStart.getTime()} <= threshold=${nowMs - MARGIN_MS}`);
             current += 5;
             continue;
           }
@@ -1117,6 +1129,191 @@ exports.deleteReview = async (req, res) => {
     res.json({ message: 'Reseña eliminada' });
   } catch (e) {
     console.error('[deleteReview] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// ========== GESTIÓN DE PLANES DE SUSCRIPCIÓN ==========
+
+// Configuración de planes (precios y usuarios incluidos)
+const SUBSCRIPTION_PLANS = {
+  basic: { name: 'Básico', price: 70000, includedUsers: 2 },
+  pro: { name: 'Pro', price: 90000, includedUsers: 5 },
+  premium: { name: 'Premium', price: 130000, includedUsers: 10 }
+};
+const ADDITIONAL_USER_PRICE = 20000;
+
+// Obtener información del plan actual y uso de usuarios
+exports.getSubscriptionInfo = async (req, res) => {
+  try {
+    let businessId = req.params.id || req.query.businessId;
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+    
+    // Si es 'my', obtener el negocio del usuario logueado
+    if (businessId === 'my') {
+      const userId = req.user.id;
+      const user = await User.findByPk(userId);
+      
+      // Primero intentar buscar el negocio donde es dueño
+      const ownedBiz = await Business.findOne({ where: { ownerId: userId } });
+      
+      if (ownedBiz) {
+        // Es dueño de un negocio, usar ese
+        businessId = ownedBiz.id;
+      } else if (user && user.employeeId) {
+        // No es dueño pero tiene un employeeId, usar el negocio de la sucursal
+        const employee = await Employee.findByPk(user.employeeId);
+        if (employee && employee.businessId) {
+          businessId = employee.businessId;
+        }
+      }
+      
+      if (businessId === 'my') {
+        return res.status(404).json({ error: 'No tienes un negocio registrado' });
+      }
+    }
+    
+    const business = await Business.findByPk(businessId);
+    if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    // Verificar permisos: debe ser dueño o admin/manager del negocio
+    const userId = req.user.id;
+    const isOwner = business.ownerId === userId;
+    
+    if (!isOwner) {
+      // Verificar si es manager/admin del negocio
+      const emp = await Employee.findOne({ 
+        where: { userId, businessId, isManager: true } 
+      });
+      if (!emp && req.user.role !== 'admin_suc') {
+        return res.status(403).json({ error: 'Sin permisos para ver este negocio' });
+      }
+    }
+    
+    // Contar empleados activos (el dueño/admin NO cuenta en el límite)
+    const employeeCount = await Employee.count({ 
+      where: { businessId, active: true } 
+    });
+    
+    const totalUsersAllowed = business.includedUsers + business.additionalUsers;
+    const availableUsers = totalUsersAllowed - employeeCount;
+    
+    // Información del plan
+    const planInfo = SUBSCRIPTION_PLANS[business.subscriptionPlan] || SUBSCRIPTION_PLANS.basic;
+    
+    res.json({
+      subscriptionPlan: business.subscriptionPlan,
+      planName: planInfo.name,
+      basePrice: planInfo.price,
+      includedUsers: business.includedUsers,
+      additionalUsers: business.additionalUsers,
+      additionalUserPrice: business.additionalUserPrice,
+      monthlyTotal: business.monthlyTotal,
+      currentEmployees: employeeCount,
+      totalUsersAllowed: totalUsersAllowed,
+      availableUsers: availableUsers,
+      canAddMore: availableUsers > 0,
+      adminExcluded: true // El admin/dueño no cuenta en el límite
+    });
+  } catch (e) {
+    console.error('[getSubscriptionInfo] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Actualizar plan de suscripción
+exports.updateSubscriptionPlan = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { subscriptionPlan, additionalUsers } = req.body;
+    
+    const business = await Business.findByPk(id);
+    if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    // Validar plan
+    if (!SUBSCRIPTION_PLANS[subscriptionPlan]) {
+      return res.status(400).json({ error: 'Plan no válido. Opciones: basic, pro, premium' });
+    }
+    
+    const planInfo = SUBSCRIPTION_PLANS[subscriptionPlan];
+    const additional = Math.max(0, parseInt(additionalUsers) || 0);
+    
+    // Calcular nuevo total
+    const monthlyTotal = planInfo.price + (additional * ADDITIONAL_USER_PRICE);
+    
+    await business.update({
+      subscriptionPlan,
+      includedUsers: planInfo.includedUsers,
+      additionalUsers: additional,
+      monthlyTotal,
+      additionalUserPrice: ADDITIONAL_USER_PRICE
+    });
+    
+    res.json({
+      message: 'Plan actualizado correctamente',
+      subscriptionPlan,
+      planName: planInfo.name,
+      includedUsers: planInfo.includedUsers,
+      additionalUsers: additional,
+      monthlyTotal
+    });
+  } catch (e) {
+    console.error('[updateSubscriptionPlan] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Agregar usuarios adicionales
+exports.addAdditionalUsers = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { count } = req.body;
+    
+    if (!count || count < 1) {
+      return res.status(400).json({ error: 'Debes agregar al menos 1 usuario adicional' });
+    }
+    
+    const business = await Business.findByPk(id);
+    if (!business) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    const newAdditionalUsers = business.additionalUsers + parseInt(count);
+    const planInfo = SUBSCRIPTION_PLANS[business.subscriptionPlan] || SUBSCRIPTION_PLANS.basic;
+    const monthlyTotal = planInfo.price + (newAdditionalUsers * ADDITIONAL_USER_PRICE);
+    
+    await business.update({
+      additionalUsers: newAdditionalUsers,
+      monthlyTotal
+    });
+    
+    res.json({
+      message: `Se agregaron ${count} usuarios adicionales`,
+      additionalUsers: newAdditionalUsers,
+      monthlyTotal,
+      extraCost: count * ADDITIONAL_USER_PRICE
+    });
+  } catch (e) {
+    console.error('[addAdditionalUsers] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+};
+
+// Obtener todos los planes disponibles (para mostrar en frontend)
+exports.getAvailablePlans = async (req, res) => {
+  try {
+    const plans = Object.entries(SUBSCRIPTION_PLANS).map(([key, plan]) => ({
+      id: key,
+      name: plan.name,
+      price: plan.price,
+      includedUsers: plan.includedUsers,
+      additionalUserPrice: ADDITIONAL_USER_PRICE
+    }));
+    
+    res.json({
+      plans,
+      additionalUserPrice: ADDITIONAL_USER_PRICE
+    });
+  } catch (e) {
+    console.error('[getAvailablePlans] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };

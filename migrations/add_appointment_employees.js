@@ -4,6 +4,13 @@
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    // Verificar si la tabla ya existe
+    const tables = await queryInterface.showAllTables();
+    if (tables.includes('AppointmentEmployees')) {
+      console.log('⚠️ Tabla AppointmentEmployees ya existe, saltando...');
+      return;
+    }
+    
     await queryInterface.createTable('AppointmentEmployees', {
       id: {
         type: Sequelize.UUID,

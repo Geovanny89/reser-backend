@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const app = require('./app');
 const { sequelize, BusinessType, User, Business } = require('./models');
 const bcrypt = require('bcryptjs');
@@ -6,6 +7,7 @@ const { startReminderService } = require('./services/reminderService');
 const { startPendingAlertService } = require('./services/pendingAlertService');
 const { initWhatsAppManager } = require('./services/whatsappService');
 const { runScheduler, isBusinessHours } = require('./services/schedulerService');
+const { initializeSocketServer } = require('./services/socketService');
 const { Op } = require('sequelize');
 const PORT = process.env.PORT || 4000;
 
@@ -119,6 +121,113 @@ async function checkExpiringSubscriptions() {
   }
 }
 
+// Variables para controlar estado de cierre
+let isShuttingDown = false;
+let httpServer = null;
+
+/**
+ * Limpieza graceful: detiene todas las instancias de WhatsApp/Chrome
+ * y libera recursos antes de que PM2 mate el proceso
+ */
+async function gracefulShutdown(signal) {
+  console.log(`\n🛑 Recibida señal ${signal}. Iniciando cierre graceful...`);
+  
+  if (isShuttingDown) {
+    console.log('⚠️ Cierre ya en progreso...');
+    return;
+  }
+  
+  isShuttingDown = true;
+  
+  try {
+    // 1. Detener todas las instancias de WhatsApp (Chrome)
+    console.log('🔌 Cerrando instancias de WhatsApp...');
+    const { stopInstance, instances } = require('./services/whatsappService');
+    
+    const instanceIds = Array.from(instances.keys());
+    for (const businessId of instanceIds) {
+      try {
+        await stopInstance(businessId);
+        console.log(`   ✅ WhatsApp detenido: ${businessId}`);
+      } catch (e) {
+        console.log(`   ⚠️ Error deteniendo ${businessId}: ${e.message}`);
+      }
+    }
+    
+    // 2. Esperar 3 segundos para que Chrome cierre completamente
+    console.log('⏳ Esperando cierre de procesos Chrome...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // 3. Limpiar procesos Chrome zombie (si quedaron)
+    await killChromeZombies();
+    
+    // 4. Cerrar servidor HTTP
+    if (httpServer) {
+      console.log('🔌 Cerrando servidor HTTP...');
+      await new Promise((resolve) => {
+        httpServer.close(() => {
+          console.log('   ✅ Servidor HTTP cerrado');
+          resolve();
+        });
+        // Forzar cierre después de 5 segundos
+        setTimeout(resolve, 5000);
+      });
+    }
+    
+    // 5. Detener servicios con intervalos
+    console.log('⏹️ Deteniendo servicios...');
+    const { stopReminderService } = require('./services/reminderService');
+    const { stopPendingAlertService } = require('./services/pendingAlertService');
+    stopReminderService();
+    stopPendingAlertService();
+    
+    console.log('✅ Limpieza completada. Saliendo...');
+    process.exit(0);
+    
+  } catch (err) {
+    console.error('❌ Error durante cierre graceful:', err);
+    process.exit(1);
+  }
+}
+
+/**
+ * Mata procesos Chrome zombie que puedan haber quedado
+ */
+async function killChromeZombies() {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    
+    // Buscar procesos Chrome relacionados con nuestro proyecto
+    const cmd = process.platform === 'win32' 
+      ? `taskkill /F /IM chrome.exe /FI "WINDOWTITLE eq *session-*" 2>nul`
+      : `pkill -f "chrome.*session-" 2>/dev/null || true`;
+    
+    exec(cmd, (error, stdout, stderr) => {
+      if (!error && stdout) {
+        console.log('🧹 Procesos Chrome zombie limpiados');
+      }
+      resolve();
+    });
+    
+    // Timeout por si el comando se cuelga
+    setTimeout(resolve, 2000);
+  });
+}
+
+// Manejadores de señales para PM2
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Capturar errores no manejados
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 async function start() {
   try {
     await sequelize.authenticate();
@@ -135,7 +244,16 @@ async function start() {
     await seedBusinessTypes();
     await seedSuperAdmin();
     
-    app.listen(PORT, '0.0.0.0', () => {
+    // Crear servidor HTTP y inicializar Socket.io
+    httpServer = http.createServer(app);
+    const io = initializeSocketServer(httpServer);
+    
+    // Hacer io disponible globalmente para los controladores
+    global.io = io;
+    
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      // Notificar a PM2 que estamos listos (para wait_ready: true)
+      if (process.send) process.send('ready');
       console.log(`🚀  Backend corriendo en http://0.0.0.0:${PORT}`);
       console.log(`📚  Documentación Swagger: http://tu-ip-vps:${PORT}/api/docs`);
       // Iniciar servicio de recordatorios automáticos (1 hora antes de cada cita)

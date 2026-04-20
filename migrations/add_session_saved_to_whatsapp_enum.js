@@ -1,9 +1,18 @@
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    // Agregar el valor 'session_saved' al enum existente
-    await queryInterface.sequelize.query(`
-      ALTER TYPE "enum_WhatsAppSessions_status" ADD VALUE 'session_saved';
-    `);
+    try {
+      // Agregar el valor 'session_saved' al enum existente
+      await queryInterface.sequelize.query(`
+        ALTER TYPE "enum_WhatsAppSessions_status" ADD VALUE 'session_saved';
+      `);
+      console.log('✅ Valor session_saved agregado al enum');
+    } catch (err) {
+      if (err.message.includes('already exists')) {
+        console.log('⚠️ Valor session_saved ya existe en el enum, saltando...');
+      } else {
+        throw err;
+      }
+    }
   },
 
   down: async (queryInterface, Sequelize) => {

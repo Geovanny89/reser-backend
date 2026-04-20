@@ -76,10 +76,45 @@ exports.getByBusiness = async (req, res) => {
   }
 };
 
+// Helper para verificar límite de empleados (el dueño/admin NO cuenta)
+async function checkUserLimit(businessId) {
+  const business = await Business.findByPk(businessId);
+  if (!business) return { allowed: false, error: 'Negocio no encontrado' };
+  
+  const maxUsers = business.includedUsers + business.additionalUsers;
+  const currentEmployees = await Employee.count({ 
+    where: { businessId, active: true } 
+  });
+  
+  // El dueño/admin NO cuenta en el límite, solo contamos empleados
+  
+  if (currentEmployees >= maxUsers) {
+    return { 
+      allowed: false, 
+      error: `Has alcanzado el límite de ${maxUsers} empleados. Contrata más empleados para continuar.`,
+      current: currentEmployees,
+      max: maxUsers
+    };
+  }
+  
+  return { allowed: true, current: currentEmployees, max: maxUsers };
+}
+
 // Crear empleado (soporta creación de usuario si se pasan name/email/password)
 exports.create = async (req, res) => {
   try {
     const { businessId, userId, name, email, password, commissionPct, ownerPct, specialties, specialty, photoUrl, description } = req.body;
+    
+    // Verificar límite de usuarios
+    const limitCheck = await checkUserLimit(businessId);
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: limitCheck.error,
+        currentUsers: limitCheck.current,
+        maxUsers: limitCheck.max,
+        upgradeRequired: true
+      });
+    }
     
     let finalUserId = userId;
     let tempPassword = null;
@@ -146,6 +181,17 @@ exports.invite = async (req, res) => {
         return res.status(404).json({ error: 'No tienes un negocio asociado' });
       }
       finalBusinessId = business.id;
+    }
+    
+    // Verificar límite de usuarios
+    const limitCheck = await checkUserLimit(finalBusinessId);
+    if (!limitCheck.allowed) {
+      return res.status(403).json({ 
+        error: limitCheck.error,
+        currentUsers: limitCheck.current,
+        maxUsers: limitCheck.max,
+        upgradeRequired: true
+      });
     }
 
     // Validar que el email no exista
@@ -292,13 +338,21 @@ exports.getAppointmentsByDateRange = async (req, res) => {
       where: {
         employeeId,
         startTime: { [Op.between]: [new Date(`${startDate}T00:00:00-05:00`), new Date(`${endDate}T23:59:59-05:00`)] },
-        status: { [Op.in]: ['pending', 'confirmed', 'attention', 'done'] }
+        status: { [Op.in]: ['pending', 'confirmed', 'attention', 'done', 'cancelled'] }
       },
       include: [
         { model: Service, attributes: ['name', 'price', 'durationMin'] },
         { model: Business, attributes: ['name', 'slug'] }
       ],
       order: [['startTime', 'ASC']]
+    });
+
+    // Ordenar en JavaScript: pendientes primero, luego en atención, luego completadas/canceladas al final
+    const statusOrder = { pending: 1, confirmed: 2, attention: 3, done: 4, cancelled: 5 };
+    appointments.sort((a, b) => {
+      const orderDiff = (statusOrder[a.status] || 6) - (statusOrder[b.status] || 6);
+      if (orderDiff !== 0) return orderDiff;
+      return new Date(a.startTime) - new Date(b.startTime);
     });
 
     res.json(appointments);
@@ -316,7 +370,7 @@ exports.getEmployeeInfo = async (req, res) => {
       where: { userId },
       include: [
         { model: User, attributes: ['id', 'name', 'email'] },
-        { model: Business, attributes: ['id', 'name', 'slug', 'type', 'logoUrl', 'isTechnicalServices'] },
+        { model: Business, attributes: ['id', 'name', 'slug', 'type', 'logoUrl', 'isTechnicalServices', 'hasFieldTechnicians'] },
         { 
           model: Service, 
           as: 'Services',
@@ -815,7 +869,7 @@ exports.getMyCommissions = async (req, res) => {
 
     // Paginación
     const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 8;
+    const limitNum = parseInt(limit) || 10;
     const offset = (pageNum - 1) * limitNum;
     const totalPages = Math.ceil(allReport.length / limitNum);
     const paginatedAppointments = allReport.slice(offset, offset + limitNum);

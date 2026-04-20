@@ -110,18 +110,49 @@ async function getPendingMessagesGrouped() {
 async function processBusinessMessages(businessId, messages) {
   console.log(`[Scheduler] 📦 Procesando ${messages.length} mensajes para negocio ${businessId}`);
 
+  // Timeout global para todo el procesamiento de un negocio (6 minutos máximo)
+  // Debe ser > 5 minutos de espera cuando hay mensajes que esperan respuesta del cliente
+  const BUSINESS_TIMEOUT_MS = 6 * 60 * 1000;
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Timeout: procesamiento de negocio excedió 6 minutos')), BUSINESS_TIMEOUT_MS)
+  );
+
+  try {
+    // Correr todo el procesamiento con timeout
+    return await Promise.race([processBusinessMessagesInternal(businessId, messages), timeoutPromise]);
+  } catch (error) {
+    console.error(`[Scheduler] ❌ Timeout o error procesando negocio ${businessId}:`, error.message);
+
+    // Asegurar desconexión en caso de timeout
+    try {
+      await whatsappService.stopInstance(businessId);
+    } catch (e) {}
+
+    // Incrementar retry count de mensajes pendientes
+    for (const msg of messages) {
+      const newRetryCount = msg.retryCount + 1;
+      await msg.update({
+        retryCount: newRetryCount,
+        errorMessage: error.message,
+        status: newRetryCount >= MAX_RETRIES ? 'failed' : 'pending'
+      });
+    }
+
+    return { success: false, reason: error.message, messagesKept: messages.length };
+  }
+}
+
+/**
+ * Procesamiento interno de mensajes de un negocio (sin timeout wrapper)
+ */
+async function processBusinessMessagesInternal(businessId, messages) {
   try {
     // 1. Verificar que el negocio tiene sesión válida
     if (!whatsappService.hasValidSession(businessId)) {
-      console.log(`[Scheduler] ⚠️ Negocio ${businessId} no tiene sesión válida, saltando...`);
-      // Marcar mensajes como failed
-      for (const msg of messages) {
-        await msg.update({ 
-          status: 'failed', 
-          errorMessage: 'Sesión de WhatsApp no configurada' 
-        });
-      }
-      return { success: false, reason: 'no_session' };
+      console.log(`[Scheduler] ⚠️ Negocio ${businessId} no tiene sesión válida, saltando (mensajes permanecen en pending)...`);
+      // NO marcar mensajes como failed - dejarlos en pending para el próximo ciclo
+      // cuando el negocio vuelva a conectar WhatsApp
+      return { success: false, reason: 'no_session', messagesKept: messages.length };
     }
 
     // 2. Verificar sesión en BD
@@ -223,22 +254,22 @@ async function processBusinessMessages(businessId, messages) {
       console.warn(`[Scheduler] ⚠️ Error desconectando (no crítico):`, disconnectError.message);
     }
 
-    return { 
-      success: true, 
-      sent: sentCount, 
+    return {
+      success: true,
+      sent: sentCount,
       failed: failedCount,
-      total: messages.length 
+      total: messages.length
     };
 
   } catch (error) {
     console.error(`[Scheduler] ❌ Error general procesando negocio ${businessId}:`, error.message);
-    
+
     // Asegurar desconexión en caso de error
     try {
       await whatsappService.stopInstance(businessId);
     } catch (e) {}
-    
-    return { success: false, reason: error.message };
+
+    throw error; // Re-lanzar para que el timeout wrapper lo maneje
   }
 }
 
@@ -350,8 +381,18 @@ async function runScheduler() {
   // Evitar ejecuciones concurrentes
   if (isProcessing) {
     console.log('[Scheduler] ⏳ Procesamiento anterior en curso, saltando...');
-    return { status: 'skipped', reason: 'already_processing' };
+    // Si lleva más de 5 minutos procesando, forzar reset del flag (podría estar colgado)
+    const processingTime = Date.now() - (global.schedulerStartTime || 0);
+    if (processingTime > 5 * 60 * 1000) {
+      console.warn(`[Scheduler] ⚠️ Procesamiento anterior lleva ${Math.round(processingTime/1000)}s, forzando reset...`);
+      isProcessing = false;
+    } else {
+      return { status: 'skipped', reason: 'already_processing', elapsedMs: processingTime };
+    }
   }
+
+  // Registrar tiempo de inicio para detectar bloqueos
+  global.schedulerStartTime = Date.now();
 
   // Verificar horario laboral Colombia
   if (!isBusinessHours()) {
@@ -423,6 +464,7 @@ async function runScheduler() {
     return { status: 'error', error: error.message };
   } finally {
     isProcessing = false;
+    global.schedulerStartTime = null; // Limpiar timestamp al terminar
   }
 }
 

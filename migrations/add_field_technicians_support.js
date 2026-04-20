@@ -5,51 +5,85 @@
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    // Función auxiliar para verificar si una columna existe
+    const columnExists = async (table, column) => {
+      try {
+        const tableInfo = await queryInterface.describeTable(table);
+        return column in tableInfo;
+      } catch (e) {
+        return false;
+      }
+    };
+
     // Agregar campo hasFieldTechnicians a Businesses
-    await queryInterface.addColumn('Businesses', 'hasFieldTechnicians', {
-      type: Sequelize.BOOLEAN,
-      defaultValue: false,
-      allowNull: false,
-      comment: 'Indica si envía técnicos a domicilio con seguimiento en tiempo real (deshabilita WhatsApp, menú especial)'
-    });
-    console.log('✅ Campo hasFieldTechnicians agregado a Businesses');
+    if (!(await columnExists('Businesses', 'hasFieldTechnicians'))) {
+      await queryInterface.addColumn('Businesses', 'hasFieldTechnicians', {
+        type: Sequelize.BOOLEAN,
+        defaultValue: false,
+        allowNull: false,
+        comment: 'Indica si envía técnicos a domicilio con seguimiento en tiempo real (deshabilita WhatsApp, menú especial)'
+      });
+      console.log('✅ Campo hasFieldTechnicians agregado a Businesses');
+    } else {
+      console.log('⚠️ Campo hasFieldTechnicians ya existe, saltando...');
+    }
 
     // Agregar campos de seguimiento a Appointments
-    await queryInterface.addColumn('Appointments', 'technicianStatus', {
-      type: Sequelize.ENUM('not_started', 'on_the_way', 'arrived', 'in_progress'),
-      defaultValue: 'not_started',
-      allowNull: false,
-      comment: 'Estado del técnico: not_started, on_the_way, arrived, in_progress'
-    });
-    console.log('✅ Campo technicianStatus agregado a Appointments');
+    if (!(await columnExists('Appointments', 'technicianStatus'))) {
+      await queryInterface.addColumn('Appointments', 'technicianStatus', {
+        type: Sequelize.ENUM('not_started', 'on_the_way', 'arrived', 'in_progress'),
+        defaultValue: 'not_started',
+        allowNull: false,
+        comment: 'Estado del técnico: not_started, on_the_way, arrived, in_progress'
+      });
+      console.log('✅ Campo technicianStatus agregado a Appointments');
+    } else {
+      console.log('⚠️ Campo technicianStatus ya existe, saltando...');
+    }
 
-    await queryInterface.addColumn('Appointments', 'travelStartTime', {
-      type: Sequelize.DATE,
-      allowNull: true,
-      comment: 'Hora cuando el técnico inició el desplazamiento'
-    });
-    console.log('✅ Campo travelStartTime agregado a Appointments');
+    if (!(await columnExists('Appointments', 'travelStartTime'))) {
+      await queryInterface.addColumn('Appointments', 'travelStartTime', {
+        type: Sequelize.DATE,
+        allowNull: true,
+        comment: 'Hora cuando el técnico inició el desplazamiento'
+      });
+      console.log('✅ Campo travelStartTime agregado a Appointments');
+    } else {
+      console.log('⚠️ Campo travelStartTime ya existe, saltando...');
+    }
 
-    await queryInterface.addColumn('Appointments', 'arrivalTime', {
-      type: Sequelize.DATE,
-      allowNull: true,
-      comment: 'Hora cuando el técnico llegó al destino'
-    });
-    console.log('✅ Campo arrivalTime agregado a Appointments');
+    if (!(await columnExists('Appointments', 'arrivalTime'))) {
+      await queryInterface.addColumn('Appointments', 'arrivalTime', {
+        type: Sequelize.DATE,
+        allowNull: true,
+        comment: 'Hora cuando el técnico llegó al destino'
+      });
+      console.log('✅ Campo arrivalTime agregado a Appointments');
+    } else {
+      console.log('⚠️ Campo arrivalTime ya existe, saltando...');
+    }
 
-    await queryInterface.addColumn('Appointments', 'serviceStartTime', {
-      type: Sequelize.DATE,
-      allowNull: true,
-      comment: 'Hora cuando inició el servicio técnico'
-    });
-    console.log('✅ Campo serviceStartTime agregado a Appointments');
+    if (!(await columnExists('Appointments', 'serviceStartTime'))) {
+      await queryInterface.addColumn('Appointments', 'serviceStartTime', {
+        type: Sequelize.DATE,
+        allowNull: true,
+        comment: 'Hora cuando inició el servicio técnico'
+      });
+      console.log('✅ Campo serviceStartTime agregado a Appointments');
+    } else {
+      console.log('⚠️ Campo serviceStartTime ya existe, saltando...');
+    }
 
-    await queryInterface.addColumn('Appointments', 'workReport', {
-      type: Sequelize.JSON,
-      allowNull: true,
-      comment: 'Reporte del trabajo: diagnosis, solution, recommendations, partsUsed: [{itemId, name, quantity, unit}]'
-    });
-    console.log('✅ Campo workReport agregado a Appointments');
+    if (!(await columnExists('Appointments', 'workReport'))) {
+      await queryInterface.addColumn('Appointments', 'workReport', {
+        type: Sequelize.JSON,
+        allowNull: true,
+        comment: 'Reporte del trabajo: diagnosis, solution, recommendations, partsUsed: [{itemId, name, quantity, unit}]'
+      });
+      console.log('✅ Campo workReport agregado a Appointments');
+    } else {
+      console.log('⚠️ Campo workReport ya existe, saltando...');
+    }
 
     console.log('\n🎉 Migración completada: Soporte para Técnicos a Domicilio activado');
   },

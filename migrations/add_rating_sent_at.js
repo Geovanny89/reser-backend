@@ -5,21 +5,37 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const transaction = await queryInterface.sequelize.transaction();
     try {
-      await queryInterface.addColumn('Appointments', 'ratingSentAt', {
-        type: Sequelize.DATE,
-        allowNull: true,
-        comment: 'Fecha cuando se envió la solicitud de calificación'
-      });
-      console.log('✅ Columna ratingSentAt agregada a Appointments');
+      // Verificar si la columna ya existe
+      const tableInfo = await queryInterface.describeTable('Appointments');
       
-      // Crear índice para mejorar rendimiento de consultas
-      await queryInterface.addIndex('Appointments', ['ratingSentAt'], {
-        name: 'appointments_rating_sent_at_idx'
-      });
-      console.log('✅ Índice appointments_rating_sent_at_idx creado');
+      if (!tableInfo.ratingSentAt) {
+        await queryInterface.addColumn('Appointments', 'ratingSentAt', {
+          type: Sequelize.DATE,
+          allowNull: true,
+          comment: 'Fecha cuando se envió la solicitud de calificación'
+        }, { transaction });
+        console.log('✅ Columna ratingSentAt agregada a Appointments');
+      } else {
+        console.log('⚠️ Columna ratingSentAt ya existe, saltando...');
+      }
+      
+      // Crear índice si no existe
+      try {
+        await queryInterface.addIndex('Appointments', ['ratingSentAt'], {
+          name: 'appointments_rating_sent_at_idx'
+        }, { transaction });
+        console.log('✅ Índice appointments_rating_sent_at_idx creado');
+      } catch (idxErr) {
+        console.log('⚠️ Índice appointments_rating_sent_at_idx ya existe, saltando...');
+      }
+      
+      await transaction.commit();
+      console.log('🎉 Migración ratingSentAt completada');
     } catch (err) {
-      console.error('Error en migración:', err.message);
+      await transaction.rollback();
+      console.error('❌ Error en migración:', err.message);
       throw err;
     }
   },

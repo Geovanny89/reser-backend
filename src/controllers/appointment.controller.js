@@ -4,6 +4,7 @@ const { sendEmail } = require('../config/email');
 const { generatePaymentReceipt } = require('../utils/pdfGenerator');
 const { sendCancellationNotification, sendPushNotification } = require('../services/pushNotificationService');
 const { scheduleMessage } = require('../services/schedulerService');
+const { emitNewAppointment, emitAppointmentUpdate, emitAppointmentCancelled } = require('../services/socketService');
 
 // Zona horaria Colombia: UTC-5 (no cambia con horario de verano)
 const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
@@ -43,14 +44,20 @@ exports.getByBusiness = async (req, res) => {
     const businessId = req.query.businessId || req.params.businessId;
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
 
-    const { date, employeeId } = req.query;
+    const { date, startDate, endDate, employeeId } = req.query;
     const where = { businessId };
     if (employeeId) where.employeeId = employeeId;
     
     if (date) {
+      // Filtrar por fecha única (día específico en zona horaria Colombia)
       const d = new Date(`${date}T00:00:00-05:00`);
       const next = new Date(d); next.setDate(next.getDate() + 1);
       where.startTime = { [Op.between]: [d, next] };
+    } else if (startDate && endDate) {
+      // Filtrar por rango de fechas (para la agenda semanal)
+      const start = new Date(`${startDate}T00:00:00-05:00`);
+      const end = new Date(`${endDate}T23:59:59-05:00`);
+      where.startTime = { [Op.between]: [start, end] };
     }
 
     const appointments = await Appointment.findAll({
@@ -62,7 +69,14 @@ exports.getByBusiness = async (req, res) => {
       ],
       order: [['startTime', 'ASC']]
     });
-    res.json(appointments);
+
+    // Asegurar que workReport se incluya en la respuesta
+    const appointmentsWithReport = appointments.map(a => {
+      const json = a.toJSON();
+      return json;
+    });
+
+    res.json(appointmentsWithReport);
   } catch (e) {
     console.error('[getByBusiness] Error:', e);
     res.status(500).json({ error: e.message });
@@ -107,7 +121,10 @@ exports.getConsolidated = async (req, res) => {
       order: [['startTime', 'DESC']]
     });
 
-    res.json(appointments);
+    // Asegurar que workReport se incluya en la respuesta
+    const appointmentsWithReport = appointments.map(a => a.toJSON());
+
+    res.json(appointmentsWithReport);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -220,9 +237,14 @@ exports.create = async (req, res) => {
     }
     // =============================================================================
 
-    const start = new Date(startTime);
+    // Asegurar que la hora se interprete como Colombia (UTC-5) si no viene con zona horaria
+    let startTimeWithOffset = startTime;
+    if (typeof startTime === 'string' && !startTime.includes('Z') && !startTime.match(/[+-]\d{2}:\d{2}$/)) {
+      startTimeWithOffset = startTime + '-05:00'; // Colombia UTC-5
+    }
+    const start = new Date(startTimeWithOffset);
     const end = new Date(start.getTime() + service.durationMin * 60000);
-    console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString() });
+    console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString(), originalStartTime: startTime });
 
     // Verificar conflictos SOLO si no es cita express (status='attention')
     // Las citas express son para atención inmediata y no deben ser bloqueadas
@@ -369,8 +391,11 @@ exports.create = async (req, res) => {
     });
     
     // Notificaciones automáticas (sin bloquear la respuesta)
+    console.log('[Create Appointment] Iniciando notificaciones en setImmediate...');
     setImmediate(async () => {
+      console.log('[Create Appointment] Ejecutando notificaciones...');
       try {
+        console.log('[Create Appointment] Buscando cita con ID:', appt.id);
         const fullAppt = await Appointment.findByPk(appt.id, {
           include: [
             { model: Service },
@@ -378,10 +403,37 @@ exports.create = async (req, res) => {
             { model: Business },
           ],
         });
-        if (!fullAppt) return;
+        console.log('[Create Appointment] Cita encontrada:', !!fullAppt);
+        if (!fullAppt) {
+          console.log('[Create Appointment] ERROR: No se encontró la cita');
+          return;
+        }
+        
+        // 🔔 EMITIR SOCKET PRIMERO - No bloquear por emails
+        console.log('[Create Appointment] === EMITIENDO SOCKET INMEDIATAMENTE ===');
+        try {
+          console.log(`[Socket] Preparando emitir cita ${appt.id}:`, {
+            businessId: fullAppt.businessId,
+            employeeId: fullAppt.employeeId
+          });
+          
+          await emitNewAppointment(fullAppt, {
+            notifyEmployee: true,
+            notifyAdmin: true
+          });
+          console.log(`[Socket] ✅ Cita ${appt.id} emitida en tiempo real`);
+        } catch (socketErr) {
+          console.error('[Socket] ❌ Error emitiendo cita:', socketErr.message);
+        }
+        
+        // Resto de notificaciones (emails, push) - se ejecutan después sin bloquear
+        console.log('[Create Appointment] Procesando notificaciones adicionales...');
         const owner = await User.findByPk(fullAppt.Business?.ownerId);
+        
+        // Enviar email al owner (sin await para no bloquear)
         if (owner?.email) {
-          await sendEmail(owner.email, 'newAppointmentAdmin', {
+          console.log('[Create Appointment] Enviando email a owner (async)...');
+          sendEmail(owner.email, 'newAppointmentAdmin', {
             businessName: String(fullAppt.Business?.name || ''),
             clientName:   String(fullAppt.clientName || ''),
             serviceName:  String(fullAppt.Service?.name || ''),
@@ -390,62 +442,38 @@ exports.create = async (req, res) => {
           }).catch(e => console.error('[Email] Admin notify error:', e.message));
         }
         
-        // Enviar push notification al dueño si tiene FCM token
+        // Enviar push notification al dueño (async)
         if (owner?.pushToken) {
-          await sendPushNotification(owner.pushToken, {
+          sendPushNotification(owner.pushToken, {
             title: '📅 Nueva Cita Agendada',
-            body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'} para ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
+            body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'}`,
           }, {
             type: 'new_appointment',
             appointmentId: fullAppt.id,
             businessName: String(fullAppt.Business?.name || ''),
-          });
+          }).catch(e => console.error('[Push] Owner notify error:', e.message));
         }
         
-        // Enviar push notification al empleado asignado si tiene FCM token
+        // Enviar push al empleado (async)
         if (fullAppt.Employee?.User?.pushToken) {
-          await sendPushNotification(fullAppt.Employee.User.pushToken, {
+          sendPushNotification(fullAppt.Employee.User.pushToken, {
             title: '📅 Nueva Cita Asignada',
-            body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'} el ${new Date(fullAppt.startTime).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Bogota' })}`,
+            body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'}`,
           }, {
             type: 'new_appointment',
             appointmentId: fullAppt.id,
-            businessName: String(fullAppt.Business?.name || ''),
-          });
+          }).catch(e => console.error('[Push] Employee notify error:', e.message));
         }
         
-        // Enviar push notification a empleados adicionales (citas grupales)
-        if (additionalEmployees.length > 0) {
-          const addEmps = await Employee.findAll({
-            where: { id: additionalEmployees },
-            include: [{ model: User, attributes: ['pushToken', 'name'] }]
-          });
-          
-          for (const addEmp of addEmps) {
-            if (addEmp?.User?.pushToken) {
-              await sendPushNotification(addEmp.User.pushToken, {
-                title: '🤝 Cita Grupal Asignada',
-                body: `Trabajarás con ${fullAppt.Employee?.User?.name || 'colega'} en cita de ${fullAppt.clientName || 'Cliente'} - ${fullAppt.Service?.name || 'servicio'}`,
-              }, {
-                type: 'group_appointment',
-                appointmentId: fullAppt.id,
-                businessName: String(fullAppt.Business?.name || ''),
-              });
-            }
-          }
-        }
-        // Determinar el email del cliente: usuario registrado o email proporcionado en la reserva
-        let clientEmailTo = null;
-        if (appt.clientId) {
+        // Email al cliente (async)
+        let clientEmailTo = fullAppt.clientEmail;
+        if (appt.clientId && !clientEmailTo) {
           const clientUser = await User.findByPk(appt.clientId);
           clientEmailTo = clientUser?.email || null;
         }
-        // Si no hay usuario registrado, usar el email proporcionado directamente
-        if (!clientEmailTo && fullAppt.clientEmail) {
-          clientEmailTo = fullAppt.clientEmail;
-        }
         if (clientEmailTo) {
-          await sendEmail(clientEmailTo, 'appointmentConfirmation', {
+          console.log('[Create Appointment] Enviando email al cliente (async)...');
+          sendEmail(clientEmailTo, 'appointmentConfirmation', {
             clientName:   String(fullAppt.clientName || ''),
             businessName: String(fullAppt.Business?.name || ''),
             serviceName:  String(fullAppt.Service?.name || ''),
@@ -454,8 +482,10 @@ exports.create = async (req, res) => {
             price:        String(fullAppt.finalPrice || fullAppt.Service?.price || ''),
           }).catch(e => console.error('[Email] Client notify error:', e.message));
         }
+        
+        console.log('[Create Appointment] ✅ Notificaciones iniciadas (socket ya emitido)');
       } catch (e) {
-        console.error('[Email] Notification error:', e.message);
+        console.error('[Create Appointment] ❌ ERROR en notificaciones:', e.message, e.stack);
       }
     });
 
@@ -531,6 +561,14 @@ exports.updateStatus = async (req, res) => {
               console.log(`[Done Action] Comprobante enviado para cita ${appt.id}`);
             } catch (receiptErr) {
               console.error('[Done Action] Error enviando comprobante:', receiptErr.message);
+            }
+
+            // Enviar solicitud de calificación por email
+            try {
+              await sendRatingEmail(freshAppt);
+              console.log(`[Done Action] Solicitud de calificación por email enviada para cita ${appt.id}`);
+            } catch (ratingEmailErr) {
+              console.error('[Done Action] Error enviando solicitud de calificación por email:', ratingEmailErr.message);
             }
             
             // Enviar solicitud de calificación por WhatsApp (con 5 min de delay)
@@ -619,6 +657,17 @@ exports.updateStatus = async (req, res) => {
         }, 5000); // Delay de 5 segundos para evitar colisiones
       });
     }
+
+    // 🔔 EMITIR EVENTO SOCKET.IO - Actualización de estado en tiempo real
+    setImmediate(async () => {
+      try {
+        const updateType = req.body.status === 'cancelled' ? 'cancelled' : 'updated';
+        await emitAppointmentUpdate(appt, updateType);
+        console.log(`[Socket] Cita ${appt.id} estado actualizado a ${req.body.status}`);
+      } catch (socketErr) {
+        console.error('[Socket] Error emitiendo actualización:', socketErr.message);
+      }
+    });
 
     res.json(appt);
   } catch (e) {
@@ -845,6 +894,28 @@ exports.cancel = async (req, res) => {
         console.log('[Cancel] Email no enviado:', emailErr.message);
       }
     }
+
+    // 🔔 EMITIR EVENTO SOCKET.IO - Cancelación en tiempo real
+    setImmediate(async () => {
+      try {
+        // Buscar la cita completa para emitir
+        const fullAppt = await Appointment.findByPk(req.params.id, {
+          include: [
+            { model: Service },
+            { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+            { model: Business }
+          ]
+        });
+        
+        if (fullAppt) {
+          const cancelledBy = req.user?.role || 'system';
+          await emitAppointmentCancelled(fullAppt, cancelledBy);
+          console.log(`[Socket] Cita ${appt.id} cancelación emitida`);
+        }
+      } catch (socketErr) {
+        console.error('[Socket] Error emitiendo cancelación:', socketErr.message);
+      }
+    });
     
     res.json({ message: 'Cita cancelada', appt });
   } catch (e) {
@@ -879,11 +950,25 @@ exports.getAvailability = async (req, res) => {
       return res.status(400).json({ error: 'Faltan parámetros requeridos' });
     }
 
-    const { Appointment, Schedule, SpecialSchedule, sequelize } = require('../models');
+    const { Appointment, Schedule, SpecialSchedule, EmployeeVacation, sequelize } = require('../models');
     const { Op } = require('sequelize');
 
     const service = await Service.findByPk(serviceId);
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
+
+    // Verificar si el empleado está de vacaciones en esta fecha
+    const vacationCount = await EmployeeVacation.count({
+      where: {
+        employeeId,
+        active: true,
+        startDate: { [Op.lte]: date },
+        endDate: { [Op.gte]: date }
+      }
+    });
+
+    if (vacationCount > 0) {
+      return res.json({ availableSlots: [] });
+    }
 
     const duration = service.durationMin || 60;
     const nowColombia = new Date();
@@ -1016,20 +1101,12 @@ exports.getAvailability = async (req, res) => {
     // Ordenar workSchedules por hora de inicio para procesar en orden cronológico
     workSchedules.sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
 
-    console.log(`[getAvailability] Procesando ${workSchedules.length} bloques de trabajo para empleado ${employeeId}`);
-    console.log(`[getAvailability] Servicio duración: ${duration} minutos`);
-    console.log(`[getAvailability] Bloques:`, workSchedules.map(s => `${s.startTime}-${s.endTime}`));
-    console.log(`[getAvailability] Almuerzos:`, lunchRanges.map(r => `${r.startTime}-${r.endTime}`));
-    console.log(`[getAvailability] Bloqueos:`, blockedRanges.map(r => `${r.startTime}-${r.endTime}`));
-
     for (const sched of workSchedules) {
       const workStart = toMinutes(sched.startTime);
       const workEnd = toMinutes(sched.endTime);
       let current = workStart;
 
       const safeDuration = (duration && duration > 0) ? Number(duration) : 30;
-
-      console.log(`[getAvailability] Procesando bloque ${sched.startTime}-${sched.endTime} (minutos: ${workStart}-${workEnd})`);
 
       while (current + safeDuration <= workEnd) {
         const hh = String(Math.floor(current / 60)).padStart(2, '0');
@@ -1039,11 +1116,15 @@ exports.getAvailability = async (req, res) => {
         const slotTime = colombiaDateTimeToUTC(date, timeStr);
         const slotEndTime = new Date(slotTime.getTime() + safeDuration * 60000);
 
-        // 1. Filtrar si ya pasó (si es hoy)
-        const MARGIN_MS = 5 * 60 * 1000;
-        if (slotTime.getTime() <= (Date.now() - MARGIN_MS)) {
-          current += 5;
-          continue;
+        // 1. Filtrar si ya pasó (solo si NO se permite horarios pasados)
+        // Para empresas normales (admin creando citas retrospectivas) se pasa allowPast=true
+        const allowPast = req.query.allowPast === 'true';
+        if (!allowPast) {
+          const MARGIN_MS = 5 * 60 * 1000;
+          if (slotTime.getTime() <= (Date.now() - MARGIN_MS)) {
+            current += 5;
+            continue;
+          }
         }
 
         // 2. Verificar Citas Existentes
@@ -1069,7 +1150,6 @@ exports.getAvailability = async (req, res) => {
           // Si el bloqueo termina después de este workSchedule, salir del while
           // para pasar al siguiente bloque de trabajo
           if (blockEnd >= workEnd) {
-            console.log(`[getAvailability] Bloqueo ${conflictBlock.startTime}-${conflictBlock.endTime} cubre resto del bloque actual, pasando al siguiente`);
             break;
           }
           // Saltar al final del bloqueo
@@ -1088,8 +1168,6 @@ exports.getAvailability = async (req, res) => {
         current += safeDuration;
       }
     }
-
-    console.log(`[getAvailability] Total slots generados: ${availableSlots.length}`);
 
     // Eliminar duplicados (basado en el campo 'time')
     const seen = new Set();
@@ -1810,7 +1888,13 @@ exports.rateAppointment = async (req, res) => {
       return res.status(400).json({ error: 'La calificación debe ser entre 1 y 5 estrellas' });
     }
 
-    const appointment = await Appointment.findByPk(id);
+    const appointment = await Appointment.findByPk(id, {
+      include: [
+        { model: Service, attributes: ['name'] },
+        { model: Employee, include: [{ model: User, attributes: ['name', 'email'] }] },
+        { model: Business, attributes: ['name'] }
+      ]
+    });
     if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
 
     // Solo permitir calificar citas completadas
@@ -1825,16 +1909,39 @@ exports.rateAppointment = async (req, res) => {
 
     // Guardar calificación
     await appointment.update({
-      rating,
-      ratingComment: comment || null
+      rating: parseInt(rating),
+      ratingComment: comment || null,
+      ratingSubmittedAt: new Date()
     });
+
+    // Notificar al empleado por email
+    try {
+      const employeeEmail = appointment.Employee?.User?.email;
+      if (employeeEmail) {
+        await sendEmail(
+          employeeEmail,
+          'employeeRated',
+          {
+            employeeName: appointment.Employee.User.name,
+            clientName: appointment.clientName,
+            businessName: appointment.Business?.name,
+            serviceName: appointment.Service?.name,
+            rating: parseInt(rating),
+            comment: comment || null,
+          }
+        );
+        console.log(`[rateAppointment] Notificación enviada al empleado ${employeeEmail}`);
+      }
+    } catch (emailErr) {
+      console.error('[rateAppointment] Error enviando notificación al empleado:', emailErr.message);
+    }
 
     res.json({
       success: true,
       message: '¡Gracias por tu calificación!',
       appointment: {
         id: appointment.id,
-        rating,
+        rating: parseInt(rating),
         ratingComment: comment
       }
     });
@@ -1931,7 +2038,12 @@ exports.update = async (req, res) => {
 
     // Si cambia la fecha/hora
     if (startTime) {
-      const newStart = new Date(startTime);
+      // Asegurar que la hora se interprete como Colombia (UTC-5) si no viene con zona horaria
+      let startTimeWithOffset = startTime;
+      if (typeof startTime === 'string' && !startTime.includes('Z') && !startTime.match(/[+-]\d{2}:\d{2}$/)) {
+        startTimeWithOffset = startTime + '-05:00'; // Colombia UTC-5
+      }
+      const newStart = new Date(startTimeWithOffset);
       const serviceDuration = serviceId 
         ? (await Service.findByPk(serviceId))?.durationMin 
         : appointment.Service?.durationMin;
@@ -2414,5 +2526,56 @@ exports.updateClient = async (req, res) => {
   } catch (e) {
     console.error('[updateClient] Error:', e);
     res.status(500).json({ error: e.message });
+  }
+};
+
+/**
+ * Envia email de solicitud de calificación al cliente
+ * Se llama automáticamente cuando una cita se marca como "done"
+ */
+const sendRatingEmail = async (appointment) => {
+  try {
+    // Determinar el email del cliente
+    let clientEmail = null;
+    if (appointment.clientId) {
+      const clientUser = await User.findByPk(appointment.clientId);
+      clientEmail = clientUser?.email || null;
+    }
+    if (!clientEmail && appointment.clientEmail) {
+      clientEmail = appointment.clientEmail;
+    }
+
+    if (!clientEmail) {
+      console.log('[Rating Email] No se encontró email del cliente para enviar calificación');
+      return;
+    }
+
+    // Verificar si ya se envió la calificación anteriormente
+    if (appointment.ratingEmailSent) {
+      console.log(`[Rating Email] Ya se envió calificación anteriormente para cita ${appointment.id}`);
+      return;
+    }
+
+    const baseUrl = process.env.FRONTEND_URL || 'https://k-dice.com';
+    const ratingBaseUrl = `${baseUrl}/rate-employee`;
+
+    await sendEmail(
+      clientEmail,
+      'serviceCompletedRating',
+      {
+        clientName: appointment.clientName,
+        businessName: appointment.Business?.name || 'Nuestro negocio',
+        serviceName: appointment.Service?.name || 'Servicio',
+        employeeName: appointment.Employee?.User?.name || 'El técnico',
+        ratingBaseUrl,
+        appointmentId: appointment.id,
+      }
+    );
+
+    // Marcar que ya se envió el email de calificación
+    await appointment.update({ ratingEmailSent: true, ratingEmailSentAt: new Date() });
+    console.log(`[Rating Email] ✅ Enviado a ${clientEmail} para cita ${appointment.id}`);
+  } catch (err) {
+    console.error('[Rating Email] ❌ Error enviando solicitud de calificación:', err.message);
   }
 };

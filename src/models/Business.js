@@ -69,6 +69,33 @@ module.exports = (sequelize) => {
     subscriptionEndDate: { type: DataTypes.DATE },
     paymentScreenshot: { type: DataTypes.STRING }, // Comprobante de pago mensual
     
+    // Nuevos campos para planes de suscripción por usuarios
+    subscriptionPlan: { 
+      type: DataTypes.ENUM('basic', 'pro', 'premium'), 
+      defaultValue: 'basic',
+      comment: 'Plan de suscripción: basic (2 users), pro (5 users), premium (10 users)' 
+    },
+    includedUsers: { 
+      type: DataTypes.INTEGER, 
+      defaultValue: 2,
+      comment: 'Usuarios incluidos según el plan' 
+    },
+    additionalUsers: { 
+      type: DataTypes.INTEGER, 
+      defaultValue: 0,
+      comment: 'Usuarios adicionales contratados' 
+    },
+    additionalUserPrice: { 
+      type: DataTypes.INTEGER, 
+      defaultValue: 20000,
+      comment: 'Precio por usuario adicional (COP)' 
+    },
+    monthlyTotal: { 
+      type: DataTypes.INTEGER, 
+      defaultValue: 70000,
+      comment: 'Total mensual calculado' 
+    },
+    
     // Configuración de sucursales
     isBranch: { type: DataTypes.BOOLEAN, defaultValue: false },
     parentBusinessId: { type: DataTypes.UUID },

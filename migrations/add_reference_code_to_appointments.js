@@ -5,25 +5,41 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    const transaction = await queryInterface.sequelize.transaction();
     try {
-      // Agregar columna referenceCode
-      await queryInterface.addColumn('Appointments', 'referenceCode', {
-        type: Sequelize.STRING(8),
-        allowNull: true,
-        unique: true,
-        comment: 'Código único de 6 caracteres para referencia en WhatsApp (ej: ABC123)'
-      });
-      console.log('✅ Columna referenceCode agregada a Appointments');
+      // Verificar si la columna ya existe
+      const tableInfo = await queryInterface.describeTable('Appointments');
+      
+      // Agregar columna referenceCode si no existe
+      if (!tableInfo.referenceCode) {
+        await queryInterface.addColumn('Appointments', 'referenceCode', {
+          type: Sequelize.STRING(8),
+          allowNull: true,
+          unique: true,
+          comment: 'Código único de 6 caracteres para referencia en WhatsApp (ej: ABC123)'
+        }, { transaction });
+        console.log('✅ Columna referenceCode agregada a Appointments');
+      } else {
+        console.log('⚠️ Columna referenceCode ya existe, saltando...');
+      }
 
-      // Crear índice único
-      await queryInterface.addIndex('Appointments', ['referenceCode'], {
-        name: 'appointments_reference_code_idx',
-        unique: true
-      });
-      console.log('✅ Índice appointments_reference_code_idx creado');
+      // Crear índice si no existe
+      try {
+        await queryInterface.addIndex('Appointments', ['referenceCode'], {
+          name: 'appointments_reference_code_idx',
+          unique: true
+        }, { transaction });
+        console.log('✅ Índice appointments_reference_code_idx creado');
+      } catch (idxErr) {
+        console.log('⚠️ Índice appointments_reference_code_idx ya existe, saltando...');
+      }
+      
+      await transaction.commit();
+      console.log('🎉 Migración referenceCode completada');
 
     } catch (err) {
-      console.error('Error en migración:', err.message);
+      await transaction.rollback();
+      console.error('❌ Error en migración:', err.message);
       throw err;
     }
   },

@@ -4,6 +4,14 @@
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
+    // Verificar si la columna ya existe
+    const tableInfo = await queryInterface.describeTable('Businesses');
+    
+    if ('depositConfig' in tableInfo) {
+      console.log('⚠️ Campo depositConfig ya existe en Businesses, saltando...');
+      return;
+    }
+    
     await queryInterface.addColumn('Businesses', 'depositConfig', {
       type: Sequelize.JSON,
       defaultValue: {

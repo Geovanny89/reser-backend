@@ -26,7 +26,14 @@ exports.register = async (req, res) => {
 // Registro de vendedor con datos del negocio
 exports.registerVendor = async (req, res) => {
   try {
-    const { name, email, password, businessName, businessType, description, phone, address, isTechnicalServices } = req.body;
+    const { name, email, password, businessName, businessType, description, phone, address, isTechnicalServices, hasFieldTechnicians, subscriptionPlan } = req.body;
+    
+    // Configuración de planes de suscripción
+    const SUBSCRIPTION_PLANS = {
+      basic: { name: 'Básico', price: 70000, includedUsers: 2 },
+      pro: { name: 'Pro', price: 90000, includedUsers: 5 },
+      premium: { name: 'Premium', price: 130000, includedUsers: 10 }
+    };
     
     // Validar campos requeridos
     if (!name || !email || !password || !businessName || !businessType)
@@ -50,6 +57,9 @@ exports.registerVendor = async (req, res) => {
     const endDate = new Date(now);
     endDate.setDate(endDate.getDate() + 30);
     
+    // Validar y aplicar el plan de suscripción seleccionado
+    const selectedPlan = SUBSCRIPTION_PLANS[subscriptionPlan] || SUBSCRIPTION_PLANS.basic;
+    
     const business = await Business.create({
       name: businessName,
       type: businessType,
@@ -60,7 +70,14 @@ exports.registerVendor = async (req, res) => {
       subscriptionStatus: 'paid',
       subscriptionStartDate: now,
       subscriptionEndDate: endDate,
-      isTechnicalServices: isTechnicalServices || false, // Nuevo campo
+      isTechnicalServices: isTechnicalServices || false,
+      hasFieldTechnicians: hasFieldTechnicians || false,
+      // Campos de plan de suscripción según selección
+      subscriptionPlan: subscriptionPlan || 'basic',
+      includedUsers: selectedPlan.includedUsers,
+      additionalUsers: 0,
+      additionalUserPrice: 20000,
+      monthlyTotal: selectedPlan.price
     });
 
     // Generar token JWT
