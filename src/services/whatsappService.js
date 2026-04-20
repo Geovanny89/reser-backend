@@ -563,7 +563,7 @@ async function createInstance(businessId, forceFresh = false) {
   // Inicializar cliente con manejo de errores y retry
   let initAttempts = 0;
   const maxInitAttempts = 3;
-  const INIT_TIMEOUT_MS = 45000; // 45 segundos máximo para inicializar
+  const INIT_TIMEOUT_MS = 90000; // 90 segundos máximo para inicializar (sesiones pueden tardar en restaurar)
 
   while (initAttempts < maxInitAttempts) {
     initAttempts++;
@@ -572,13 +572,38 @@ async function createInstance(businessId, forceFresh = false) {
       // Dar tiempo a que Chrome se cargue completamente
       await new Promise(resolve => setTimeout(resolve, 2000));
 
+      // Verificar si hay sesión existente para ajustar timeout
+      const hasExistingSession = hasValidSession(businessId);
+      const timeoutMs = hasExistingSession ? 120000 : INIT_TIMEOUT_MS; // 2 min para sesiones existentes
+      
+      if (hasExistingSession) {
+        console.log(`[WhatsApp] 💾 Sesión existente detectada para ${businessId}, usando timeout extendido (${timeoutMs/1000}s)`);
+      }
+      
       // Inicializar con timeout para evitar bloqueos infinitos
       await Promise.race([
         client.initialize(),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout: inicialización excedió ${INIT_TIMEOUT_MS/1000}s`)), INIT_TIMEOUT_MS)
+          setTimeout(() => reject(new Error(`Timeout: inicialización excedió ${timeoutMs/1000}s`)), timeoutMs)
         )
       ]);
+      
+      // Si hay sesión guardada, esperar a que esté completamente listo (ready)
+      // El evento 'ready' ya se manejó arriba, pero esperamos un poco más por si acaso
+      if (hasExistingSession) {
+        let readyChecks = 0;
+        const maxReadyChecks = 30; // 30 segundos adicionales esperando ready
+        while ((!client.info || !client.info.wid) && readyChecks < maxReadyChecks) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          readyChecks++;
+        }
+        
+        if (client.info && client.info.wid) {
+          console.log(`[WhatsApp] ✅ Cliente ${businessId} listo con sesión restaurada (${readyChecks}s esperando)`);
+        } else {
+          console.warn(`[WhatsApp] ⚠️ Cliente ${businessId} inicializado pero no muestra info.wid - puede necesitar escanear QR`);
+        }
+      }
 
       instances.set(businessId, client);
       console.log(`[WhatsApp] ✅ Cliente ${businessId} inicializado correctamente`);
@@ -598,13 +623,25 @@ async function createInstance(businessId, forceFresh = false) {
         // Es mejor crear una instancia nueva para el siguiente reintento
         return createInstance(businessId, false);
       } else {
-        // Último intento fallido, limpiar todo
+        // Último intento fallido
         instances.delete(businessId);
         currentQRs.delete(businessId);
-        // Limpiar sesión corrupta
-        if (fs.existsSync(authPath)) {
+        
+        // NO borrar archivos de sesión en timeout - solo en fallo de autenticación real
+        // La sesión puede ser válida pero el servidor de WhatsApp puede estar lento
+        const isAuthFailure = err.message && (
+          err.message.includes('auth') || 
+          err.message.includes('Authentication') ||
+          err.message.includes('not authenticated')
+        );
+        
+        if (isAuthFailure && fs.existsSync(authPath)) {
+          console.log(`[WhatsApp] 🗑️ Fallo de autenticación detectado, limpiando sesión para ${businessId}`);
           try { fs.rmSync(authPath, { recursive: true, force: true }); } catch (e) { }
+        } else {
+          console.log(`[WhatsApp] 💾 Sesión preservada para ${businessId} (error: ${err.message})`);
         }
+        
         await WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
         throw err;
       }
