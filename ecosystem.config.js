@@ -5,15 +5,15 @@ module.exports = {
     instances: 1,           // Solo UNA instancia (WhatsApp no soporta múltiples)
     exec_mode: 'fork',      // Modo fork, NO cluster (whatsapp-web.js requiere esto)
     watch: false,
-    max_memory_restart: '1G', // Reiniciar si pasa de 1GB
-    
+    max_memory_restart: '3G', // Reiniciar si pasa de 3GB
+
     // Importante: tiempo para limpieza graceful
     kill_timeout: 15000,    // 15 segundos para limpiar Chrome antes de matar
     wait_ready: true,       // Esperar que el proceso diga "ready"
     listen_timeout: 10000,
-    
-    // Variables de entorno para limitar memoria de Node
-    node_args: '--max-old-space-size=512 --expose-gc',
+
+    // Variables de entorno para limitar memoria de Node - AUMENTADO a 2GB
+    node_args: '--max-old-space-size=2048 --expose-gc',
     
     // Logs
     log_file: './logs/combined.log',
