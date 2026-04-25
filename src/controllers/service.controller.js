@@ -60,7 +60,7 @@ exports.getByBusiness = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl, color } = req.body;
+    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl, color, serviceGroupId } = req.body;
     const userId = req.user.id;
 
     // Si viene businessId, lo usamos. Si no, buscamos el negocio del usuario
@@ -98,7 +98,8 @@ exports.create = async (req, res) => {
       priceOptional: priceOptional || false,
       hasEmployeeCommission: hasEmployeeCommission !== false, // default true
       imageUrl: imageUrl || null,
-      color: color || '#3b82f6'
+      color: color || '#3b82f6',
+      serviceGroupId: serviceGroupId || null
     });
     res.status(201).json(service);
   } catch (e) {

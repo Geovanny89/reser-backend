@@ -5,7 +5,7 @@ const { sequelize, BusinessType, User, Business } = require('./models');
 const bcrypt = require('bcryptjs');
 const { startReminderService } = require('./services/reminderService');
 const { startPendingAlertService } = require('./services/pendingAlertService');
-const { initWhatsAppManager } = require('./services/whatsappService');
+const { initWhatsAppManager } = require('./services/evolutionService');
 const { runScheduler, isBusinessHours } = require('./services/schedulerService');
 const { initializeSocketServer } = require('./services/socketService');
 const { Op } = require('sequelize');
@@ -142,7 +142,7 @@ async function gracefulShutdown(signal) {
   try {
     // 1. Detener todas las instancias de WhatsApp (Chrome)
     console.log('🔌 Cerrando instancias de WhatsApp...');
-    const { stopInstance, instances } = require('./services/whatsappService');
+    const { stopInstance, instances } = require('./services/evolutionService');
     
     const instanceIds = Array.from(instances.keys());
     for (const businessId of instanceIds) {

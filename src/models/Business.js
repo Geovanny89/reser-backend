@@ -164,6 +164,12 @@ module.exports = (sequelize) => {
       },
       comment: 'Configuración de anticipos: requerido, monto, condiciones de penalidad'
     },
+  }, {
+    indexes: [
+      { fields: ['ownerId'], name: 'idx_business_ownerId' },
+      { fields: ['status'], name: 'idx_business_status' },
+      { fields: ['subscriptionStatus'], name: 'idx_business_subscription' }
+    ]
   });
 
   Business.resolveWhatsAppBusinessId = async function(businessId) {

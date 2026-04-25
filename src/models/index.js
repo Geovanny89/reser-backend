@@ -62,7 +62,7 @@ ServiceGroup.hasMany(Service, { foreignKey: 'serviceGroupId', as: 'Services' });
 Employee.belongsTo(Business, { foreignKey: 'businessId' });
 Business.hasMany(Employee, { foreignKey: 'businessId', as: 'Employees' });
 Employee.belongsTo(User, { foreignKey: 'userId' });
-User.hasOne(Employee, { foreignKey: 'userId' });
+User.hasOne(Employee, { foreignKey: 'userId', constraints: false });
 
 // Employee — Service (Many-to-Many via EmployeeService)
 Employee.belongsToMany(Service, { through: EmployeeService, foreignKey: 'employeeId', as: 'Services' });

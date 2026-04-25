@@ -27,5 +27,10 @@ module.exports = (sequelize) => {
       allowNull: true,
       comment: 'Nombre del autor (para mostrar)'
     }
+  }, {
+    tableName: 'AppointmentNotes',
+    timestamps: true,
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt'
   });
 };

@@ -20,7 +20,7 @@ function initializeSocketServer(httpServer) {
       methods: ['GET', 'POST'],
       credentials: true
     },
-    // Configuración para mínimo consumo de memoria
+    // Configuración para mínimo consumo de memoria y soportar 200+ usuarios
     pingTimeout: 60000,
     pingInterval: 25000,
     transports: ['websocket', 'polling'], // WebSocket primero, fallback a polling
@@ -30,7 +30,9 @@ function initializeSocketServer(httpServer) {
       concurrencyLimit: 10
     },
     maxHttpBufferSize: 1e6, // 1MB max
-    connectTimeout: 45000
+    connectTimeout: 45000,
+    // Límites para 200 usuarios (50 por instancia × 4 instancias)
+    maxHttpBufferSize: 1e6,
   });
 
   // Middleware de autenticación
@@ -299,6 +301,10 @@ async function formatAppointmentData(appointment) {
       notes: appointment.notes,
       basePrice: appointment.basePrice,
       finalPrice: appointment.finalPrice,
+      technicianStatus: appointment.technicianStatus,
+      travelStartTime: appointment.travelStartTime,
+      arrivalTime: appointment.arrivalTime,
+      serviceStartTime: appointment.serviceStartTime,
       Service: appointment.Service ? {
         id: appointment.Service.id,
         name: appointment.Service.name,

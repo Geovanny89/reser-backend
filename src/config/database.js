@@ -20,6 +20,12 @@ if (process.env.DB_DIALECT === 'sqlite') {
       dialect: 'postgres',
       logging: false,
       typeValidation: true,
+      pool: {
+        max: 70,         // Máximo de conexiones por instancia (70 × 3 instancias = 210 total)
+        min: 5,          // Mínimo de conexiones
+        acquire: 30000,  // Tiempo máximo para obtener conexión (30s)
+        idle: 10000      // Tiempo antes de cerrar conexión idle (10s)
+      }
     }
   );
 }

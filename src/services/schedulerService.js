@@ -1,6 +1,6 @@
 const { ScheduledMessage, Business, WhatsAppSession, IncomingMessage, Appointment, sequelize } = require('../models');
 const { Op } = require('sequelize');
-const whatsappService = require('./whatsappService');
+const whatsappService = require('./evolutionService');
 
 /**
  * Servicio de programación de mensajes de WhatsApp
@@ -329,7 +329,7 @@ async function processIncomingMessages(businessId, client) {
         
         // Procesar el mensaje con la primera cita encontrada
         // Usar el servicio de WhatsApp para procesar la respuesta
-        const { handleClientResponse } = require('./whatsappService');
+        const { handleClientResponse } = require('./evolutionService');
         
         // Simular un objeto de mensaje de WhatsApp
         const mockMsg = {

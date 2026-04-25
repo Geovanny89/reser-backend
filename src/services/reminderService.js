@@ -7,7 +7,7 @@
 const { Appointment, Service, Employee, User, Business, ClientDevice } = require('../models');
 const { sendEmail } = require('../config/email');
 const { sendPushNotification } = require('./pushNotificationService');
-const { getRandomReminderTemplate } = require('./whatsappService');
+const { getRandomReminderTemplate } = require('./evolutionService');
 const { scheduleMessage, isBusinessHours } = require('./schedulerService');
 const { Op } = require('sequelize');
 
@@ -602,8 +602,6 @@ async function processReferenceMessage(appt) {
       const text = `🕐 *${appt.clientName}*, es la hora de tu cita para *${serviceName}* en *${businessName}* con *${employeeName}*.
 
 ✅ Cita confirmada - ${startTimeStr}
-
-📍 Puedes ver el estado de tu cita aquí: ${statusUrl}
 
 ¡Te esperamos! 💫`;
 

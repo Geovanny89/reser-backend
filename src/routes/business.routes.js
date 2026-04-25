@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const ctrl   = require('../controllers/business.controller');
+const ctrl   = require('../controllers/business');
 const auth   = require('../middleware/auth');
 const role   = require('../middleware/role');
 const multer = require('multer');

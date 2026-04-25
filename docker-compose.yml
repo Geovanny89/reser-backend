@@ -1,0 +1,60 @@
+services: 
+  postgres: 
+    image: postgres:15 
+    container_name: evolution_postgres 
+    restart: always 
+    environment: 
+      - POSTGRES_DB=evolution 
+      - POSTGRES_USER=postgres 
+      - POSTGRES_PASSWORD=1234 
+    ports: 
+      - "5433:5432" 
+    volumes: 
+      - evolution_pgdata:/var/lib/postgresql/data 
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+ 
+  evolution_api: 
+    image: atendai/evolution-api:v2.1.2
+    container_name: evolution_api 
+    restart: always 
+    ports: 
+      - "8080:8080" 
+    depends_on: 
+      postgres:
+        condition: service_healthy
+    volumes:
+      - evolution_data:/evolution/instances
+    environment: 
+      - SERVER_URL=http://localhost:8080
+      - DATABASE_ENABLED=true 
+      - DATABASE_PROVIDER=postgresql 
+      - DATABASE_URL=postgresql://postgres:1234@postgres:5432/evolution?schema=public
+      - DATABASE_CONNECTION_URL=postgresql://postgres:1234@postgres:5432/evolution?schema=public
+      - DATABASE_CONNECTION_URI=postgresql://postgres:1234@postgres:5432/evolution?schema=public
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_IS_NEW=true
+      - AUTHENTICATION_TYPE=apikey 
+      - AUTHENTICATION_API_KEY=1234 
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - WEBHOOK_GLOBAL_ENABLED=true
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
+      - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/evolution/webhook
+      - CACHE_REDIS_ENABLED=false
+      - CACHE_LOCAL_ENABLED=true
+      - DATABASE_SAVE_DATA_CHATS=false
+      - DATABASE_SAVE_DATA_CONTACTS=false
+      - DATABASE_SAVE_DATA_HISTORIC=false
+      - DATABASE_SAVE_DATA_LABELS=false
+      - CONFIG_SESSION_PHONE_VERSION=2.3000.1033773198
+      - LOG_LEVEL=info
+      - LANGUAGE=es
+ 
+volumes: 
+  evolution_pgdata:
+  evolution_data:

@@ -8,5 +8,10 @@ module.exports = (sequelize) => {
     role:     { type: DataTypes.STRING, defaultValue: 'client' },
     status:   { type: DataTypes.ENUM('active', 'blocked'), defaultValue: 'active' },
     pushToken: { type: DataTypes.STRING, allowNull: true, comment: 'Token para notificaciones push (Firebase/OneSignal)' },
+  }, {
+    indexes: [
+      { fields: ['role'], name: 'idx_user_role' },
+      { fields: ['status'], name: 'idx_user_status' }
+    ]
   });
 };

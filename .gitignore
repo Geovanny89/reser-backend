@@ -7,3 +7,31 @@ src/config/firebase-service-account.json
 sessions/
 .wwebjs_cache/
 .wwebjs_auth/
+
+# Git repository
+.git/
+
+# Uploads
+uploads/
+
+# Archivos de error
+*.stackdump
+
+# Scripts de migración/corrección (ya ejecutados)
+fix-*.js
+run-*.js
+migrate_v5.js
+sync-activity-logs.js
+update_appt_db.js
+fix_all_migrations.js
+
+# Scripts de prueba
+load-test.js
+load-test-frontend.js
+
+# Scripts de mantenimiento (opcional)
+scripts/
+
+# Documentación (opcional)
+EVOLUTION_API_GUIDE.md
+PM2_SETUP.md

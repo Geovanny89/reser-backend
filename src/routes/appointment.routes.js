@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const ctrl   = require('../controllers/appointment.controller');
+const ctrl   = require('../controllers/appointment');
 const auth   = require('../middleware/auth');
 const role   = require('../middleware/role');
 
@@ -352,7 +352,7 @@ router.patch('/:id/extend-time', role('admin', 'admin_suc', 'superadmin', 'emplo
  */
 router.get('/:id/notes', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getNotes);
 router.post('/:id/notes', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.addNote);
-router.delete('/:id/notes/:noteId', role('admin', 'admin_suc', 'superadmin'), ctrl.deleteNote);
+router.delete('/:id/notes/:noteId', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.deleteNote);
 
 /**
  * @swagger
@@ -560,5 +560,148 @@ router.patch('/:id/technician-status', role('admin', 'admin_suc', 'superadmin', 
  */
 router.post('/:id/technical-report', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.saveTechnicalReport);
 router.get('/:id/technical-report', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getTechnicalReport);
+
+/**
+ * @swagger
+ * /appointments/{id}/client-signature:
+ *   post:
+ *     summary: Guardar firma del cliente
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               signature: { type: string, description: 'Firma en formato base64' }
+ *               clientName: { type: string, description: 'Nombre del cliente que firmó' }
+ *     responses:
+ *       200:
+ *         description: Firma guardada exitosamente
+ *   get:
+ *     summary: Obtener firma del cliente
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Firma del cliente
+ *       404:
+ *         description: No hay firma para esta cita
+ */
+router.post('/:id/client-signature', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.saveClientSignature);
+router.get('/:id/client-signature', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getClientSignature);
+
+/**
+ * @swagger
+ * /appointments/{id}/work-evidences:
+ *   post:
+ *     summary: Guardar evidencias fotográficas del trabajo
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               photos:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     url:
+ *                       type: string
+ *                     description:
+ *                       type: string
+ *               replaceAll:
+ *                 type: boolean
+ *                 default: false
+ *     responses:
+ *       200:
+ *         description: Evidencias guardadas exitosamente
+ *   get:
+ *     summary: Obtener evidencias fotográficas del trabajo
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200:
+ *         description: Lista de evidencias
+ *   delete:
+ *     summary: Eliminar una foto de evidencia
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               photoIndex:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Foto eliminada exitosamente
+ */
+router.post('/:id/work-evidences', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.saveWorkEvidences);
+router.get('/:id/work-evidences', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getWorkEvidences);
+router.delete('/:id/work-evidences', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.deleteWorkEvidence);
+
+/**
+ * @swagger
+ * /appointments/{id}/service-order:
+ *   get:
+ *     summary: Descargar/Ver Orden de Servicio en PDF
+ *     tags: [Appointments]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *       - in: query
+ *         name: download
+ *         schema: { type: boolean }
+ *         description: Si es true, descarga el archivo. Si es false, lo muestra en el navegador.
+ *     responses:
+ *       200:
+ *         description: Archivo PDF de la orden de servicio
+ *       404:
+ *         description: Cita no encontrada
+ */
+router.get('/:id/service-order', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.downloadServiceOrder);
 
 module.exports = router;

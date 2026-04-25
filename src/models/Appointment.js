@@ -62,5 +62,17 @@ module.exports = (sequelize) => {
     arrivalTime: { type: DataTypes.DATE, comment: 'Hora cuando el técnico llegó al destino' },
     serviceStartTime: { type: DataTypes.DATE, comment: 'Hora cuando inició el servicio técnico' },
     workReport: { type: DataTypes.JSON, comment: 'Reporte del trabajo: diagnosis, solution, recommendations, partsUsed: [{itemId, name, quantity, unit}]' },
+    workEvidences: { type: DataTypes.JSON, comment: 'Fotos de evidencia del trabajo: [{url, description}]' },
+    clientSignature: { type: DataTypes.TEXT, comment: 'Firma del cliente en formato base64' },
+    clientSignatureName: { type: DataTypes.STRING, comment: 'Nombre del cliente que firmó' },
+    clientSignatureDate: { type: DataTypes.DATE, comment: 'Fecha y hora de la firma' },
+  }, {
+    indexes: [
+      { fields: ['businessId'], name: 'idx_appointment_businessId' },
+      { fields: ['startTime'], name: 'idx_appointment_startTime' },
+      { fields: ['status'], name: 'idx_appointment_status' },
+      { fields: ['businessId', 'status'], name: 'idx_appointment_business_status' },
+      { fields: ['startTime', 'endTime'], name: 'idx_appointment_time_range' }
+    ]
   });
 };

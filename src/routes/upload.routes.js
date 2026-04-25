@@ -2,7 +2,7 @@ const router  = require('express').Router();
 const multer  = require('multer');
 const auth    = require('../middleware/auth');
 const role    = require('../middleware/role');
-const { Business } = require('../models');
+const { Business, Appointment } = require('../models');
 const { storage, deleteFromCloudinary } = require('../config/cloudinary');
 
 const upload = multer({
@@ -20,6 +20,28 @@ router.post('/', auth, upload.single('image'), (req, res) => {
   // Multer Cloudinary nos da la URL final directamente
   const url = req.file.path;
   res.json({ url, public_id: req.file.filename });
+});
+
+// Subir foto de evidencia de trabajo
+router.post('/work-evidence/:appointmentId', auth, role('admin', 'admin_suc', 'superadmin', 'employee'), upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No se recibió ninguna imagen' });
+
+    const { appointmentId } = req.params;
+    const { description = '' } = req.body;
+
+    // Verificar que la cita existe
+    const appointment = await Appointment.findByPk(appointmentId);
+    if (!appointment) return res.status(404).json({ error: 'Cita no encontrada' });
+
+    // Multer Cloudinary nos da la URL final directamente
+    const url = req.file.path;
+    const public_id = req.file.filename;
+
+    res.json({ url, public_id, description });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Subir múltiples imágenes para la galería

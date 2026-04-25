@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const auth = require('../middleware/auth');
 const role = require('../middleware/role');
-const whatsappService = require('../services/whatsappService');
+const whatsappService = require('../services/evolutionService');
 const models = require('../models');
 const notificationController = require('../controllers/notification.controller');
 
@@ -47,15 +47,10 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
         clearInterval(waitForQR);
         console.log(`[WhatsApp Route] ❌ Tiempo de espera agotado para QR de ${businessId}`);
         
-        // Verificar si por casualidad ya se conectó
-        const client = whatsappService.instances.get(businessId);
-        if (client) {
-           client.getState().then(state => {
-              if (state === 'CONNECTED') return res.json({ status: 'connected' });
-              return res.status(408).json({ error: 'El servidor de WhatsApp está tardando en responder. Por favor, dale un momento y vuelve a intentar.' });
-           }).catch(() => {
-              return res.status(408).json({ error: 'Error al verificar estado. Intenta de nuevo.' });
-           });
+        // Verificar si por casualidad ya se conectó (compatible con Evolution API)
+        const instance = whatsappService.instances.get(businessId);
+        if (instance && (instance.status === 'open' || instance.status === 'connected')) {
+           return res.json({ status: 'connected' });
         } else {
            return res.status(408).json({ error: 'No se pudo generar el código QR a tiempo. Por favor, intenta de nuevo.' });
         }
@@ -115,7 +110,11 @@ router.get('/whatsapp/status', auth, async (req, res) => {
       }
     }
 
-    res.json({ status: actualStatus });
+    res.json({
+      status: actualStatus,
+      phoneNumber: session?.phoneNumber || null,
+      lastActivity: session?.lastActivity || null
+    });
   } catch (e) {
     console.error('[WhatsApp Status Route Error]:', e);
     res.status(500).json({ error: e.message });
@@ -231,5 +230,157 @@ router.post('/whatsapp/logout', auth, async (req, res) => {
 
 // Ruta para enviar resumen de pagos a empleado
 router.post('/payment-summary', auth, role('admin', 'admin_suc', 'superadmin'), notificationController.sendPaymentSummary);
+
+// Ruta de prueba para webhook
+router.get('/evolution/webhook/test', async (req, res) => {
+  console.log('[Evolution Webhook] 🧪 Test endpoint accedido');
+  res.json({ message: 'Webhook endpoint is accessible', timestamp: new Date() });
+});
+
+// Ruta para configurar webhook manualmente en una instancia
+router.post('/evolution/configure-webhook', async (req, res) => {
+  try {
+    const { businessId } = req.body;
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
+    }
+
+    const { configureWebhook } = require('../services/evolution/instanceManager');
+    await configureWebhook(businessId);
+    
+    res.json({ message: 'Webhook configurado exitosamente', businessId });
+  } catch (e) {
+    console.error('[Evolution Webhook] ❌ Error configurando webhook:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Ruta para recibir webhooks de Evolution API
+router.post('/evolution/webhook', async (req, res) => {
+  try {
+    console.log('[Evolution Webhook] 📨 Webhook recibido:', JSON.stringify(req.body).substring(0, 500));
+    
+    const { event, data, instance } = req.body;
+    
+    if (!instance) {
+      console.log('[Evolution Webhook] ⚠️ Webhook sin instancia, ignorando');
+      return res.status(200).json({ message: 'OK' });
+    }
+    
+    const businessId = instance;
+    
+    // Manejar evento de conexión
+    if (event === 'connection.update' || event === 'connection_update') {
+      const connectionState = data?.state || data?.connectionState;
+      console.log(`[Evolution Webhook] 🔌 Estado de conexión para ${businessId}: ${connectionState}`);
+      
+      if (connectionState === 'open' || connectionState === 'connected') {
+        console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada, guardando sesión...`);
+        
+        // Obtener información de la instancia
+        try {
+          const instanceInfo = await whatsappService.getInstanceInfo(businessId);
+          
+          if (instanceInfo) {
+            // Crear o actualizar sesión en BD
+            await models.WhatsAppSession.upsert({
+              businessId,
+              status: 'connected',
+              phoneNumber: instanceInfo.phoneNumber || null,
+              profileName: instanceInfo.profileName || null,
+              connectedAt: new Date(),
+              lastActivity: new Date()
+            });
+            
+            console.log(`[Evolution Webhook] ✅ Sesión guardada para ${businessId}`);
+          }
+        } catch (err) {
+          console.error('[Evolution Webhook] ❌ Error obteniendo info de instancia:', err.message);
+        }
+      } else if (connectionState === 'close' || connectionState === 'disconnected') {
+        console.log(`[Evolution Webhook] ⚠️ Instancia ${businessId} desconectada`);
+        
+        await models.WhatsAppSession.update(
+          { status: 'disconnected', lastActivity: new Date() },
+          { where: { businessId } }
+        );
+      }
+    }
+    
+    // Manejar evento de QR actualizado
+    if (event === 'qrcode.update' || event === 'qrcode_updated') {
+      console.log(`[Evolution Webhook] 📲 QR actualizado para ${businessId}`);
+      
+      if (data?.base64) {
+        whatsappService.currentQRs.set(businessId, data.base64);
+        console.log(`[Evolution Webhook] ✅ QR guardado en memoria para ${businessId}`);
+      }
+    }
+    
+    // Manejar evento de mensaje entrante
+    if (event === 'MESSAGES_UPSERT' || event === 'messages.upsert' || event === 'message_create') {
+      console.log(`[Evolution Webhook] 📥 Mensaje entrante para ${businessId}, evento: ${event}`);
+      console.log(`[Evolution Webhook] 📦 Payload completo:`, JSON.stringify(req.body).substring(0, 1000));
+      
+      try {
+        // Evolution API v2.1.2 envía el mensaje en data.key y data.message
+        const message = data?.key || data;
+        const msgBody = data?.message?.conversation || 
+                       data?.message?.extendedTextMessage?.text || 
+                       data?.text || 
+                       data?.body || '';
+        
+        const from = message?.remoteJid || 
+                    message?.from || 
+                    data?.key?.remoteJid || 
+                    data?.remoteJid || '';
+        
+        const participant = data?.participant || 
+                          data?.key?.participant || 
+                          message?.participant ||
+                          data?.sender ||
+                          req.body?.sender ||
+                          '';
+        
+        const pushName = data?.pushName || 
+                        message?.pushName || '';
+        
+        const messageId = message?.id || 
+                         message?._serialized || 
+                         data?.key?.id || 
+                         data?.id;
+        
+        console.log(`[Evolution Webhook] 🔍 Extraído - from: ${from}, participant: ${participant}, pushName: ${pushName}, body: "${msgBody}", id: ${messageId}`);
+        
+        if (from && msgBody) {
+          const mockMsg = {
+            body: msgBody,
+            from: from,
+            participant: participant,
+            pushName: pushName,
+            id: { _serialized: messageId }
+          };
+          
+          console.log(`[Evolution Webhook] 📨 Procesando mensaje: "${msgBody}" de ${from}`);
+          
+          // Procesar respuesta del cliente
+          await whatsappService.handleClientResponse(businessId, null, mockMsg);
+          
+          console.log(`[Evolution Webhook] ✅ Mensaje procesado para ${businessId}`);
+        } else {
+          console.log(`[Evolution Webhook] ⚠️ Mensaje incompleto - from: ${from}, body: "${msgBody}"`);
+        }
+      } catch (msgErr) {
+        console.error('[Evolution Webhook] ❌ Error procesando mensaje:', msgErr.message);
+        console.error('[Evolution Webhook] ❌ Stack:', msgErr.stack);
+      }
+    }
+    
+    res.status(200).json({ message: 'OK' });
+  } catch (e) {
+    console.error('[Evolution Webhook] ❌ Error procesando webhook:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = router;
