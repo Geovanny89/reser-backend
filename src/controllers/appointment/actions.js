@@ -247,9 +247,9 @@ async function createAppointment(data, user) {
   const result = await Appointment.findByPk(appointment.id, {
     include: [
       { model: Service },
-      { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+      { model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] },
       { model: Business },
-      { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
+      { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name', 'pushToken'] }] }] }
     ]
   });
 
