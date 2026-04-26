@@ -242,8 +242,9 @@ async function emitAppointmentUpdate(appointment, updateType = 'updated') {
 
   const apptData = await formatAppointmentData(appointment);
 
-  // Emitir a todos en el negocio
+  // Emitir a todos en el negocio y a la sala de admins
   io.to(`business:${appointment.businessId}`)
+    .to(`admin:${appointment.businessId}`)
     .emit(`appointment:${updateType}`, apptData);
 
   // Emitir específicamente al empleado asignado
