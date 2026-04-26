@@ -59,8 +59,15 @@ async function seedSuperAdmin() {
  * Inicia el scheduler de mensajes programados
  * Ejecuta cada 5 minutos durante horario laboral (9am-11pm Colombia) PRUEBAS
  */
-function startMessageScheduler() {
+async function startMessageScheduler(readyPromise = null) {
   console.log('📅 Iniciando scheduler de mensajes programados');
+  
+  // Esperar a que todo esté listo (instancias WhatsApp cargadas)
+  if (readyPromise) {
+    console.log('📅 Esperando a que WhatsApp esté listo...');
+    await readyPromise;
+    console.log('📅 WhatsApp listo, continuando...');
+  }
   
   // Ejecutar inmediatamente si estamos en horario
   if (isBusinessHours()) {
@@ -267,16 +274,17 @@ async function start() {
       startPendingAlertService();
       console.log('🔔 Servicio de alertas de citas pendientes iniciado');
       
-      // Iniciar instancias de WhatsApp (esperar a que carguen)
-      try {
-        await initWhatsAppManager();
-        console.log('✅  Instancias de WhatsApp cargadas');
-      } catch (waErr) {
+      // Iniciar instancias de WhatsApp (crear promesa para que scheduler espere)
+      const whatsappReadyPromise = initWhatsAppManager().then(count => {
+        console.log(`✅  Instancias de WhatsApp cargadas: ${count}`);
+        return count;
+      }).catch(waErr => {
         console.error('⚠️  Error cargando instancias WhatsApp:', waErr.message);
-      }
+        return 0;
+      });
       
-      // Iniciar scheduler de mensajes programados (cada 5 minutos)
-      startMessageScheduler();
+      // Iniciar scheduler de mensajes programados (esperará a WhatsApp)
+      await startMessageScheduler(whatsappReadyPromise);
       console.log('📅 Scheduler de mensajes programado iniciado (cada 5 min)');
     });
   } catch (err) {
