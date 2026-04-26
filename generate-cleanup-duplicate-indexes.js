@@ -75,21 +75,21 @@ async function generateCleanupSQL() {
     console.log('   Índices:', allBusinessesIndexes.map(i => i.indexname).join(', '));
     console.log();
 
-    // Buscar índices duplicados en Users (case-insensitive)
+    // Buscar índices duplicados en Users (case-insensitive en el nombre del índice)
     const [usersIndexes] = await sequelize.query(`
       SELECT indexname 
       FROM pg_indexes 
       WHERE LOWER(tablename) = 'users' 
-      AND indexname LIKE 'users_email_key%'
+      AND LOWER(indexname) LIKE 'users_email_key%'
       ORDER BY indexname
     `);
 
-    // Buscar índices duplicados en Businesses (case-insensitive)
+    // Buscar índices duplicados en Businesses (case-insensitive en el nombre del índice)
     const [businessesIndexes] = await sequelize.query(`
       SELECT indexname 
       FROM pg_indexes 
       WHERE LOWER(tablename) = 'businesses' 
-      AND indexname LIKE 'businesses_slug_key%'
+      AND LOWER(indexname) LIKE 'businesses_slug_key%'
       ORDER BY indexname
     `);
 
@@ -98,11 +98,11 @@ async function generateCleanupSQL() {
 
     // Filtrar para mantener solo el índice original (sin número)
     const usersDuplicates = usersIndexes
-      .filter(idx => idx.indexname !== 'users_email_key')
+      .filter(idx => idx.indexname !== 'Users_email_key')
       .map(idx => idx.indexname);
 
     const businessesDuplicates = businessesIndexes
-      .filter(idx => idx.indexname !== 'businesses_slug_key')
+      .filter(idx => idx.indexname !== 'Businesses_slug_key')
       .map(idx => idx.indexname);
 
     console.log(`🗑️  ${usersDuplicates.length} índices duplicados en Users`);
