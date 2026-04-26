@@ -96,7 +96,7 @@ async function createInstance(businessId, forceFresh = false) {
 async function configureWebhook(businessId) {
   try {
     // Usar host.docker.internal para Docker Desktop en Windows
-    const webhookUrl = 'http://host.docker.internal:4000/api/notifications/evolution/webhook';
+    const webhookUrl = 'http://72.62.165.89:4000/api/notifications/evolution/webhook';
     
     console.log(`[Evolution API] 🔗 Configurando webhook para ${businessId}: ${webhookUrl}`);
     
