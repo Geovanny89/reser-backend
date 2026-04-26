@@ -301,7 +301,7 @@ async function createAppointment(data, user) {
       // Enviar push notification al dueño (async)
       console.log('[Create Appointment] Verificando pushToken del dueño:', owner?.pushToken ? 'EXISTS' : 'NULL');
       if (owner?.pushToken) {
-        const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
         console.log('[Create Appointment] Enviando push al dueño:', owner.name);
         sendPushNotification(owner.pushToken, {
           title: '📅 Nueva Cita Agendada',
@@ -317,7 +317,7 @@ async function createAppointment(data, user) {
       // Enviar push al empleado asignado (async)
       console.log('[Create Appointment] Verificando pushToken del empleado:', fullAppt.Employee?.User?.pushToken ? 'EXISTS' : 'NULL');
       if (fullAppt.Employee?.User?.pushToken) {
-        const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
         console.log('[Create Appointment] Enviando push al empleado:', fullAppt.Employee.User.name);
         sendPushNotification(fullAppt.Employee.User.pushToken, {
           title: '📅 Nueva Cita Asignada',

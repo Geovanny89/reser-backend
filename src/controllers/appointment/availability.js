@@ -239,9 +239,9 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
       });
 
       if (conflictAppt) {
-        // Saltar hasta que termine la cita
+        // Saltar exactamente al final de la cita - el siguiente slot inicia cuando termina esta
         current = dateToMinutesColombia(conflictAppt.endTime);
-        // NO hacer continue - permitir verificar si el slot cabe a esta hora exacta
+        continue;
       }
 
       // ==================== 3. BLOQUEOS / ALMUERZO ====================

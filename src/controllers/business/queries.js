@@ -390,6 +390,8 @@ exports.getAvailability = async (req, res) => {
         blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
       }
 
+      const SLOT_INTERVAL = 15; // Intervalo fijo de 15 minutos para slots
+
       for (const sched of workSchedules) {
         const workStart = toMinutes(sched.startTime);
         const workEnd = toMinutes(sched.endTime);
@@ -406,7 +408,7 @@ exports.getAvailability = async (req, res) => {
 
           // 1. Filtrar si ya pasó
           if (isTargetToday && slotStart.getTime() <= (nowMs - MARGIN_MS)) {
-            current += 5;
+            current += SLOT_INTERVAL;
             continue;
           }
 
@@ -418,6 +420,7 @@ exports.getAvailability = async (req, res) => {
           });
 
           if (conflictAppt) {
+            // Saltar exactamente al final de la cita - el siguiente slot inicia cuando termina esta
             current = dateToMinutesColombia(conflictAppt.endTime);
             continue;
           }
@@ -430,6 +433,7 @@ exports.getAvailability = async (req, res) => {
           if (conflictBlock) {
             const blockEnd = toMinutes(conflictBlock.endTime);
             if (blockEnd >= workEnd) break;
+            // Saltar exactamente al final del bloqueo
             current = blockEnd;
             continue;
           }
@@ -443,7 +447,7 @@ exports.getAvailability = async (req, res) => {
             localTime: timeStr,
           });
 
-          current += safeDuration;
+          current += SLOT_INTERVAL;
         }
       }
     }
