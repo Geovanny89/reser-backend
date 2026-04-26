@@ -3,10 +3,10 @@
  */
 const socketConfig = {
   cors: {
-    origin: process.env.FRONTEND_URL || '*',
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
+  origin: ["https://reservas.k-dice.com", "https://api-reservas.k-dice.com"],
+  methods: ['GET', 'POST'],
+  credentials: true,
+},
   // Configuración para mínimo consumo de memoria
   pingTimeout: 60000,
   pingInterval: 25000,
