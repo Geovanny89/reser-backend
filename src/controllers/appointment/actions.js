@@ -299,8 +299,10 @@ async function createAppointment(data, user) {
       }
 
       // Enviar push notification al dueño (async)
+      console.log('[Create Appointment] Verificando pushToken del dueño:', owner?.pushToken ? 'EXISTS' : 'NULL');
       if (owner?.pushToken) {
         const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        console.log('[Create Appointment] Enviando push al dueño:', owner.name);
         sendPushNotification(owner.pushToken, {
           title: '📅 Nueva Cita Agendada',
           body: `${fullAppt.clientName || 'Cliente'} agendó ${fullAppt.Service?.name || 'servicio'} a las ${startTimeStr}`,
@@ -308,12 +310,15 @@ async function createAppointment(data, user) {
           type: 'new_appointment',
           appointmentId: fullAppt.id,
           businessName: String(fullAppt.Business?.name || ''),
-        }).catch(e => console.error('[Push] Owner notify error:', e.message));
+        }).then(result => console.log('[Create Appointment] Push enviado al dueño:', result))
+          .catch(e => console.error('[Push] Owner notify error:', e.message));
       }
 
       // Enviar push al empleado asignado (async)
+      console.log('[Create Appointment] Verificando pushToken del empleado:', fullAppt.Employee?.User?.pushToken ? 'EXISTS' : 'NULL');
       if (fullAppt.Employee?.User?.pushToken) {
         const startTimeStr = new Date(fullAppt.startTime).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+        console.log('[Create Appointment] Enviando push al empleado:', fullAppt.Employee.User.name);
         sendPushNotification(fullAppt.Employee.User.pushToken, {
           title: '📅 Nueva Cita Asignada',
           body: `Tienes una cita con ${fullAppt.clientName || 'Cliente'} (${fullAppt.Service?.name || 'Servicio'}) a las ${startTimeStr}`,
@@ -321,7 +326,8 @@ async function createAppointment(data, user) {
           type: 'new_appointment',
           appointmentId: fullAppt.id,
           employeeId: fullAppt.employeeId,
-        }).catch(e => console.error('[Push] Employee notify error:', e.message));
+        }).then(result => console.log('[Create Appointment] Push enviado al empleado:', result))
+          .catch(e => console.error('[Push] Employee notify error:', e.message));
       }
 
       // Email al cliente (async)
