@@ -267,8 +267,13 @@ async function start() {
       startPendingAlertService();
       console.log('🔔 Servicio de alertas de citas pendientes iniciado');
       
-      // Iniciar instancias de WhatsApp
-      initWhatsAppManager();
+      // Iniciar instancias de WhatsApp (esperar a que carguen)
+      try {
+        await initWhatsAppManager();
+        console.log('✅  Instancias de WhatsApp cargadas');
+      } catch (waErr) {
+        console.error('⚠️  Error cargando instancias WhatsApp:', waErr.message);
+      }
       
       // Iniciar scheduler de mensajes programados (cada 5 minutos)
       startMessageScheduler();

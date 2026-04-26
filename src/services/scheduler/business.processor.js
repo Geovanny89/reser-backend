@@ -49,8 +49,9 @@ async function processBusinessMessagesInternal(businessId, messages) {
       console.log(`[Scheduler] 🔄 Resuelto businessId: ${businessId} -> ${resolvedBusinessId} (sucursal usando WhatsApp del padre)`);
     }
 
-    if (!whatsappService.hasValidSession(resolvedBusinessId)) {
-      console.log(`[Scheduler] ⚠️ Negocio ${resolvedBusinessId} no tiene sesión válida, saltando...`);
+    const hasSession = await whatsappService.hasValidSession(resolvedBusinessId);
+    if (!hasSession) {
+      console.log(`[Scheduler] ⚠️ Negocio ${resolvedBusinessId} no tiene sesión válida en Evolution API, saltando...`);
       return { success: false, reason: 'no_session', messagesKept: messages.length };
     }
 

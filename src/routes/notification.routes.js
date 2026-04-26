@@ -277,6 +277,15 @@ router.post('/evolution/webhook', async (req, res) => {
       if (connectionState === 'open' || connectionState === 'connected') {
         console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada, guardando sesión...`);
         
+        // IMPORTANTE: Actualizar estado en memoria para que hasValidSession funcione
+        const { setInstance } = require('../services/evolution/state');
+        setInstance(businessId, {
+          instanceName: businessId,
+          status: 'connected',
+          createdAt: new Date()
+        });
+        console.log(`[Evolution Webhook] 💾 Estado guardado en memoria para ${businessId}: connected`);
+        
         // Obtener información de la instancia
         try {
           const instanceInfo = await whatsappService.getInstanceInfo(businessId);
@@ -292,13 +301,21 @@ router.post('/evolution/webhook', async (req, res) => {
               lastActivity: new Date()
             });
             
-            console.log(`[Evolution Webhook] ✅ Sesión guardada para ${businessId}`);
+            console.log(`[Evolution Webhook] ✅ Sesión guardada en BD para ${businessId}`);
           }
         } catch (err) {
           console.error('[Evolution Webhook] ❌ Error obteniendo info de instancia:', err.message);
         }
       } else if (connectionState === 'close' || connectionState === 'disconnected') {
         console.log(`[Evolution Webhook] ⚠️ Instancia ${businessId} desconectada`);
+        
+        // Actualizar memoria también
+        const { setInstance } = require('../services/evolution/state');
+        setInstance(businessId, {
+          instanceName: businessId,
+          status: 'disconnected',
+          createdAt: new Date()
+        });
         
         await models.WhatsAppSession.update(
           { status: 'disconnected', lastActivity: new Date() },

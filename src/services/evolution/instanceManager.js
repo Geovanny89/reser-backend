@@ -429,10 +429,10 @@ async function sendMessageDirect(businessId, phone, text) {
   }
 }
 
-function hasValidSession(businessId) {
-  const instance = getInstance(businessId);
-  // Evolution API usa 'open' o 'connected' como estados válidos
-  return instance && (instance.status === 'open' || instance.status === 'connected');
+async function hasValidSession(businessId) {
+  // Evolution API mantiene sesiones persistentes - verificar estado real
+  const realState = await getConnectionState(businessId);
+  return realState === 'open' || realState === 'connected';
 }
 
 function extractPhoneFromInstance(instance) {
