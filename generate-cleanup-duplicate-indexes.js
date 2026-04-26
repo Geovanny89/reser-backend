@@ -53,20 +53,20 @@ async function generateCleanupSQL() {
     await sequelize.authenticate();
     console.log('✅ Conectado a la base de datos\n');
 
-    // Buscar índices duplicados en Users
+    // Buscar índices duplicados en Users (case-insensitive)
     const [usersIndexes] = await sequelize.query(`
       SELECT indexname 
       FROM pg_indexes 
-      WHERE tablename = 'users' 
+      WHERE LOWER(tablename) = 'users' 
       AND indexname LIKE 'users_email_key%'
       ORDER BY indexname
     `);
 
-    // Buscar índices duplicados en Businesses
+    // Buscar índices duplicados en Businesses (case-insensitive)
     const [businessesIndexes] = await sequelize.query(`
       SELECT indexname 
       FROM pg_indexes 
-      WHERE tablename = 'businesses' 
+      WHERE LOWER(tablename) = 'businesses' 
       AND indexname LIKE 'businesses_slug_key%'
       ORDER BY indexname
     `);
@@ -128,9 +128,9 @@ async function generateCleanupSQL() {
     sql += '-- VERIFICACIÓN\n';
     sql += '-- ============================================\n\n';
     sql += '-- Verificar índices restantes en Users\n';
-    sql += 'SELECT indexname FROM pg_indexes WHERE tablename = \'users\' AND indexname LIKE \'users_email_key%\' ORDER BY indexname;\n\n';
+    sql += 'SELECT indexname FROM pg_indexes WHERE LOWER(tablename) = \'users\' AND indexname LIKE \'users_email_key%\' ORDER BY indexname;\n\n';
     sql += '-- Verificar índices restantes en Businesses\n';
-    sql += 'SELECT indexname FROM pg_indexes WHERE tablename = \'businesses\' AND indexname LIKE \'businesses_slug_key%\' ORDER BY indexname;\n';
+    sql += 'SELECT indexname FROM pg_indexes WHERE LOWER(tablename) = \'businesses\' AND indexname LIKE \'businesses_slug_key%\' ORDER BY indexname;\n';
 
     // Guardar archivo SQL
     const fs = require('fs');
