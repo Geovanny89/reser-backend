@@ -4,12 +4,19 @@
  */
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.addColumn('EmployeeVacations', 'description', {
-      type: Sequelize.STRING,
-      allowNull: true,
-      comment: 'Descripción opcional (ej: Vacaciones de verano)'
-    });
-    console.log('✅ Columna "description" agregada a EmployeeVacations');
+    // Verificar si la columna ya existe
+    const tableInfo = await queryInterface.describeTable('EmployeeVacations');
+    
+    if (!tableInfo.description) {
+      await queryInterface.addColumn('EmployeeVacations', 'description', {
+        type: Sequelize.STRING,
+        allowNull: true,
+        comment: 'Descripción opcional (ej: Vacaciones de verano)'
+      });
+      console.log('✅ Columna "description" agregada a EmployeeVacations');
+    } else {
+      console.log('⚠️ Columna "description" ya existe en EmployeeVacations');
+    }
   },
 
   down: async (queryInterface, Sequelize) => {
