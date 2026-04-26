@@ -94,7 +94,8 @@ router.get('/whatsapp/status', auth, async (req, res) => {
       }
     } else if (actualStatus === 'disconnected' || !session) {
       // Verificar si hay sesión guardada en disco que no está reflejada en BD
-      if (whatsappService.hasValidSession && whatsappService.hasValidSession(businessId)) {
+      // Solo para Evolution API - verificar que la instancia realmente existe
+      if (whatsappService.hasValidSession && await whatsappService.hasValidSession(businessId)) {
         actualStatus = 'session_saved';
         // Verificar que el negocio existe antes de crear/actualizar registro en BD
         const businessExists = await models.Business.findByPk(businessId);
