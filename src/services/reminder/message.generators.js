@@ -89,6 +89,22 @@ function generateReferenceMessage(appt, startTimeStr) {
 ¡Te esperamos! 💫`;
 }
 
+function generateAppointmentCreatedMessage(appt) {
+  const serviceName = appt.Service?.name || 'Servicio';
+  const businessName = appt.Business?.name || 'Negocio';
+  const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', timeZone: 'America/Bogota' });
+  const dateStr = new Date(appt.startTime).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Bogota' });
+
+  const templates = [
+    `✅ *¡Cita Agendada!* 🎉\n\nHola *${appt.clientName}*, tu cita para *${serviceName}* en *${businessName}* ha sido confirmada.\n\n📅 Fecha: ${dateStr}\n⏰ Hora: ${timeStr}\n\n¡Te esperamos! 😊`,
+    `📅 *¡Tu cita está lista!* ✨\n\n*${appt.clientName}*, hemos agendado tu cita de *${serviceName}* en *${businessName}*\n\n🗓️ ${dateStr}\n🕐 ${timeStr}\n\n¡Nos vemos pronto! 🤗`,
+    `🌟 *Confirmación de Cita* ✅\n\nHola *${appt.clientName}*!\n\nTu cita para *${serviceName}* en *${businessName}* está programada:\n\n📆 ${dateStr}\n⏰ ${timeStr}\n\n¡Gracias por agendar con nosotros! 💫`,
+    `✨ *¡Cita Confirmada!* 🎊\n\n*${appt.clientName}*, todo listo para tu visita a *${businessName}*\n\n💇 Servicio: *${serviceName}*\n📅 ${dateStr}\n🕐 ${timeStr}\n\n¡Te esperamos con gusto! 😄`
+  ];
+
+  return getRandomTemplate(templates);
+}
+
 module.exports = {
   generateConfirmedReminder24h,
   generateUnconfirmedReminder24h,
@@ -99,4 +115,5 @@ module.exports = {
   generateReminder1h,
   generateGenericReminder,
   generateReferenceMessage,
+  generateAppointmentCreatedMessage,
 };

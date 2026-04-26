@@ -11,6 +11,7 @@ const { scheduleMessage } = require('../../services/schedulerService');
 const { sendEmail } = require('../../config/email');
 const { sendPushNotification } = require('../../services/pushNotificationService');
 const { generatePaymentReceipt } = require('../../utils/pdfGenerator');
+const { generateAppointmentCreatedMessage } = require('../../services/reminder/message.generators');
 
 /**
  * Crea una nueva cita
@@ -346,6 +347,26 @@ async function createAppointment(data, user) {
           startTime: String(fullAppt.startTime || ''),
           price: String(fullAppt.finalPrice || fullAppt.Service?.price || ''),
         }).catch(e => console.error('[Email] Client notify error:', e.message));
+      }
+
+      // WhatsApp al cliente - Mensaje de confirmación 1 minuto después de crear la cita
+      // Solo si tiene teléfono y no es negocio de técnicos de campo
+      if (fullAppt.clientPhone && !fullAppt.Business?.hasFieldTechnicians) {
+        console.log('[Create Appointment] Programando mensaje de WhatsApp 1 min después...');
+        try {
+          const messageText = generateAppointmentCreatedMessage(fullAppt);
+          await scheduleMessage({
+            businessId: fullAppt.businessId,
+            appointmentId: fullAppt.id,
+            phone: fullAppt.clientPhone,
+            message: messageText,
+            type: 'appointment_created',
+            scheduledAt: new Date(Date.now() + 1 * 60 * 1000) // 1 minuto después
+          });
+          console.log('[Create Appointment] ✅ Mensaje de cita creada programado para 1 minuto después');
+        } catch (waErr) {
+          console.error('[Create Appointment] Error programando mensaje WhatsApp:', waErr.message);
+        }
       }
 
       console.log('[Create Appointment] ✅ Notificaciones iniciadas (socket ya emitido)');

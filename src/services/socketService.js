@@ -16,7 +16,7 @@ const connectionStats = {
 function initializeSocketServer(httpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || '*',
+      origin: '*', // Temporal: permitir cualquier origen para debuggear
       methods: ['GET', 'POST'],
       credentials: true
     },
@@ -250,6 +250,7 @@ async function emitAppointmentUpdate(appointment, updateType = 'updated') {
   // Emitir específicamente al empleado asignado
   if (appointment.employeeId) {
     io.to(`employee:${appointment.employeeId}`)
+      .to(`employee_appointments:${appointment.employeeId}`)
       .emit(`appointment:${updateType}`, apptData);
   }
 
@@ -275,6 +276,7 @@ async function emitAppointmentCancelled(appointment, cancelledBy) {
 
   io.to(`business:${appointment.businessId}`)
     .to(`employee:${appointment.employeeId}`)
+    .to(`employee_appointments:${appointment.employeeId}`)
     .emit('appointment:cancelled', {
       ...apptData,
       cancelledBy: cancelledBy || 'system'
