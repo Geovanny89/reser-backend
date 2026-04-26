@@ -258,7 +258,7 @@ async function start() {
     // Hacer io disponible globalmente para los controladores
     global.io = io;
     
-    httpServer.listen(PORT, '0.0.0.0', () => {
+    httpServer.listen(PORT, '0.0.0.0', async () => {
       // Notificar a PM2 que estamos listos (para wait_ready: true)
       if (process.send) process.send('ready');
       console.log(`🚀  Backend corriendo en http://0.0.0.0:${PORT}`);
