@@ -53,6 +53,28 @@ async function generateCleanupSQL() {
     await sequelize.authenticate();
     console.log('✅ Conectado a la base de datos\n');
 
+    // Primero, listar TODOS los índices de Users para ver qué nombres tienen
+    const [allUsersIndexes] = await sequelize.query(`
+      SELECT indexname 
+      FROM pg_indexes 
+      WHERE LOWER(tablename) = 'users' 
+      ORDER BY indexname
+    `);
+
+    // Listar TODOS los índices de Businesses
+    const [allBusinessesIndexes] = await sequelize.query(`
+      SELECT indexname 
+      FROM pg_indexes 
+      WHERE LOWER(tablename) = 'businesses' 
+      ORDER BY indexname
+    `);
+
+    console.log(`📊 Total de índices en Users: ${allUsersIndexes.length}`);
+    console.log('   Índices:', allUsersIndexes.map(i => i.indexname).join(', '));
+    console.log(`\n📊 Total de índices en Businesses: ${allBusinessesIndexes.length}`);
+    console.log('   Índices:', allBusinessesIndexes.map(i => i.indexname).join(', '));
+    console.log();
+
     // Buscar índices duplicados en Users (case-insensitive)
     const [usersIndexes] = await sequelize.query(`
       SELECT indexname 
@@ -71,8 +93,8 @@ async function generateCleanupSQL() {
       ORDER BY indexname
     `);
 
-    console.log(`📊 Encontrados ${usersIndexes.length} índices en Users`);
-    console.log(`📊 Encontrados ${businessesIndexes.length} índices en Businesses\n`);
+    console.log(`📊 Índices con patrón users_email_key%: ${usersIndexes.length}`);
+    console.log(`📊 Índices con patrón businesses_slug_key%: ${businessesIndexes.length}\n`);
 
     // Filtrar para mantener solo el índice original (sin número)
     const usersDuplicates = usersIndexes
