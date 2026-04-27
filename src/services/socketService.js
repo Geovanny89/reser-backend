@@ -238,32 +238,19 @@ async function emitNewAppointment(appointment, options = {}) {
  * Emite actualización de estado de cita
  */
 async function emitAppointmentUpdate(appointment, updateType = 'updated') {
-  if (!io) {
-    console.log('📢 [Socket] ❌ io es null - no se puede emitir appointment update');
-    return;
-  }
+  if (!io) return;
 
   const apptData = await formatAppointmentData(appointment);
 
-  console.log(`📢 [Socket] Emitiendo appointment:${updateType} para cita ${appointment.id}:`, {
-    businessId: appointment.businessId,
-    employeeId: appointment.employeeId,
-    status: appointment.status
-  });
-
-  // Emitir a todos en el negocio (admin web + empleados)
+  // Emitir a todos en el negocio y a la sala de admins
   io.to(`business:${appointment.businessId}`)
+    .to(`admin:${appointment.businessId}`)
     .emit(`appointment:${updateType}`, apptData);
 
-  // Emitir también a sala específica de admins
-  io.to(`admin:${appointment.businessId}`)
-    .emit(`appointment:${updateType}`, apptData);
-
-  // Emitir específicamente al empleado asignado (para APK)
+  // Emitir específicamente al empleado asignado
   if (appointment.employeeId) {
     io.to(`employee:${appointment.employeeId}`)
       .emit(`appointment:${updateType}`, apptData);
-    console.log(`📢 [Socket] ✅ Evento appointment:${updateType} emitido a employee:${appointment.employeeId}`);
   }
 
   // Notificar cambio en fecha
@@ -286,34 +273,12 @@ async function emitAppointmentCancelled(appointment, cancelledBy) {
 
   const apptData = await formatAppointmentData(appointment);
 
-  console.log(`📢 [Socket] Emitiendo appointment:cancelled para cita ${appointment.id}:`, {
-    businessId: appointment.businessId,
-    employeeId: appointment.employeeId
-  });
-
-  // Emitir a todos en el negocio (admin web + empleados)
   io.to(`business:${appointment.businessId}`)
+    .to(`employee:${appointment.employeeId}`)
     .emit('appointment:cancelled', {
       ...apptData,
       cancelledBy: cancelledBy || 'system'
     });
-
-  // Emitir también a sala específica de admins
-  io.to(`admin:${appointment.businessId}`)
-    .emit('appointment:cancelled', {
-      ...apptData,
-      cancelledBy: cancelledBy || 'system'
-    });
-
-  // Emitir específicamente al empleado asignado (para APK)
-  if (appointment.employeeId) {
-    io.to(`employee:${appointment.employeeId}`)
-      .emit('appointment:cancelled', {
-        ...apptData,
-        cancelledBy: cancelledBy || 'system'
-      });
-    console.log(`📢 [Socket] ✅ Evento appointment:cancelled emitido a employee:${appointment.employeeId}`);
-  }
 }
 
 /**
