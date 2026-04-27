@@ -238,9 +238,19 @@ async function emitNewAppointment(appointment, options = {}) {
  * Emite actualización de estado de cita
  */
 async function emitAppointmentUpdate(appointment, updateType = 'updated') {
-  if (!io) return;
+  if (!io) {
+    console.log('📢 [Socket] ❌ io es null - no se puede emitir appointment update');
+    return;
+  }
 
   const apptData = await formatAppointmentData(appointment);
+
+  console.log(`📢 [Socket] Emitiendo appointment:${updateType} para cita ${appointment.id}:`, {
+    businessId: appointment.businessId,
+    employeeId: appointment.employeeId,
+    status: appointment.status,
+    rooms: [`business:${appointment.businessId}`, `admin:${appointment.businessId}`, `employee:${appointment.employeeId}`, `employee_appointments:${appointment.employeeId}`]
+  });
 
   // Emitir a todos en el negocio y a la sala de admins
   io.to(`business:${appointment.businessId}`)
@@ -249,9 +259,19 @@ async function emitAppointmentUpdate(appointment, updateType = 'updated') {
 
   // Emitir específicamente al empleado asignado
   if (appointment.employeeId) {
-    io.to(`employee:${appointment.employeeId}`)
-      .to(`employee_appointments:${appointment.employeeId}`)
+    const room1 = `employee:${appointment.employeeId}`;
+    const room2 = `employee_appointments:${appointment.employeeId}`;
+    
+    const room1Sockets = io.sockets.adapter.rooms.get(room1)?.size || 0;
+    const room2Sockets = io.sockets.adapter.rooms.get(room2)?.size || 0;
+    
+    console.log(`📢 [Socket] Sockets en ${room1}: ${room1Sockets}, en ${room2}: ${room2Sockets}`);
+    
+    io.to(room1)
+      .to(room2)
       .emit(`appointment:${updateType}`, apptData);
+    
+    console.log(`📢 [Socket] ✅ Evento appointment:${updateType} emitido a empleado ${appointment.employeeId}`);
   }
 
   // Notificar cambio en fecha
