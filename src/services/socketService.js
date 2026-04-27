@@ -249,30 +249,16 @@ async function emitAppointmentUpdate(appointment, updateType = 'updated') {
     businessId: appointment.businessId,
     employeeId: appointment.employeeId,
     status: appointment.status,
-    rooms: [`business:${appointment.businessId}`, `admin:${appointment.businessId}`, `employee:${appointment.employeeId}`, `employee_appointments:${appointment.employeeId}`]
+    rooms: [`business:${appointment.businessId}`, `admin:${appointment.businessId}`]
   });
 
   // Emitir a todos en el negocio y a la sala de admins
+  // Esto incluye a admin web y empleados (que se unen a business:roomId al conectar)
   io.to(`business:${appointment.businessId}`)
     .to(`admin:${appointment.businessId}`)
     .emit(`appointment:${updateType}`, apptData);
 
-  // Emitir específicamente al empleado asignado
-  if (appointment.employeeId) {
-    const room1 = `employee:${appointment.employeeId}`;
-    const room2 = `employee_appointments:${appointment.employeeId}`;
-    
-    const room1Sockets = io.sockets.adapter.rooms.get(room1)?.size || 0;
-    const room2Sockets = io.sockets.adapter.rooms.get(room2)?.size || 0;
-    
-    console.log(`📢 [Socket] Sockets en ${room1}: ${room1Sockets}, en ${room2}: ${room2Sockets}`);
-    
-    io.to(room1)
-      .to(room2)
-      .emit(`appointment:${updateType}`, apptData);
-    
-    console.log(`📢 [Socket] ✅ Evento appointment:${updateType} emitido a empleado ${appointment.employeeId}`);
-  }
+  console.log(`📢 [Socket] ✅ Evento appointment:${updateType} emitido a business y admin rooms`);
 
   // Notificar cambio en fecha
   if (appointment.startTime) {
@@ -294,13 +280,20 @@ async function emitAppointmentCancelled(appointment, cancelledBy) {
 
   const apptData = await formatAppointmentData(appointment);
 
+  console.log(`📢 [Socket] Emitiendo appointment:cancelled para cita ${appointment.id}:`, {
+    businessId: appointment.businessId,
+    employeeId: appointment.employeeId,
+    rooms: [`business:${appointment.businessId}`, `admin:${appointment.businessId}`]
+  });
+
   io.to(`business:${appointment.businessId}`)
-    .to(`employee:${appointment.employeeId}`)
-    .to(`employee_appointments:${appointment.employeeId}`)
+    .to(`admin:${appointment.businessId}`)
     .emit('appointment:cancelled', {
       ...apptData,
       cancelledBy: cancelledBy || 'system'
     });
+
+  console.log(`📢 [Socket] ✅ Evento appointment:cancelled emitido a business y admin rooms`);
 }
 
 /**
