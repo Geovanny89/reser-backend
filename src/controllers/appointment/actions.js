@@ -91,9 +91,19 @@ async function createAppointment(data, user) {
   const end = new Date(start.getTime() + service.durationMin * 60000);
   console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString(), originalStartTime: startTime });
 
+  // Validar que la hora no sea en el pasado (con margen de 5 minutos)
+  // Las citas express (status='attention') están exentas de esta validación
+  const isExpress = status === 'attention';
+  if (!isExpress) {
+    const now = new Date();
+    const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de margen
+    if (start.getTime() < (now.getTime() - MARGIN_MS)) {
+      throw new Error('No se pueden crear citas para horas en el pasado');
+    }
+  }
+
   // Verificar conflictos SOLO si no es cita express (status='attention')
   // Las citas express son para atención inmediata y no deben ser bloqueadas
-  const isExpress = status === 'attention';
 
   if (!isExpress) {
     const conflict = await Appointment.findOne({

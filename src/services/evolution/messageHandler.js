@@ -266,8 +266,20 @@ function isConfirmation(text) {
  * Verifica si el texto es una cancelación
  */
 function isCancellation(text) {
-  const cancellations = ['2', 'no', 'cancelar', 'cancelo', 'cancel', 'no puedo', 'no asistiré', 'no asistire'];
-  return cancellations.some(c => text.toLowerCase().trim().includes(c));
+  const cleanText = text.toLowerCase().trim();
+  const cancellations = ['2', 'no', 'cancelar', 'cancelo', 'cancel', 'no puedo', 'no asistiré', 'no asistire', 'no asistir'];
+  
+  // Verificar coincidencia exacta primero (para respuestas simples como "no", "2")
+  if (cancellations.includes(cleanText)) {
+    return true;
+  }
+  
+  // Para frases más largas, verificar que el texto SEA exactamente una de las opciones
+  // pero permitir variaciones menores en espacios
+  const normalizedText = cleanText.replace(/\s+/g, ' ');
+  const normalizedCancellations = cancellations.map(c => c.replace(/\s+/g, ' '));
+  
+  return normalizedCancellations.includes(normalizedText);
 }
 
 /**
@@ -448,27 +460,29 @@ async function handleClientResponse(businessId, client, msg) {
         matchedAppointments = [awaitingConfirmByName];
         console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation encontrada por nombre: status=${awaitingConfirmByName.status}`);
       } else {
-        // Si ninguna de las citas por nombre está esperando confirmación, usar la awaiting_confirmation más antigua
-        console.log(`[Evolution Message] ⚠️ Citas por nombre no están esperando confirmación, usando awaiting_confirmation más antigua`);
-        const awaitingConfirmAppt = awaitingConfirm.length > 0 ? awaitingConfirm[awaitingConfirm.length - 1] : null;
-        if (awaitingConfirmAppt) {
-          matchedAppointments = [awaitingConfirmAppt];
-          console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation más antigua: nombre="${awaitingConfirmAppt.clientName}", startTime=${awaitingConfirmAppt.startTime}`);
+        // Si ninguna de las citas por nombre está esperando confirmación, NO usar citas awaiting_confirmation
+        // para evitar cancelaciones incorrectas - solo usar citas activas con coincidencia de nombre
+        console.log(`[Evolution Message] ⚠️ Citas por nombre no están esperando confirmación - usando citas activas con coincidencia de nombre`);
+        const activeApptsByName = matchedAppointments.filter(a => ['pending', 'confirmed', 'attention'].includes(a.status));
+        if (activeApptsByName.length > 0) {
+          matchedAppointments = [activeApptsByName[0]];
+          console.log(`[Evolution Message] 🎯 Usando cita activa por coincidencia de nombre: status=${activeApptsByName[0].status}`);
+        } else {
+          matchedAppointments = [];
+          console.log(`[Evolution Message] ⚠️ Sin citas activas con coincidencia de nombre, ignorando mensaje`);
         }
       }
     } else {
-      // Si no hay coincidencia por nombre, usar la cita más reciente que esté esperando confirmación
-      console.log(`[Evolution Message] ⚠️ Sin coincidencia por nombre, buscando cita awaiting_confirmation más reciente`);
-      const awaitingConfirmAppt = awaitingConfirm.length > 0 ? awaitingConfirm[0] : null;
-      if (awaitingConfirmAppt) {
-        matchedAppointments = [awaitingConfirmAppt];
-        console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation más reciente: nombre="${awaitingConfirmAppt.clientName}", startTime=${awaitingConfirmAppt.startTime}`);
-      } else if (activeAppts.length > 0) {
+      // Si no hay coincidencia por nombre en lista de difusión, NO usar citas awaiting_confirmation
+      // para evitar cancelaciones incorrectas por mensajes de personas no identificadas
+      console.log(`[Evolution Message] ⚠️ Sin coincidencia por nombre en lista de difusión - ignorando para evitar cancelaciones incorrectas`);
+      // Solo usar citas activas si el teléfono coincide directamente (no en lista de difusión)
+      if (!isFromList && activeAppts.length > 0) {
         matchedAppointments = [activeAppts[0]];
-        console.log(`[Evolution Message] 🎯 Usando cita activa más reciente: status=${activeAppts[0].status}`);
-      } else if (doneAppts.length > 0) {
-        matchedAppointments = [doneAppts[0]];
-        console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating más reciente`);
+        console.log(`[Evolution Message] 🎯 Usando cita activa por coincidencia de teléfono directo: status=${activeAppts[0].status}`);
+      } else {
+        matchedAppointments = [];
+        console.log(`[Evolution Message] ⚠️ Sin coincidencia válida, ignorando mensaje`);
       }
     }
   }
@@ -553,6 +567,18 @@ async function processAppointmentResponse(appt, text, msg, phone) {
     if (isConfirmation(text)) {
       return await handleConfirmation(appt, msg);
     } else if (isCancellation(text)) {
+      // Verificación de seguridad adicional: el teléfono debe coincidir antes de cancelar
+      const dbPhone = cleanPhoneNumber(appt.clientPhone);
+      const cleanPhone = cleanPhoneNumber(phone);
+      const phoneMatch = dbPhone === cleanPhone || 
+                         dbPhone.slice(-10) === cleanPhone.slice(-10) ||
+                         cleanPhone.includes(dbPhone.slice(-10));
+      
+      if (!phoneMatch) {
+        console.log(`[Evolution Message] ⚠️ CANCELACIÓN BLOQUEADA: Teléfono no coincide - DB="${dbPhone}" vs Incoming="${cleanPhone}"`);
+        return false;
+      }
+      
       return await handleCancellation(appt, msg);
     }
   }
