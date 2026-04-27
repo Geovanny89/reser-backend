@@ -7,6 +7,7 @@ const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const { deleteFromCloudinary } = require('../../config/cloudinary');
 const { checkUserLimit } = require('./utils');
+const cacheService = require('../../services/cacheService');
 
 /**
  * Obtiene empleados por negocio con estadísticas
@@ -138,6 +139,12 @@ async function create(req, res) {
       validate: false
     });
 
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.status(201).json({
       ...emp.toJSON(),
       tempPassword // Devolver para mostrar al admin si se creó
@@ -212,6 +219,12 @@ async function invite(req, res) {
       description: description || null
     });
 
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(finalBusinessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.status(201).json({
       employee,
       user: { id: user.id, name: user.name, email: user.email },
@@ -265,12 +278,18 @@ async function update(req, res) {
     }
 
     await emp.update(employeeUpdates);
-    
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(emp.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     // Devolver empleado actualizado con datos del usuario
     const updatedEmp = await Employee.findByPk(req.params.id, {
       include: [{ model: User, attributes: ['id', 'name', 'email'] }]
     });
-    
+
     res.json(updatedEmp);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -285,6 +304,13 @@ async function remove(req, res) {
     const emp = await Employee.findByPk(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
     await emp.update({ active: false });
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(emp.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.json({ message: 'Empleado desactivado' });
   } catch (e) {
     res.status(500).json({ error: e.message });

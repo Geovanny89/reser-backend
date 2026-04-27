@@ -360,7 +360,7 @@ async function createAppointment(data, user) {
             appointmentId: fullAppt.id,
             phone: fullAppt.clientPhone,
             message: messageText,
-            type: 'appointment_created',
+            type: 'custom',
             scheduledAt: new Date(Date.now() + 1 * 60 * 1000) // 1 minuto después
           });
           console.log('[Create Appointment] ✅ Mensaje de cita creada programado para 1 minuto después');
@@ -692,11 +692,14 @@ async function updateAppointment(appointmentId, data) {
   if (employeeId) updateData.employeeId = employeeId;
 
   if (startTime && !updateData.startTime) {
-    const service = await Service.findByPk(updateData.serviceId || appointment.serviceId);
-    const durationMin = service?.durationMin || service?.duration || 30;
-    const start = new Date(startTime);
-    updateData.startTime = start;
-    updateData.endTime = new Date(start.getTime() + durationMin * 60000);
+    const parsedStartTime = new Date(startTime);
+    // Only update if startTime is a valid date
+    if (!isNaN(parsedStartTime.getTime())) {
+      const service = await Service.findByPk(updateData.serviceId || appointment.serviceId);
+      const durationMin = service?.durationMin || service?.duration || 30;
+      updateData.startTime = parsedStartTime;
+      updateData.endTime = new Date(parsedStartTime.getTime() + durationMin * 60000);
+    }
   }
 
   await appointment.update(updateData);

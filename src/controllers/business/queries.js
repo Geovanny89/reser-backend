@@ -5,6 +5,7 @@ const { Business, Service, Employee, User, Promotion, ServiceGroup } = require('
 const { Op } = require('sequelize');
 const { buildBusinessInclude } = require('./utils');
 const { SUBSCRIPTION_PLANS, ADDITIONAL_USER_PRICE } = require('./constants');
+const cacheService = require('../../services/cacheService');
 
 // GET /businesses
 exports.getAll = async (req, res) => {
@@ -90,6 +91,16 @@ exports.getMyBusiness = async (req, res) => {
 exports.getBySlug = async (req, res) => {
   try {
     const { BusinessReview } = require('../../models');
+    const cacheKey = `business_public_${req.params.slug}`;
+    
+    // Intentar obtener del caché primero
+    const cached = cacheService.get(cacheKey);
+    if (cached) {
+      console.log(`[CACHE HIT] getBySlug - ${cacheKey}`);
+      return res.json(cached);
+    }
+    
+    console.log(`[CACHE MISS] getBySlug - ${cacheKey}`);
     
     const biz = await Business.findOne({
       where: { slug: req.params.slug },
@@ -132,45 +143,33 @@ exports.getBySlug = async (req, res) => {
     });
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-    // Obtener promociones activas
+    // Paralelizar consultas de promociones y reviews para mejor rendimiento
     const now = new Date();
-    // Normalizar a solo fecha (YYYY-MM-DD) para comparar con DATEONLY
     const today = now.toISOString().split('T')[0];
-    console.log(`[DEBUG getBySlug] Buscando promociones para businessId: ${biz.id}, fecha actual: ${today}`);
-
-    const promotions = await Promotion.findAll({
-      where: {
-        businessId: biz.id,
-        active: true,
-        startDate: { [Op.lte]: today },
-        endDate: { [Op.gte]: today }
-      },
-      include: [{ model: Service, attributes: ['id', 'name'] }],
-      limit: 50,
-      order: [['createdAt', 'DESC']]
-    });
+    
+    const [promotions, reviews] = await Promise.all([
+      Promotion.findAll({
+        where: {
+          businessId: biz.id,
+          active: true,
+          startDate: { [Op.lte]: today },
+          endDate: { [Op.gte]: today }
+        },
+        include: [{ model: Service, attributes: ['id', 'name'] }],
+        limit: 50,
+        order: [['createdAt', 'DESC']]
+      }),
+      BusinessReview.findAll({
+        where: { 
+          businessId: biz.id,
+          isApproved: true 
+        },
+        order: [['createdAt', 'DESC']],
+        limit: 10
+      })
+    ]);
     
     console.log(`[DEBUG getBySlug] Promociones encontradas: ${promotions.length}`);
-    if (promotions.length > 0) {
-      console.log(`[DEBUG getBySlug] Promociones:`, promotions.map(p => ({ 
-        id: p.id, 
-        name: p.name, 
-        serviceId: p.serviceId, 
-        applyToAllServices: p.applyToAllServices,
-        startDate: p.startDate, 
-        endDate: p.endDate 
-      })));
-    }
-
-    // Obtener reseñas aprobadas del negocio
-    const reviews = await BusinessReview.findAll({
-      where: { 
-        businessId: biz.id,
-        isApproved: true 
-      },
-      order: [['createdAt', 'DESC']],
-      limit: 10
-    });
 
     const bizJson = biz.toJSON();
     
@@ -227,6 +226,9 @@ exports.getBySlug = async (req, res) => {
       });
     }
 
+    // Guardar en caché por 5 minutos
+    cacheService.set(cacheKey, bizJson, 5 * 60 * 1000);
+    
     res.json(bizJson);
   } catch (e) {
     console.error('[getBySlug] Error:', e);

@@ -5,6 +5,7 @@ const { Business, Service, Employee, User, Appointment, Schedule } = require('..
 const { deleteFromCloudinary } = require('../../config/cloudinary');
 const { ALLOWED_UPDATE_FIELDS } = require('./constants');
 const { buildBusinessInclude } = require('./utils');
+const cacheService = require('../../services/cacheService');
 
 // POST /businesses (superadmin)
 exports.create = async (req, res) => {
@@ -50,6 +51,12 @@ exports.update = async (req, res) => {
     }
     
     await biz.update(updates);
+    
+    // Invalidar caché del negocio público
+    if (biz.slug) {
+      cacheService.delete(`business_public_${biz.slug}`);
+    }
+    
     res.json(biz);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -108,6 +115,11 @@ exports.updateMyBusiness = async (req, res) => {
     }
 
     await biz.update(updates);
+    
+    // Invalidar caché del negocio público
+    if (biz.slug) {
+      cacheService.delete(`business_public_${biz.slug}`);
+    }
     
     // Recargar el negocio desde la base de datos para obtener los valores actualizados
     const updatedBiz = await Business.findByPk(biz.id);

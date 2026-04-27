@@ -1,5 +1,6 @@
 const { Promotion, Service, Business, Appointment } = require('../models');
 const { Op } = require('sequelize');
+const cacheService = require('../services/cacheService');
 
 exports.create = async (req, res) => {
   try {
@@ -24,7 +25,13 @@ exports.create = async (req, res) => {
       active: active !== false,
       applyToAllServices: applyToAllServices === true
     });
-    
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     console.log('[Promotion] Promoción creada:', promotion.id);
     res.status(201).json(promotion);
   } catch (e) {
@@ -71,8 +78,15 @@ exports.update = async (req, res) => {
     const { id } = req.params;
     const promotion = await Promotion.findByPk(id);
     if (!promotion) return res.status(404).json({ error: 'Promoción no encontrada' });
-    
+
     await promotion.update(req.body);
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(promotion.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.json(promotion);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -84,14 +98,21 @@ exports.delete = async (req, res) => {
     const { id } = req.params;
     const promotion = await Promotion.findByPk(id);
     if (!promotion) return res.status(404).json({ error: 'Promoción no encontrada' });
-    
+
     // Desvincular citas de esta promoción antes de eliminar
     await Appointment.update(
       { promotionId: null },
       { where: { promotionId: id } }
     );
-    
+
     await promotion.destroy();
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(promotion.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.json({ message: 'Promoción eliminada correctamente' });
   } catch (e) {
     console.error('[Promotion] Error al eliminar:', e);

@@ -75,11 +75,11 @@ function adjustToBusinessHours(date) {
  */
 async function getPendingMessagesGrouped() {
   const now = new Date();
-  
+
   console.log(`[Scheduler] 🔍 Buscando mensajes pendientes...`);
   console.log(`[Scheduler]    - Ahora (UTC): ${now.toISOString()}`);
   console.log(`[Scheduler]    - Ahora (COL): ${new Date(now.getTime() - 5*60*60*1000).toISOString().replace('Z', '-05:00')}`);
-  
+
   // Buscar mensajes pending que deberían enviarse ya
   const messages = await ScheduledMessage.findAll({
     where: {
@@ -90,6 +90,14 @@ async function getPendingMessagesGrouped() {
     order: [['scheduledAt', 'ASC'], ['businessId', 'ASC']],
     limit: 100 // Procesar máximo 100 mensajes por ciclo
   });
+
+  console.log(`[Scheduler] 🔍 Mensajes encontrados: ${messages.length}`);
+
+  if (messages.length > 0) {
+    messages.forEach(msg => {
+      console.log(`[Scheduler]    - ID: ${msg.id}, Tipo: ${msg.type}, scheduledAt: ${msg.scheduledAt}, Phone: ${msg.phone}`);
+    });
+  }
 
   // Agrupar por negocio
   const grouped = {};
@@ -481,10 +489,13 @@ async function runScheduler() {
 async function scheduleMessage({ businessId, appointmentId, phone, message, type, scheduledAt }) {
   try {
     console.log(`[Scheduler] 📅 Mensaje programado: ${type} para ${phone} a las ${scheduledAt}`);
-    
+
     // Ajustar hora programada al horario laboral si es necesario
     const adjustedScheduledAt = adjustToBusinessHours(new Date(scheduledAt));
-    
+
+    console.log(`[Scheduler] 📅 Hora original: ${scheduledAt}`);
+    console.log(`[Scheduler] 📅 Hora ajustada: ${adjustedScheduledAt}`);
+
     const scheduled = await ScheduledMessage.create({
       businessId,
       appointmentId,
@@ -495,8 +506,8 @@ async function scheduleMessage({ businessId, appointmentId, phone, message, type
       status: 'pending',
       retryCount: 0
     });
-    
-    console.log(`[Scheduler] ✅ Mensaje guardado en BD: ${scheduled.id}`);
+
+    console.log(`[Scheduler] ✅ Mensaje guardado en BD: ${scheduled.id} con scheduledAt: ${scheduled.scheduledAt}`);
     return scheduled;
   } catch (error) {
     console.error('[Scheduler] ❌ Error programando mensaje:', error.message);

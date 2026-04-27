@@ -1,6 +1,7 @@
 const { Service, Business, Promotion, ServiceGroup } = require('../models');
 const { Op } = require('sequelize');
 const { deleteFromCloudinary } = require('../config/cloudinary');
+const cacheService = require('../services/cacheService');
 
 exports.getByBusiness = async (req, res) => {
   try {
@@ -101,6 +102,13 @@ exports.create = async (req, res) => {
       color: color || '#3b82f6',
       serviceGroupId: serviceGroupId || null
     });
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(finalBusinessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.status(201).json(service);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -147,6 +155,12 @@ exports.update = async (req, res) => {
     
     await service.update(updateData);
 
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(service.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     // SI LA DURACIÓN O CUALQUIER OTRO DATO RELEVANTE CAMBIÓ, 
     // ACTUALIZAR EL endTime DE TODAS LAS CITAS QUE AÚN NO SE HAN COMPLETADO
     if (req.body.durationMin !== undefined) {
@@ -191,6 +205,13 @@ exports.remove = async (req, res) => {
     const service = await Service.findByPk(req.params.id);
     if (!service) return res.status(404).json({ error: 'Servicio no encontrado' });
     await service.update({ active: false });
+
+    // Invalidar caché del negocio público
+    const business = await Business.findByPk(service.businessId);
+    if (business && business.slug) {
+      cacheService.invalidateBusinessPublic(business.slug);
+    }
+
     res.json({ message: 'Servicio desactivado' });
   } catch (e) {
     res.status(500).json({ error: e.message });
