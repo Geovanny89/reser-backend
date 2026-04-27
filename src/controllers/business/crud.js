@@ -1,7 +1,7 @@
 /**
  * Controladores CRUD para negocios
  */
-const { Business, Service, Employee, User, Appointment, Schedule } = require('../../models');
+const { Business, Service, Employee, User, Appointment, AppointmentNote, Schedule, InventoryItem, InventoryUsage } = require('../../models');
 const { deleteFromCloudinary } = require('../../config/cloudinary');
 const { ALLOWED_UPDATE_FIELDS } = require('./constants');
 const { buildBusinessInclude } = require('./utils');
@@ -137,9 +137,20 @@ exports.remove = async (req, res) => {
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
     // Eliminar en orden por dependencias
+    // Primero obtener IDs de citas para eliminar sus notas
+    const appointments = await Appointment.findAll({
+      where: { businessId: biz.id },
+      attributes: ['id']
+    });
+    const appointmentIds = appointments.map(a => a.id);
+    if (appointmentIds.length > 0) {
+      await AppointmentNote.destroy({ where: { appointmentId: appointmentIds } });
+    }
     await Appointment.destroy({ where: { businessId: biz.id } });
     await Schedule.destroy({ where: { businessId: biz.id } });
     await Employee.destroy({ where: { businessId: biz.id } });
+    await InventoryUsage.destroy({ where: { businessId: biz.id } });
+    await InventoryItem.destroy({ where: { businessId: biz.id } });
     await Service.destroy({ where: { businessId: biz.id } });
 
     // Eliminar imágenes de Cloudinary

@@ -1,6 +1,6 @@
 /**
  * Servicio de alertas para citas pendientes no atendidas.
- * Revisa cada 5 minutos si hay citas con status 'pending' o 'confirmed' cuya hora de inicio ya pasó
+ * Revisa cada 1 minuto si hay citas con status 'pending' o 'confirmed' cuya hora de inicio ya pasó
  * y envía notificaciones push al empleado y admin para que actualicen el estado.
  * Alertas: 15min, 30min, 60min después de la hora de inicio.
  */
@@ -10,7 +10,7 @@ const { sendEmail } = require('../config/email');
 const { sendPushNotification } = require('./pushNotificationService');
 const { Op } = require('sequelize');
 
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;   // revisar cada 5 minutos para mayor precisión
+const CHECK_INTERVAL_MS = 1 * 60 * 1000;   // revisar cada 1 minuto para mayor precisión en el envío de alertas
 const ALERT_15M_MS = 15 * 60 * 1000;
 const ALERT_30M_MS = 30 * 60 * 1000;
 const ALERT_60M_MS = 60 * 60 * 1000;
@@ -134,7 +134,7 @@ async function processStuckAlert(appt, timeLabel, fieldToUpdate) {
 
 function startPendingAlertService() {
   if (intervalId) return;
-  console.log('[PendingAlert] 🔔 Servicio de alertas de citas pendientes iniciado (cada 30 min)');
+  console.log('[PendingAlert] 🔔 Servicio de alertas de citas pendientes iniciado (cada 1 min)');
   sendPendingAlerts(); // ejecutar inmediatamente
   intervalId = setInterval(sendPendingAlerts, CHECK_INTERVAL_MS);
 }

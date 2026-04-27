@@ -490,6 +490,22 @@ async function scheduleMessage({ businessId, appointmentId, phone, message, type
   try {
     console.log(`[Scheduler] 📅 Mensaje programado: ${type} para ${phone} a las ${scheduledAt}`);
 
+    // Verificar si ya existe un mensaje del mismo tipo para esta cita (protección contra duplicados)
+    if (appointmentId && type) {
+      const existingMessage = await ScheduledMessage.findOne({
+        where: {
+          appointmentId,
+          type,
+          status: { [Op.in]: ['pending', 'sent'] }
+        }
+      });
+
+      if (existingMessage) {
+        console.log(`[Scheduler] ⚠️ Mensaje duplicado detectado: Ya existe un mensaje tipo '${type}' para cita ${appointmentId}. Saltando...`);
+        return existingMessage;
+      }
+    }
+
     // Ajustar hora programada al horario laboral si es necesario
     const adjustedScheduledAt = adjustToBusinessHours(new Date(scheduledAt));
 

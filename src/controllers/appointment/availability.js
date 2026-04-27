@@ -189,9 +189,15 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
 
   const dateToMinutesColombia = (date) => {
     const d = new Date(date);
-    const localMs = d.getTime() + COLOMBIA_OFFSET_MS;
-    const localDate = new Date(localMs);
-    return localDate.getUTCHours() * 60 + localDate.getUTCMinutes();
+    // Get time components in Colombia timezone directly
+    const timeStr = d.toLocaleTimeString('en-US', { 
+      timeZone: 'America/Bogota', 
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+    const [h, m] = timeStr.split(':').map(Number);
+    return h * 60 + m;
   };
 
   const overlaps = (start1, end1, start2, end2) => {

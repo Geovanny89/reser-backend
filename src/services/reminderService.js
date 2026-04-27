@@ -227,7 +227,7 @@ async function sendReminders() {
           : [
               `⏰ *${appt.clientName}*, te esperamos en 1 hora (${timeStr}) para tu cita de *${appt.Service?.name || 'Servicio'}* en *${appt.Business?.name || 'Negocio'}*. ¡No faltes! 🗓️`,
               `🎯 *${appt.clientName}*, recordatorio: tu cita es en *1 hora* (${timeStr}) en *${appt.Business?.name || 'Negocio'}*. ¡Te esperamos! 😊`,
-              `📅 *${appt.clientName}*, nos vemos en 1 hora (${timeStr}) para *${appt.Service?.name || 'Servicio'}*. ¡Puntual! 🗓️`
+              `📅 *${appt.clientName}*, nos vemos en 1 hora (${timeStr}) para *${appt.Service?.name || 'Servicio'}*. ¡Gracias por tu puntualidad! 🗓️`
             ];
         const text = templates[Math.floor(Math.random() * templates.length)];
 
