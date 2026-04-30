@@ -35,3 +35,15 @@ scripts/
 # Documentación (opcional)
 EVOLUTION_API_GUIDE.md
 PM2_SETUP.md
+
+# Scripts temporales de diagnóstico/pruebas (NO subir)
+check-instances.js
+check_enums.js
+fix_postgres.js
+get-test-ids.js
+get_real_ids.js
+migrate_referrals.js
+sync_db.js
+reset-whatsapp-instances.js
+truncar.js
+test_fetch.js
