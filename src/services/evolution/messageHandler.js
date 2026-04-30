@@ -9,7 +9,7 @@
  * - Agradecimientos
  */
 
-const { Appointment, Business, IncomingMessage } = require('../../models');
+const { Appointment, Business, BusinessReview, Employee, Service, User, IncomingMessage } = require('../../models');
 const { sendMessageDirect } = require('./instanceManager');
 const { getRandomConfirmationTemplate, getRandomCancelTemplate, getRandomRatingThanksTemplate } = require('./templates');
 const { emitAppointmentUpdate } = require('../socketService');
@@ -371,23 +371,44 @@ async function handleCancellation(appt, msg) {
 /**
  * Maneja calificación
  */
-async function handleRating(appt, rating, phone, msg) {
+async function handleRating(appt, cleanText) {
   try {
+    // Emitir actualización en tiempo real
+    emitAppointmentUpdate(appt.toJSON(), 'updated');
+
+    // Actualizar la cita
     await appt.update({
-      rating,
+      rating: parseInt(cleanText),
       ratingSubmittedAt: new Date(),
       messageFlowStatus: 'rated'
     });
 
-    // Emitir actualización en tiempo real
-    emitAppointmentUpdate(appt.toJSON(), 'updated');
+    // Crear reseña oficial para que aparezca en el panel de Calificaciones
+    try {
+      await BusinessReview.create({
+        businessId: appt.businessId,
+        appointmentId: appt.id,
+        clientName: appt.clientName || 'Cliente de WhatsApp',
+        rating: parseInt(cleanText),
+        comment: 'Calificación vía WhatsApp',
+        isApproved: true
+      });
+      console.log(`[Evolution Message] ⭐ Reseña creada en BusinessReview para cita ${appt.id.substring(0,8)}`);
+    } catch (reviewErr) {
+      console.error('[Evolution Message] ⚠️ Error creando BusinessReview:', reviewErr.message);
+    }
 
-    const thanksTemplate = getRandomRatingThanksTemplate(rating);
-    // Usar el número del cliente de la cita si el mensaje viene de una lista de difusión
-    const phoneToSend = msg.from.includes('@lid') ? appt.clientPhone : msg.from;
-    await sendMessageDirect(appt.businessId, phoneToSend, thanksTemplate);
-
-    console.log(`[Evolution Message] ✅ Cita ${appt.id} calificada con ${rating}⭐ por ${appt.clientName}`);
+    // Enviar agradecimiento (USAR EL TELÉFONO DE LA CITA, NO EL REMITENTE DEL WEBHOOK)
+    const thankYouMsg = `✅ ¡Gracias por tu calificación de ${cleanText}⭐! Nos ayuda mucho a mejorar. ¡Que tengas un excelente día! 😊`;
+    await sendMessageDirect(appt.businessId, appt.clientPhone, thankYouMsg);
+    
+    console.log(`[Evolution Message] ✅ Cita ${appt.id} calificada con ${cleanText}⭐ por ${appt.clientName}`);
+    
+    // Notificar por socket
+    if (global.io) {
+      global.io.to(`business:${appt.businessId}`).emit('appointment_updated', appt);
+      global.io.to(`business:${appt.businessId}`).emit('new_review', { rating: cleanText });
+    }
     return true;
   } catch (e) {
     console.error('[Evolution Message] ❌ Error calificando cita:', e.message);
