@@ -370,8 +370,9 @@ router.post('/evolution/webhook', async (req, res) => {
     
     // Manejar evento de mensaje entrante
     if (actualEvent === 'MESSAGES_UPSERT' || actualEvent === 'messages.upsert' || actualEvent === 'message_create' || actualEvent === 'messages_update') {
+      console.log(`[Evolution Webhook] 📥 MENSAJE COMPLETO RECIBIDO:`, JSON.stringify(req.body, null, 2));
       console.log(`[Evolution Webhook] 📥 Mensaje entrante para ${businessId}, evento: ${actualEvent}`);
-      console.log(`[Evolution Webhook] 📦 Payload completo:`, JSON.stringify(req.body).substring(0, 1000));
+      console.log(`[Evolution Webhook] 📦 Payload corto:`, JSON.stringify(req.body).substring(0, 500));
       
       try {
         // Evolution API v2.1.2 envía el mensaje en data.key y data.message

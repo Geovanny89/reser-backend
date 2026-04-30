@@ -28,7 +28,7 @@ function cleanPhoneNumber(phone) {
 function extractPhoneNumber(msg, from) {
   // Evolution API usa formato: 573001234567@s.whatsapp.net o 150131068424290@lid (lista de difusión)
   let cleanFrom = from.split('@')[0];
-  
+
   // Si es una lista de difusión (@lid), intentar obtener el número real del participant o sender
   if (from.includes('@lid')) {
     const participant = msg?.participant || msg?.data?.participant || msg?.key?.participant || msg?.data?.sender || msg?.sender;
@@ -37,14 +37,14 @@ function extractPhoneNumber(msg, from) {
       console.log(`[Evolution Message] 📋 Mensaje desde lista, usando participant/sender: ${cleanFrom}`);
     }
   }
-  
+
   const cleanIncomingPhone = cleanPhoneNumber(cleanFrom);
-  
+
   if (!cleanIncomingPhone || cleanIncomingPhone.length < 10) {
     console.log(`[Evolution Message] ⚠️ Número inválido: ${from} -> ${cleanFrom}`);
     return null;
   }
-  
+
   return { cleanIncomingPhone, originalFrom: from };
 }
 
@@ -89,19 +89,19 @@ async function getLinkedBusinessIds(businessId) {
   try {
     const business = await Business.findByPk(businessId);
     if (!business) return [businessId];
-    
+
     const linkedIds = [businessId];
     if (business.parentBusinessId) {
       linkedIds.push(business.parentBusinessId);
     }
-    
+
     // Buscar sucursales hijas
     const children = await Business.findAll({
       where: { parentBusinessId: businessId },
       attributes: ['id']
     });
     children.forEach(child => linkedIds.push(child.id));
-    
+
     return linkedIds;
   } catch (e) {
     console.error('[Evolution Message] ❌ Error obteniendo negocios vinculados:', e.message);
@@ -140,13 +140,13 @@ async function findAppointmentsForPhone(businessIds, phone, isFromList = false) 
     let whereClause = {
       businessId: businessIds
     };
-    
+
     // Solo filtrar por teléfono si NO es una lista de difusión
     if (!isFromList) {
       const basePhone = phone.length > 10 ? phone.slice(-10) : phone;
       whereClause.clientPhone = { [require('sequelize').Op.like]: `%${basePhone}%` };
     }
-    
+
     const appointments = await Appointment.findAll({
       where: whereClause,
       include: [
@@ -155,10 +155,10 @@ async function findAppointmentsForPhone(businessIds, phone, isFromList = false) 
       ],
       order: [['startTime', 'DESC']]
     });
-    
+
     const activeAppts = appointments.filter(a => ['pending', 'confirmed', 'attention'].includes(a.status));
     const doneAppts = appointments.filter(a => a.status === 'done' && a.ratingSent && !a.rating && a.messageFlowStatus !== 'rated');
-    
+
     return { activeAppts, doneAppts, allAppointments: appointments };
   } catch (e) {
     console.error('[Evolution Message] ❌ Error buscando citas:', e.message);
@@ -171,29 +171,29 @@ async function findAppointmentsForPhone(businessIds, phone, isFromList = false) 
  */
 function filterAppointmentsByPhone(appointments, cleanPhone, from) {
   console.log(`[Evolution Message] 🔍 Filtrando ${appointments.length} citas por teléfono: ${cleanPhone}`);
-  
+
   return appointments.filter(appt => {
     const dbPhone = cleanPhoneNumber(appt.clientPhone);
     console.log(`[Evolution Message] 🔍 Comparando: DB="${dbPhone}" vs Incoming="${cleanPhone}"`);
-    
+
     // Coincidencia exacta
     if (dbPhone === cleanPhone) {
       console.log(`[Evolution Message] ✅ Coincidencia exacta: ${dbPhone}`);
       return true;
     }
-    
+
     // Coincidencia parcial (últimos 10 dígitos)
     if (dbPhone.slice(-10) === cleanPhone.slice(-10)) {
       console.log(`[Evolution Message] ✅ Coincidencia últimos 10 dígitos: ${dbPhone.slice(-10)}`);
       return true;
     }
-    
+
     // Coincidencia en el from
     if (from.includes(dbPhone.slice(-10))) {
       console.log(`[Evolution Message] ✅ Coincidencia en from: ${dbPhone.slice(-10)}`);
       return true;
     }
-    
+
     // Si el número tiene 12 dígitos (con prefijo 57), intentar sin prefijo
     if (dbPhone.length === 12 && dbPhone.startsWith('57')) {
       const dbPhoneWithoutPrefix = dbPhone.slice(2);
@@ -202,7 +202,7 @@ function filterAppointmentsByPhone(appointments, cleanPhone, from) {
         return true;
       }
     }
-    
+
     return false;
   });
 }
@@ -212,20 +212,20 @@ function filterAppointmentsByPhone(appointments, cleanPhone, from) {
  */
 function determineAction(matchedAppointments, text) {
   const cleanText = text.trim().toLowerCase();
-  
+
   // Verificar si es un número (calificación)
   const number = parseInt(cleanText);
   const isRatingNumber = !isNaN(number) && number >= 1 && number <= 5;
-  
+
   // Si hay múltiples citas, priorizar según el tipo de respuesta:
   // - Si es un número (calificación), priorizar awaiting_rating primero
   // - Si no, priorizar awaiting_confirmation, luego pending/attention, luego awaiting_rating
   let matchedAppt = matchedAppointments[0];
-  
+
   if (matchedAppointments.length > 1) {
     if (isRatingNumber) {
       // PRIORIDAD 1 para calificaciones: citas en awaiting_rating
-      const ratingAppt = matchedAppointments.find(a => 
+      const ratingAppt = matchedAppointments.find(a =>
         a.messageFlowStatus === 'awaiting_rating' ||
         (a.status === 'done' && !a.rating)
       );
@@ -234,8 +234,8 @@ function determineAction(matchedAppointments, text) {
         console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating para calificación`);
       } else {
         // Si no hay awaiting_rating, buscar awaiting_confirmation
-        const awaitingConfirmAppt = matchedAppointments.find(a => 
-          a.messageFlowStatus === 'awaiting_confirmation' && 
+        const awaitingConfirmAppt = matchedAppointments.find(a =>
+          a.messageFlowStatus === 'awaiting_confirmation' &&
           ['pending', 'attention'].includes(a.status)
         );
         if (awaitingConfirmAppt) {
@@ -245,15 +245,15 @@ function determineAction(matchedAppointments, text) {
       }
     } else {
       // PRIORIDAD normal: awaiting_confirmation -> pending/attention -> awaiting_rating
-      const awaitingConfirmAppt = matchedAppointments.find(a => 
-        a.messageFlowStatus === 'awaiting_confirmation' && 
+      const awaitingConfirmAppt = matchedAppointments.find(a =>
+        a.messageFlowStatus === 'awaiting_confirmation' &&
         ['pending', 'attention'].includes(a.status)
       );
       if (awaitingConfirmAppt) {
         matchedAppt = awaitingConfirmAppt;
         console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation: status=${awaitingConfirmAppt.status}`);
       } else {
-        const pendingAppt = matchedAppointments.find(a => 
+        const pendingAppt = matchedAppointments.find(a =>
           ['pending', 'attention'].includes(a.status)
         );
         if (pendingAppt) {
@@ -269,7 +269,7 @@ function determineAction(matchedAppointments, text) {
       }
     }
   }
-  
+
   return { matchedAppt, isRatingNumber, number };
 }
 
@@ -287,17 +287,17 @@ function isConfirmation(text) {
 function isCancellation(text) {
   const cleanText = text.toLowerCase().trim();
   const cancellations = ['2', 'no', 'cancelar', 'cancelo', 'cancel', 'no puedo', 'no asistiré', 'no asistire', 'no asistir'];
-  
+
   // Verificar coincidencia exacta primero (para respuestas simples como "no", "2")
   if (cancellations.includes(cleanText)) {
     return true;
   }
-  
+
   // Para frases más largas, verificar que el texto SEA exactamente una de las opciones
   // pero permitir variaciones menores en espacios
   const normalizedText = cleanText.replace(/\s+/g, ' ');
   const normalizedCancellations = cancellations.map(c => c.replace(/\s+/g, ' '));
-  
+
   return normalizedCancellations.includes(normalizedText);
 }
 
@@ -324,15 +324,15 @@ async function handleConfirmation(appt, msg) {
       confirmedAt: new Date(),
       messageFlowStatus: 'confirmed'
     });
-    
+
     // Emitir actualización en tiempo real
     emitAppointmentUpdate(appt.toJSON(), 'updated');
-    
+
     const template = getRandomConfirmationTemplate();
     // Usar el número del cliente de la cita si el mensaje viene de una lista de difusión
     const phoneToSend = msg.from.includes('@lid') ? appt.clientPhone : msg.from;
     await sendMessageDirect(appt.businessId, phoneToSend, template);
-    
+
     console.log(`[Evolution Message] ✅ Cita ${appt.id} confirmada por ${appt.clientName}`);
     return true;
   } catch (e) {
@@ -351,15 +351,15 @@ async function handleCancellation(appt, msg) {
       cancelledAt: new Date(),
       messageFlowStatus: 'cancelled'
     });
-    
+
     // Emitir actualización en tiempo real
     emitAppointmentUpdate(appt.toJSON(), 'updated');
-    
+
     const template = getRandomCancelTemplate();
     // Usar el número del cliente de la cita si el mensaje viene de una lista de difusión
     const phoneToSend = msg.from.includes('@lid') ? appt.clientPhone : msg.from;
     await sendMessageDirect(appt.businessId, phoneToSend, template);
-    
+
     console.log(`[Evolution Message] ✅ Cita ${appt.id} cancelada por ${appt.clientName}`);
     return true;
   } catch (e) {
@@ -378,15 +378,15 @@ async function handleRating(appt, rating, phone, msg) {
       ratingSubmittedAt: new Date(),
       messageFlowStatus: 'rated'
     });
-    
+
     // Emitir actualización en tiempo real
     emitAppointmentUpdate(appt.toJSON(), 'updated');
-    
+
     const thanksTemplate = getRandomRatingThanksTemplate(rating);
     // Usar el número del cliente de la cita si el mensaje viene de una lista de difusión
     const phoneToSend = msg.from.includes('@lid') ? appt.clientPhone : msg.from;
     await sendMessageDirect(appt.businessId, phoneToSend, thanksTemplate);
-    
+
     console.log(`[Evolution Message] ✅ Cita ${appt.id} calificada con ${rating}⭐ por ${appt.clientName}`);
     return true;
   } catch (e) {
@@ -463,10 +463,10 @@ async function handleClientResponse(businessId, client, msg) {
   const { activeAppts, doneAppts, allAppointments } = await findAppointmentsForPhone(businessIds, cleanIncomingPhone, isFromList);
 
   console.log(`[Evolution Message] 🔍 Buscando en ${allAppointments.length} citas (${activeAppts.length} activas, ${doneAppts.length} con solicitud enviada)`);
-  
+
   // Mostrar todas las citas activas esperando confirmación
-  const awaitingConfirm = allAppointments.filter(a => 
-    a.messageFlowStatus === 'awaiting_confirmation' && 
+  const awaitingConfirm = allAppointments.filter(a =>
+    a.messageFlowStatus === 'awaiting_confirmation' &&
     ['pending', 'attention'].includes(a.status)
   );
   if (awaitingConfirm.length > 0) {
@@ -475,7 +475,7 @@ async function handleClientResponse(businessId, client, msg) {
       console.log(`[Evolution Message]   - Cita ${idx + 1}: ID=${appt.id.slice(0, 8)}, nombre="${appt.clientName}", phone="${appt.clientPhone}", startTime=${appt.startTime}`);
     });
   }
-  
+
   // Filtrar por teléfono (si no es lista de difusión)
   let matchedAppointments = isFromList ? allAppointments : filterAppointmentsByPhone(allAppointments, cleanIncomingPhone, from);
 
@@ -483,30 +483,30 @@ async function handleClientResponse(businessId, client, msg) {
   if (isFromList && pushName) {
     console.log(`[Evolution Message] 🔍 Lista de difusión detectada, filtrando por nombre: ${pushName}`);
     const cleanPushName = pushName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    
+
     matchedAppointments = matchedAppointments.filter(appt => {
       const clientName = (appt.clientName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       // Coincidencia parcial: si el nombre del cliente contiene parte del pushName o viceversa
       const match = clientName.includes(cleanPushName) || cleanPushName.includes(clientName) ||
-                   clientName.length > 0 && cleanPushName.length > 0 && 
-                   (clientName.slice(0, 5) === cleanPushName.slice(0, 5) || 
-                    clientName.slice(-5) === cleanPushName.slice(-5));
-      
+        clientName.length > 0 && cleanPushName.length > 0 &&
+        (clientName.slice(0, 5) === cleanPushName.slice(0, 5) ||
+          clientName.slice(-5) === cleanPushName.slice(-5));
+
       if (match) {
         console.log(`[Evolution Message] ✅ Coincidencia por nombre: "${clientName}" ≈ "${cleanPushName}"`);
       }
       return match;
     });
-    
+
     if (matchedAppointments.length > 0) {
       console.log(`[Evolution Message] 📍 Encontradas ${matchedAppointments.length} citas por nombre: ${pushName}`);
-      
+
       // Verificar si alguna de las citas encontradas está esperando confirmación
-      const awaitingConfirmByName = matchedAppointments.find(a => 
-        a.messageFlowStatus === 'awaiting_confirmation' && 
+      const awaitingConfirmByName = matchedAppointments.find(a =>
+        a.messageFlowStatus === 'awaiting_confirmation' &&
         ['pending', 'attention'].includes(a.status)
       );
-      
+
       if (awaitingConfirmByName) {
         matchedAppointments = [awaitingConfirmByName];
         console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation encontrada por nombre: status=${awaitingConfirmByName.status}`);
@@ -560,11 +560,11 @@ async function handleClientResponse(businessId, client, msg) {
     'mensaje automático',
     'automatic message'
   ];
-  
-  const isBotMessage = botPatterns.some(pattern => 
+
+  const isBotMessage = botPatterns.some(pattern =>
     text.toLowerCase().includes(pattern.toLowerCase())
   );
-  
+
   if (isBotMessage) {
     console.log(`[Evolution Message] 🤖 Mensaje de bot detectado, ignorando: "${text}"`);
     return;
@@ -575,7 +575,7 @@ async function handleClientResponse(businessId, client, msg) {
 
   // Verificar si puede confirmar/cancelar
   const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(matchedAppt.status) &&
-                           (!matchedAppt.confirmed || matchedAppt.messageFlowStatus === 'awaiting_confirmation');
+    (!matchedAppt.confirmed || matchedAppt.messageFlowStatus === 'awaiting_confirmation');
 
   console.log(`[Evolution Message] 🔍 Estado cita: status=${matchedAppt.status}, confirmed=${matchedAppt.confirmed}, messageFlowStatus=${matchedAppt.messageFlowStatus}`);
   console.log(`[Evolution Message] 🔍 canConfirmCancel=${canConfirmCancel}, isRatingNumber=${isRatingNumber}`);
@@ -584,7 +584,7 @@ async function handleClientResponse(businessId, client, msg) {
 
   // Prioridad: si está esperando calificación, procesar calificación primero
   const canRate = (matchedAppt.messageFlowStatus === 'awaiting_rating') ||
-                  (matchedAppt.status === 'done' && !matchedAppt.rating);
+    (matchedAppt.status === 'done' && !matchedAppt.rating);
 
   if (canRate && isRatingNumber) {
     await handleRating(matchedAppt, number, cleanIncomingPhone, msg);
@@ -613,7 +613,7 @@ async function handleClientResponse(businessId, client, msg) {
  */
 async function processAppointmentResponse(appt, text, msg, phone) {
   const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(appt.status);
-  
+
   if (canConfirmCancel) {
     if (isConfirmation(text)) {
       return await handleConfirmation(appt, msg);
@@ -621,29 +621,29 @@ async function processAppointmentResponse(appt, text, msg, phone) {
       // Verificación de seguridad adicional: el teléfono debe coincidir antes de cancelar
       const dbPhone = cleanPhoneNumber(appt.clientPhone);
       const cleanPhone = cleanPhoneNumber(phone);
-      const phoneMatch = dbPhone === cleanPhone || 
-                         dbPhone.slice(-10) === cleanPhone.slice(-10) ||
-                         cleanPhone.includes(dbPhone.slice(-10));
-      
+      const phoneMatch = dbPhone === cleanPhone ||
+        dbPhone.slice(-10) === cleanPhone.slice(-10) ||
+        cleanPhone.includes(dbPhone.slice(-10));
+
       if (!phoneMatch) {
         console.log(`[Evolution Message] ⚠️ CANCELACIÓN BLOQUEADA: Teléfono no coincide - DB="${dbPhone}" vs Incoming="${cleanPhone}"`);
         return false;
       }
-      
+
       return await handleCancellation(appt, msg);
     }
   }
-  
+
   const canRate = (appt.messageFlowStatus === 'awaiting_rating') ||
-                  (appt.status === 'done' && !appt.rating);
-  
+    (appt.status === 'done' && !appt.rating);
+
   if (canRate) {
     const rating = extractRating(text);
     if (rating) {
       return await handleRating(appt, rating, phone, msg);
     }
   }
-  
+
   return false;
 }
 
