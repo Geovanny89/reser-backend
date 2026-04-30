@@ -160,6 +160,7 @@ CashRegisterShift.belongsTo(Business, { foreignKey: 'businessId' });
 Business.hasMany(CashRegisterShift, { foreignKey: 'businessId', as: 'CashRegisterShifts' });
 CashRegisterShift.belongsTo(Employee, { foreignKey: 'employeeId' });
 Employee.hasMany(CashRegisterShift, { foreignKey: 'employeeId', as: 'CashRegisterShifts' });
+CashRegisterShift.belongsTo(User, { foreignKey: 'createdBy', as: 'Creator' });
 
 // CashMovement — Business, Shift, Appointment, Expense
 CashMovement.belongsTo(Business, { foreignKey: 'businessId' });
@@ -170,6 +171,10 @@ CashMovement.belongsTo(Appointment, { foreignKey: 'appointmentId' });
 Appointment.hasMany(CashMovement, { foreignKey: 'appointmentId', as: 'CashMovements' });
 CashMovement.belongsTo(Expense, { foreignKey: 'expenseId' });
 Expense.hasMany(CashMovement, { foreignKey: 'expenseId', as: 'CashMovements' });
+
+// Auto-asociación para reversas/correcciones
+CashMovement.belongsTo(CashMovement, { foreignKey: 'reversesMovementId', as: 'ReversedMovement' });
+CashMovement.hasOne(CashMovement, { foreignKey: 'reversesMovementId', as: 'Reversal' });
 
 // AppointmentReminderEvent - Appointment & Business
 AppointmentReminderEvent.belongsTo(Appointment, { foreignKey: 'appointmentId' });

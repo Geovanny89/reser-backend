@@ -1,4 +1,4 @@
-const { CashRegisterShift, CashMovement, Employee, Appointment, Expense, Business } = require('../models');
+const { CashRegisterShift, CashMovement, Employee, Appointment, Expense, Business, User } = require('../models');
 const ExcelJS = require('exceljs');
 
 /**
@@ -27,30 +27,43 @@ async function getActiveShift(req, res) {
       return res.json({ activeShift: null, message: 'No hay turno activo' });
     }
 
-    // Calcular total actual del turno
+    // Calcular total actual del turno con lógica de Netos
     const movements = await CashMovement.findAll({
-      where: { shiftId: activeShift.id }
+      where: { shiftId: activeShift.id },
+      include: [{ model: CashMovement, as: 'ReversedMovement' }] // Para saber qué tipo se está revirtiendo
     });
 
-    // Filtrar ingresos según configuración
-    const income = movements
-      .filter(m => m.type === 'income')
-      .filter(m => {
-        // Si no incluye transferencias, excluir movimientos de tipo transferencia
-        if (!includeTransfers && m.paymentMethod === 'transfer') {
-          return false;
+    let income = 0;
+    let expenses = 0;
+    let withdrawals = 0;
+
+    movements.forEach(m => {
+      const amount = parseFloat(m.amount);
+      
+      if (m.isReversal) {
+        // Si es una reversa, restamos del total original
+        // m.type es el tipo de la reversa (el opuesto al original)
+        // m.ReversedMovement.type es el tipo original que estamos anulando
+        if (m.ReversedMovement?.type === 'income') {
+          income -= amount; // Restar del total de ingresos
+        } else if (m.ReversedMovement?.type === 'expense') {
+          expenses -= amount; // Restar del total de gastos
+        } else if (m.ReversedMovement?.type === 'withdrawal') {
+          withdrawals -= amount; // Restar del total de retiros
         }
-        return true;
-      })
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-
-    const expenses = movements
-      .filter(m => m.type === 'expense')
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-
-    const withdrawals = movements
-      .filter(m => m.type === 'withdrawal')
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+      } else {
+        // Si es un movimiento normal, sumamos
+        if (m.type === 'income') {
+          // Excluir transferencias si la configuración lo pide
+          if (!includeTransfers && m.paymentMethod === 'transfer') return;
+          income += amount;
+        } else if (m.type === 'expense') {
+          expenses += amount;
+        } else if (m.type === 'withdrawal') {
+          withdrawals += amount;
+        }
+      }
+    });
 
     const currentAmount = parseFloat(activeShift.openingAmount) + income - expenses - withdrawals;
 
@@ -125,27 +138,33 @@ async function closeShift(req, res) {
       return res.status(400).json({ error: 'El turno ya está cerrado' });
     }
 
-    // Calcular monto esperado
+    // Calcular montos netos
     const movements = await CashMovement.findAll({
-      where: { shiftId }
+      where: { shiftId },
+      include: [{ model: CashMovement, as: 'ReversedMovement' }]
     });
 
-    // Respetar configuración del negocio (por ejemplo: excluir transferencias)
     const business = await Business.findByPk(shift.businessId);
     const includeTransfers = business?.includeTransfersInCashRegister !== false;
 
-    const income = movements
-      .filter(m => m.type === 'income')
-      .filter(m => (includeTransfers ? true : m.paymentMethod !== 'transfer'))
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-    
-    const expenses = movements
-      .filter(m => m.type === 'expense')
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-    
-    const withdrawals = movements
-      .filter(m => m.type === 'withdrawal')
-      .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+    let income = 0;
+    let expenses = 0;
+    let withdrawals = 0;
+
+    movements.forEach(m => {
+      const amount = parseFloat(m.amount);
+      if (m.isReversal) {
+        if (m.ReversedMovement?.type === 'income') income -= amount;
+        else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
+        else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+      } else {
+        if (m.type === 'income') {
+          if (!includeTransfers && m.paymentMethod === 'transfer') return;
+          income += amount;
+        } else if (m.type === 'expense') expenses += amount;
+        else if (m.type === 'withdrawal') withdrawals += amount;
+      }
+    });
 
     const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals;
     const difference = parseFloat(closingAmount) - expectedAmount;
@@ -188,7 +207,8 @@ async function getShiftMovements(req, res) {
       where: whereClause,
       include: [
         { model: Appointment, as: 'Appointment' },
-        { model: Expense, as: 'Expense' }
+        { model: Expense, as: 'Expense' },
+        { model: CashMovement, as: 'Reversal' } // Nuevo: saber si ya tiene reversa
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -313,20 +333,26 @@ async function getShiftHistory(req, res) {
     const shiftsWithSummary = await Promise.all(
       shifts.map(async (shift) => {
         const movements = await CashMovement.findAll({
-          where: { shiftId: shift.id }
+          where: { shiftId: shift.id },
+          include: [{ model: CashMovement, as: 'ReversedMovement' }]
         });
 
-        const income = movements
-          .filter(m => m.type === 'income')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-        
-        const expenses = movements
-          .filter(m => m.type === 'expense')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-        
-        const withdrawals = movements
-          .filter(m => m.type === 'withdrawal')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+        let income = 0;
+        let expenses = 0;
+        let withdrawals = 0;
+
+        movements.forEach(m => {
+          const amount = parseFloat(m.amount);
+          if (m.isReversal) {
+            if (m.ReversedMovement?.type === 'income') income -= amount;
+            else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
+            else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+          } else {
+            if (m.type === 'income') income += amount;
+            else if (m.type === 'expense') expenses += amount;
+            else if (m.type === 'withdrawal') withdrawals += amount;
+          }
+        });
 
         return {
           ...shift.toJSON(),
@@ -352,7 +378,13 @@ async function getShiftHistory(req, res) {
 async function correctMovement(req, res) {
   try {
     const { movementId } = req.params;
-    const { correctAmount, reason } = req.body;
+    const { 
+      correctAmount, 
+      reason, 
+      type,            // Nuevo: permitir corregir el tipo (ingreso/gasto)
+      paymentMethod,   // Nuevo: permitir corregir método
+      description      // Nuevo: permitir corregir descripción
+    } = req.body;
 
     const movement = await CashMovement.findByPk(movementId);
     if (!movement) {
@@ -364,8 +396,9 @@ async function correctMovement(req, res) {
     }
 
     const newAmount = parseFloat(correctAmount);
-    if (!Number.isFinite(newAmount) || newAmount <= 0) {
-      return res.status(400).json({ error: 'El monto correcto debe ser un número mayor a 0' });
+    // Cambiado: permitir 0 para anular completamente
+    if (!Number.isFinite(newAmount) || newAmount < 0) {
+      return res.status(400).json({ error: 'El monto debe ser un número mayor o igual a 0' });
     }
 
     // Verificar que el turno esté activo
@@ -374,60 +407,54 @@ async function correctMovement(req, res) {
       return res.status(400).json({ error: 'No se pueden corregir movimientos de turnos cerrados' });
     }
 
-    // No permitir corregir movimientos asociados a citas o gastos
-    if (movement.appointmentId) {
-      return res.status(400).json({ error: 'No se pueden corregir movimientos asociados a citas. Edite la cita si es necesario.' });
-    }
-
-    if (movement.expenseId) {
-      return res.status(400).json({ error: 'No se pueden corregir movimientos asociados a gastos. Edite el gasto si es necesario.' });
+    // No permitir corregir movimientos asociados a citas o gastos automáticos (esos tienen su propio flujo)
+    if (movement.appointmentId || movement.expenseId) {
+      return res.status(400).json({ error: 'No se pueden corregir movimientos automáticos. Edite el origen si es necesario.' });
     }
 
     const oldAmount = parseFloat(movement.amount);
 
-    // Para "anular" de verdad en los cálculos actuales:
-    // - si el original fue income (+), la reversa debe ser expense (-)
-    // - si el original fue expense/withdrawal (-), la reversa debe ser income (+)
-    const reversalType =
-      movement.type === 'income'
-        ? 'expense'
-        : 'income';
+    // 1. Crear movimiento de REVERSA (Anula el efecto del original)
+    // si el original fue income (+), la reversa debe restar (-)
+    // si el original fue expense/withdrawal (-), la reversa debe sumar (+)
+    const reversalType = movement.type === 'income' ? 'expense' : 'income';
 
-    // Crear movimiento de reversa (anula el movimiento anterior)
     const reversal = await CashMovement.create({
       businessId: movement.businessId,
       shiftId: movement.shiftId,
       type: reversalType,
-      amount: oldAmount, // Mismo monto para anular
+      amount: oldAmount,
       paymentMethod: movement.paymentMethod,
       description: `REVERSA: ${movement.description}`,
-      notes: `Corrección de movimiento. Motivo: ${reason || 'Error en monto'} | Movimiento original: ${movement.id}`,
+      notes: `Corrección automática. Motivo: ${reason || 'Error en registro'} | ID Original: ${movement.id}`,
       isReversal: true,
       reversesMovementId: movement.id,
       createdBy: req.user?.id
     });
 
-    // Crear nuevo movimiento con el monto correcto
-    const corrected = await CashMovement.create({
-      businessId: movement.businessId,
-      shiftId: movement.shiftId,
-      type: movement.type,
-      amount: newAmount,
-      paymentMethod: movement.paymentMethod,
-      description: movement.description,
-      notes: `Corrección. Monto anterior: $${oldAmount.toLocaleString('es-CO')} | Motivo: ${reason || 'Corrección de monto'}`,
-      isReversal: false,
-      reversesMovementId: null,
-      createdBy: req.user?.id
-    });
+    // 2. Crear nuevo movimiento CORREGIDO (solo si el monto es > 0)
+    let corrected = null;
+    if (newAmount > 0) {
+      corrected = await CashMovement.create({
+        businessId: movement.businessId,
+        shiftId: movement.shiftId,
+        type: type || movement.type, // Usar el nuevo tipo si viene, si no el original
+        amount: newAmount,
+        paymentMethod: paymentMethod || movement.paymentMethod,
+        description: description || movement.description,
+        notes: `Corrección. Anterior: ${movement.type} $${oldAmount.toLocaleString('es-CO')} | Motivo: ${reason || 'Corrección'}`,
+        isReversal: false,
+        reversesMovementId: null,
+        createdBy: req.user?.id
+      });
+    }
 
     res.status(201).json({
-      message: 'Movimiento corregido exitosamente',
+      message: newAmount === 0 ? 'Movimiento anulado exitosamente' : 'Movimiento corregido exitosamente',
       reversal,
       corrected,
       oldAmount,
-      newAmount,
-      difference: newAmount - oldAmount
+      newAmount
     });
   } catch (error) {
     console.error('Error corrigiendo movimiento:', error);
@@ -472,12 +499,24 @@ async function exportHistoryToExcel(req, res) {
     const shifts = await CashRegisterShift.findAll({
       where: whereClause,
       include: [
-        { model: Employee, as: 'Employee' },
+        { 
+          model: Employee, as: 'Employee',
+          include: [{ model: User, as: 'User' }] 
+        },
+        { model: User, as: 'Creator' }, // Respaldo para cuando el Admin abre caja
         {
           model: CashMovement, as: 'Movements',
           include: [
-            { model: Appointment, as: 'Appointment' },
-            { model: Expense, as: 'Expense' }
+            { 
+              model: Appointment, as: 'Appointment',
+              include: [{ 
+                model: Employee, as: 'Employee',
+                include: [{ model: User, as: 'User' }]
+              }]
+            },
+            { model: Expense, as: 'Expense' },
+            { model: CashMovement, as: 'ReversedMovement' },
+            { model: CashMovement, as: 'Reversal' }
           ]
         }
       ],
@@ -514,23 +553,34 @@ async function exportHistoryToExcel(req, res) {
     headerRowS.height = 22;
 
     shifts.forEach(shift => {
-      const income = shift.Movements
-        .filter(m => m.type === 'income')
-        .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-      const expenses = shift.Movements
-        .filter(m => m.type === 'expense')
-        .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-      const withdrawals = shift.Movements
-        .filter(m => m.type === 'withdrawal')
-        .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+      let income = 0;
+      let expenses = 0;
+      let withdrawals = 0;
+
+      shift.Movements.forEach(m => {
+        const amount = parseFloat(m.amount);
+        if (m.isReversal) {
+          if (m.ReversedMovement?.type === 'income') income -= amount;
+          else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
+          else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+        } else {
+          if (m.type === 'income') income += amount;
+          else if (m.type === 'expense') expenses += amount;
+          else if (m.type === 'withdrawal') withdrawals += amount;
+        }
+      });
+
       const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals;
       const diff = shift.closingAmount != null ? parseFloat(shift.closingAmount) - expectedAmount : null;
+
+      const shiftEmp = shift.Employee || shift.employee;
+      const shiftEmpName = shiftEmp?.User?.name || shiftEmp?.user?.name || shiftEmp?.name || shift.Creator?.name || '-';
 
       const row = summarySheet.addRow({
         date:           new Date(shift.openedAt).toLocaleDateString('es-CO'),
         openTime:       new Date(shift.openedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
         closeTime:      shift.closedAt ? new Date(shift.closedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '-',
-        employee:       shift.Employee?.name || '-',
+        employee:       shiftEmpName,
         openingAmount:  parseFloat(shift.openingAmount),
         income,
         expenses,
@@ -564,6 +614,7 @@ async function exportHistoryToExcel(req, res) {
       { header: 'Descripción',   key: 'description',  width: 35 },
       { header: 'Método Pago',   key: 'paymentMethod',width: 16 },
       { header: 'Monto',         key: 'amount',       width: 14 },
+      { header: 'Profesional/Empleado', key: 'employee', width: 22 },
       { header: 'Origen',        key: 'origin',       width: 20 },
       { header: '¿Reversa?',     key: 'isReversal',   width: 10 },
       { header: 'Notas',         key: 'notes',        width: 30 },
@@ -591,18 +642,52 @@ async function exportHistoryToExcel(req, res) {
             ? `Gasto #${mov.expenseId.slice(0, 8)}`
             : 'Manual';
 
+        let typeLabel = typeLabels[mov.type] || mov.type;
+        if (mov.isReversal) {
+          const originalType = mov.ReversedMovement?.type === 'income' ? 'INGRESO' : 'GASTO/RETIRO';
+          typeLabel = `ANULACIÓN ${originalType}`;
+        }
+
+        // Determinar si el monto debe ser negativo para el Excel
+        let finalAmount = parseFloat(mov.amount);
+        // Si es gasto, retiro o una reversa de un ingreso, es una salida/resta de dinero
+        const isNegative = mov.type === 'expense' || mov.type === 'withdrawal' || (mov.isReversal && mov.ReversedMovement?.type === 'income');
+        
+        if (isNegative) {
+          finalAmount = -finalAmount;
+        }
+
+        let reversalStatus = 'No';
+        if (mov.isReversal) {
+          reversalStatus = 'SÍ (Anulación)';
+        } else if (mov.Reversal) {
+          reversalStatus = 'SÍ (Reversado)';
+        }
+
+        const shiftEmp = shift.Employee || shift.employee;
+        const movEmp = mov.Appointment?.Employee || mov.Appointment?.employee || shiftEmp;
+        const empName = movEmp?.User?.name || movEmp?.user?.name || movEmp?.name || shift.Creator?.name || '-';
+
         const row = detailSheet.addRow({
           date:          new Date(mov.createdAt).toLocaleDateString('es-CO'),
           time:          new Date(mov.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }),
           shiftDate:     shiftDateStr,
-          type:          typeLabels[mov.type] || mov.type,
+          type:          typeLabel,
           description:   mov.description,
           paymentMethod: methodLabels[mov.paymentMethod] || mov.paymentMethod,
-          amount:        parseFloat(mov.amount),
-          origin,
-          isReversal:    mov.isReversal ? 'Sí' : 'No',
+          amount:        finalAmount,
+          employee:      empName,
+          origin:        origin,
+          isReversal:    reversalStatus,
           notes:         mov.notes || '',
         });
+        
+        // Estilo visual para movimientos reversados o anulaciones
+        if (mov.isReversal || mov.Reversal) {
+          row.eachCell(cell => {
+            cell.font = { color: { argb: 'FF999999' }, italic: true };
+          });
+        }
 
         // Color por tipo
         const amountCell = row.getCell('amount');
