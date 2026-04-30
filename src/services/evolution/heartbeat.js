@@ -106,6 +106,29 @@ async function heartbeatCheck() {
     const isRecent = instance?.createdAt && 
       (new Date() - new Date(instance.createdAt)) < 5 * 60 * 1000;
     
+    // Si está en "connecting" por más de 2 minutos, verificar si hay QR pendiente
+    // (esto maneja casos donde la conexión se queda atascada)
+    const isStuckInConnecting = state === 'connecting' && instance?.createdAt &&
+      (new Date() - new Date(instance.createdAt)) > 2 * 60 * 1000;
+    
+    if (isStuckInConnecting) {
+      // NO forzar reconexión si hay un QR pendiente - el usuario necesita tiempo para escanearlo
+      const { currentQRs } = require('./state');
+      if (currentQRs && currentQRs.has && currentQRs.has(businessId)) {
+        console.log(`[Heartbeat] ℹ️ Instancia ${businessId} en connecting con QR pendiente, esperando escaneo... (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s)`);
+        // Solo forzar reconexión si ha pasado MUCHO tiempo (30 min) con QR pendiente
+        const veryLongWait = (new Date() - new Date(instance.createdAt)) > 30 * 60 * 1000;
+        if (!veryLongWait) {
+          return; // Esperar más tiempo para que escaneen el QR
+        }
+        console.log(`[Heartbeat] ⚠️ QR pendiente por más de 30 min, forzando reconexión...`);
+      } else {
+        console.log(`[Heartbeat] ⚠️ Instancia ${businessId} atascada en connecting (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s), forzando reconexión...`);
+      }
+      await attemptReconnect(businessId);
+      return;
+    }
+    
     if (isRecent) {
       console.log(`[Heartbeat] ℹ️ Instancia ${businessId} es reciente (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s), omitiendo reconexión automática`);
       return;

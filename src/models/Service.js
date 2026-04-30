@@ -20,5 +20,11 @@ module.exports = (sequelize) => {
       allowNull: true,
       comment: 'ID del grupo de servicios al que pertenece'
     },
+  }, {
+    indexes: [
+      { fields: ['businessId'], name: 'idx_service_businessId' },
+      { fields: ['businessId', 'active'], name: 'idx_service_businessId_active' },
+      { fields: ['serviceGroupId'], name: 'idx_service_serviceGroupId' },
+    ]
   });
 };

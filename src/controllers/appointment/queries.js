@@ -125,7 +125,8 @@ async function getEmployeeAppointments(employeeId, options = {}) {
       { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
     ],
     order: [['startTime', 'ASC']],
-    limit: 100
+    limit: 100,
+    subQuery: false
   });
 }
 

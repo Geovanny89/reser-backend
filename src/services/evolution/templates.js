@@ -25,8 +25,8 @@ function getRandomRatingTemplate() {
 }
 
 function getRandomRatingThanksTemplate(rating) {
-  const template = RATING_THANKS_TEMPLATES[Math.floor(Math.random() * RATING_THANKS_TEMPLATES.length)];
-  return template(rating);
+  const templateFunc = RATING_THANKS_TEMPLATES[Math.floor(Math.random() * RATING_THANKS_TEMPLATES.length)];
+  return templateFunc(rating);
 }
 
 function getRandomCancelTemplate() {

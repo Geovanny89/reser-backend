@@ -2,29 +2,18 @@ module.exports = {
   apps: [{
     name: 'kdice-backend',
     script: './src/server.js',
-    instances: 3,           // 3 instancias para soportar 200+ usuarios (configuración estable)
-    exec_mode: 'cluster',      // Modo cluster
+    instances: 2,              // 2 instancias (una por cada núcleo de tu vCPU)
+    exec_mode: 'cluster',      // Modo cluster para máxima eficiencia
     watch: false,
-<<<<<<< HEAD
-    max_memory_restart: '3G', // Reiniciar si pasa de 3GB
-
-=======
-    max_memory_restart: '1.5G', // 1.5GB por instancia (total 4.5GB), deja espacio para DB, SO y otros servicios
+    max_memory_restart: '2G',  // Reiniciar si una instancia llega a 2GB (tienes 8GB, así que es seguro)
     
->>>>>>> b9db091 ( se refactoriza el codigo y se modulariza)
     // Importante: tiempo para limpieza graceful
     kill_timeout: 15000,    // 15 segundos para limpieza antes de matar
     wait_ready: true,       // Esperar que el proceso diga "ready"
     listen_timeout: 10000,
-<<<<<<< HEAD
-
-    // Variables de entorno para limitar memoria de Node - AUMENTADO a 2GB
-    node_args: '--max-old-space-size=2048 --expose-gc',
-=======
     
-    // Variables de entorno para limitar memoria de Node
-    node_args: '--max-old-space-size=1536 --expose-gc',
->>>>>>> b9db091 ( se refactoriza el codigo y se modulariza)
+    // Variables de entorno para limitar memoria de Node - 2GB es ideal para tu RAM
+    node_args: '--max-old-space-size=2048 --expose-gc',
     
     // Logs
     log_file: './logs/combined.log',

@@ -1,31 +1,28 @@
-const { Business } = require('../models');
+const { Business, SystemSetting } = require('../models');
 const fs = require('fs');
 const path = require('path');
 
-// Ruta de la APK universal (ahora apuntando a la carpeta sincronizada por Git en el frontend)
+// Ruta de la APK universal
 const UNIVERSAL_APK_PATH = path.join(__dirname, '../../../frontend/public-static/apk/kdice-reservas.apk');
 
-// Versión actual de la app - CAMBIAR ESTO cuando subas nueva APK
-const APP_VERSION = {
-  version: '1.0.1',  // ← Cambia esto
-  buildDate: '2026-04-15',  // ← Fecha actual
-  forceUpdate: false,  // ← true = obligatoria
-  releaseNotes: [
-    'Nuevo: Sistema de notificaciones',
-    'Fix: Mejoras de rendimiento'
-  ],
-  downloadUrl: 'https://reservas.k-dice.com/apk/kdice-reservas.apk'
+// Valores por defecto
+const DEFAULT_APP_VERSION = {
+  version: '1.0.1',
+  buildDate: new Date().toISOString().split('T')[0],
+  forceUpdate: false,
+  releaseNotes: ['Mejoras de rendimiento', 'Corrección de errores'],
+  downloadUrl: 'https://profesional.k-dice.com?autodownload=true#app' // URL de tu landing
 };
-
-// Función para obtener ruta de APK personalizada por negocio
-const getBusinessApkPath = (businessSlug) => path.join(__dirname, `../../uploads/kdice-${businessSlug}.apk`);
 
 /**
  * Obtener versión actual de la app
  */
 exports.getAppVersion = async (req, res) => {
   try {
-    // Obtener info del archivo APK si existe
+    // Intentar obtener de la base de datos
+    const setting = await SystemSetting.findOne({ where: { key: 'app_version_config' } });
+    const config = setting ? JSON.parse(setting.value) : DEFAULT_APP_VERSION;
+
     let apkInfo = null;
     if (fs.existsSync(UNIVERSAL_APK_PATH)) {
       const stats = fs.statSync(UNIVERSAL_APK_PATH);
@@ -36,7 +33,7 @@ exports.getAppVersion = async (req, res) => {
     }
 
     res.json({
-      ...APP_VERSION,
+      ...config,
       apkInfo,
       timestamp: new Date().toISOString()
     });

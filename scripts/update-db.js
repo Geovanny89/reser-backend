@@ -35,7 +35,41 @@ async function updateDatabase() {
       }
     }
 
-    // 3. Crear tabla ClientDevices si no existe
+    // 3. Agregar columnas de trazabilidad para caja (cash_movements)
+    try {
+      await sequelize.query('ALTER TABLE "cash_movements" ADD COLUMN IF NOT EXISTS "isReversal" BOOLEAN NOT NULL DEFAULT false;');
+      console.log('✅ Columna "isReversal" verificada/agregada en cash_movements.');
+    } catch (e) {
+      console.error('❌ Error al agregar isReversal en cash_movements:', e.message);
+    }
+
+    try {
+      await sequelize.query('ALTER TABLE "cash_movements" ADD COLUMN IF NOT EXISTS "reversesMovementId" UUID NULL;');
+      console.log('✅ Columna "reversesMovementId" verificada/agregada en cash_movements.');
+    } catch (e) {
+      console.error('❌ Error al agregar reversesMovementId en cash_movements:', e.message);
+    }
+
+    // Índices (opcionales pero recomendados)
+    try {
+      await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_cash_movements_isReversal" ON "cash_movements" ("isReversal");');
+      await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_cash_movements_reversesMovementId" ON "cash_movements" ("reversesMovementId");');
+      console.log('✅ Índices de caja verificados/creados en cash_movements.');
+    } catch (e) {
+      console.error('❌ Error creando índices de caja:', e.message);
+    }
+
+    // 4. Agregar columnas para anulación de gastos (Expenses)
+    try {
+      await sequelize.query('ALTER TABLE "Expenses" ADD COLUMN IF NOT EXISTS "status" VARCHAR(10) NOT NULL DEFAULT \'active\';');
+      await sequelize.query('ALTER TABLE "Expenses" ADD COLUMN IF NOT EXISTS "voidedAt" TIMESTAMP NULL;');
+      await sequelize.query('ALTER TABLE "Expenses" ADD COLUMN IF NOT EXISTS "voidReason" TEXT NULL;');
+      console.log('✅ Columnas de anulación verificadas/agregadas en Expenses.');
+    } catch (e) {
+      console.error('❌ Error agregando columnas de anulación en Expenses:', e.message);
+    }
+
+    // 5. Crear/ajustar tablas nuevas si no existen
     try {
       await sequelize.sync({ alter: true });
       console.log('✅ Sincronización de modelos completada (Tablas nuevas creadas).');

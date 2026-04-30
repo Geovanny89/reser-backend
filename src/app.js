@@ -49,11 +49,13 @@ app.use('/api/upload',         require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));
 app.use('/api/superadmin', require('./routes/superAdmin.routes'));
+app.use('/api/platform-reviews', require('./routes/platformReview.routes'));
 
 // Módulos opcionales configurables
 app.use('/api/expenses',   checkBusinessStatus, require('./routes/expense.routes'));
 app.use('/api/inventory',  checkBusinessStatus, require('./routes/inventory.routes'));
 app.use('/api/deposits',   checkBusinessStatus, require('./routes/deposit.routes'));
+app.use('/api/cash-register', checkBusinessStatus, require('./routes/cashRegister.routes'));
 
 // Informe financiero integrado
 app.use('/api/financial-report', checkBusinessStatus, require('./routes/financialReport.routes'));
@@ -61,7 +63,25 @@ app.use('/api/financial-report', checkBusinessStatus, require('./routes/financia
 // Socket.io management endpoints
 app.use('/api/socket', require('./routes/socket.routes'));
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', version: '3.0.0', timestamp: new Date() }));
+app.get('/api/health', (req, res) => {
+  const mem = process.memoryUsage();
+  const cacheService = require('./services/cacheService');
+  const { getInstanceCount } = require('./services/evolution/state');
+  res.json({
+    status: 'ok',
+    version: '3.0.0',
+    timestamp: new Date(),
+    memory: {
+      rssMB: (mem.rss / 1024 / 1024).toFixed(2),
+      heapUsedMB: (mem.heapUsed / 1024 / 1024).toFixed(2),
+      heapTotalMB: (mem.heapTotal / 1024 / 1024).toFixed(2),
+      externalMB: (mem.external / 1024 / 1024).toFixed(2),
+      heapUsagePct: mem.heapTotal > 0 ? ((mem.heapUsed / mem.heapTotal) * 100).toFixed(2) + '%' : 'N/A'
+    },
+    cache: cacheService.getStats(),
+    evolutionInstances: getInstanceCount()
+  });
+});
 
 // Servir frontend en produccion
 const frontendDist = path.join(__dirname, '../../frontend/dist');

@@ -1,0 +1,47 @@
+config:
+  target: "http://localhost:4000"
+  phases:
+    - duration: 20
+      arrivalRate: 1
+      name: "Admins consultando dashboard"
+
+  variables:
+    businessId: "b83e418f-10aa-41c8-b37a-834d97d1b942"
+    email: "enanos@enano.com"
+    password: "123456"
+
+scenarios:
+  - name: "Flujo del Admin - KPIs y Caja"
+    flow:
+
+      # LOGIN
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"   # AJUSTA ESTO SEGÚN TU RESPUESTA REAL
+              as: "token"
+          expect:
+            - statusCode: 200
+
+      - log: "TOKEN => {{ token }}"
+
+      # DASHBOARD
+      - get:
+          url: "/api/dashboard/stats/{{ businessId }}"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      # CAJA
+      - get:
+          url: "/api/cash-register/shift/{{ businessId }}"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      - think: 3

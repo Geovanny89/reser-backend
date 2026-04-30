@@ -1,0 +1,52 @@
+config:
+  target: "http://localhost:4000"
+  phases:
+    - duration: 30
+      arrivalRate: 5
+      name: "Prueba de Estrés - Admins Concurrentes"
+
+  variables:
+    businessId: "cd91baa7-f46b-4365-934d-3d9fcf18fc53"
+    email: "juan@juan.com"
+    password: "1234567"
+
+scenarios:
+  - name: "Flujo de Admin Intenso"
+    flow:
+      # LOGIN
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "token"
+          expect:
+            - statusCode: 200
+
+      # DASHBOARD STATS
+      - get:
+          url: "/api/dashboard/stats/{{ businessId }}"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      # CAJA ACTUAL
+      - get:
+          url: "/api/cash-register/shift/{{ businessId }}"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      # CITAS DEL DÍA
+      - get:
+          url: "/api/appointments/business/{{ businessId }}?date=2026-04-29"
+          headers:
+            Authorization: "Bearer {{ token }}"
+          expect:
+            - statusCode: 200
+
+      - think: 1

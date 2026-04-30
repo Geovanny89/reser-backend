@@ -8,14 +8,24 @@ const currentQRs = new Map();
 let isProcessingQueue = false;
 let isQueueStarting = false; // Flag atómico para evitar inicio concurrente
 
+// TTL de instancias en memoria (2 horas sin uso = stale)
+const INSTANCE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+let cleanupInterval = null;
+
 function getInstance(businessId) {
-  return instances.get(businessId);
+  const entry = instances.get(businessId);
+  if (!entry) return undefined;
+  // Actualizar lastAccessedAt en lectura
+  entry.lastAccessedAt = new Date();
+  return entry;
 }
 
 function setInstance(businessId, instanceData) {
+  const now = new Date();
   instances.set(businessId, {
     ...instanceData,
-    createdAt: instanceData.createdAt || new Date()
+    createdAt: instanceData.createdAt || now,
+    lastAccessedAt: now
   });
 }
 
@@ -85,6 +95,40 @@ function clearAllState() {
   currentQRs.clear();
   isProcessingQueue = false;
   isQueueStarting = false;
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
+
+/**
+ * Limpia instancias huérfanas que no han sido accedidas en más de INSTANCE_MAX_AGE_MS
+ */
+function cleanupStaleInstances(maxAgeMs = INSTANCE_MAX_AGE_MS) {
+  const now = Date.now();
+  let removed = 0;
+  for (const [businessId, entry] of instances.entries()) {
+    const lastAccessed = entry.lastAccessedAt ? new Date(entry.lastAccessedAt).getTime() : new Date(entry.createdAt).getTime();
+    if (now - lastAccessed > maxAgeMs) {
+      instances.delete(businessId);
+      currentQRs.delete(businessId);
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    console.log(`[Evolution State] 🧹 Cleanup: ${removed} instancias huérfanas eliminadas (quedan ${instances.size})`);
+  }
+  return removed;
+}
+
+/**
+ * Inicia limpieza automática cada 15 minutos
+ */
+function startAutoCleanup(intervalMs = 15 * 60 * 1000) {
+  if (cleanupInterval) return;
+  cleanupInterval = setInterval(() => cleanupStaleInstances(), intervalMs);
+  if (cleanupInterval.unref) cleanupInterval.unref();
+  console.log(`[Evolution State] 🧹 Auto-cleanup iniciado cada ${intervalMs / 60000} min`);
 }
 
 module.exports = {
@@ -107,5 +151,8 @@ module.exports = {
   isStartingQueue,
   setStartingQueue,
   clearBusinessState,
-  clearAllState
+  clearAllState,
+  cleanupStaleInstances,
+  startAutoCleanup,
+  INSTANCE_MAX_AGE_MS
 };

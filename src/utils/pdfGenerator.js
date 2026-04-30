@@ -135,8 +135,8 @@ const generatePaymentReceipt = async (appointmentData) => {
 
     // Determinar tipo de documento
     const isTechnicalService = appointmentData.isTechnicalService || false;
-    const documentTitle = isTechnicalService ? 'Orden de Servicio' : 'Comprobante de Pago';
-    const documentSubtitle = isTechnicalService ? 'Confirmación de Visita Técnica' : 'Soporte de Transacción';
+    const documentTitle = isTechnicalService ? 'Reporte de Servicio' : 'Comprobante de Pago';
+    const documentSubtitle = isTechnicalService ? 'Confirmación de Visita Profesional' : 'Soporte de Transacción';
 
     // Título del documento
     doc.fillColor(colors.secondary)
@@ -170,7 +170,7 @@ const generatePaymentReceipt = async (appointmentData) => {
     
     doc.text(`Cliente: ${appointmentData.clientName || 'No especificado'}`, margin, y);
     y += 18;
-    doc.text(`${isTechnicalService ? 'Técnico' : 'Profesional'}: ${appointmentData.employeeName || 'No especificado'}`, margin, y);
+    doc.text(`Profesional: ${appointmentData.employeeName || 'No especificado'}`, margin, y);
     y += 18;
     doc.text(`Teléfono: ${appointmentData.clientPhone || 'No especificado'}`, margin, y);
 
@@ -197,7 +197,7 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(10)
        .text('SERVICIO', tableLeft + 12, tableTop + 9)
        .text('FECHA/HORA', tableLeft + 200, tableTop + 9)
-       .text(isTechnicalService ? 'TÉCNICO' : 'PROFESIONAL', tableLeft + 320, tableTop + 9);
+       .text('PROFESIONAL', tableLeft + 320, tableTop + 9);
     
     // Solo mostrar columna VALOR si no es servicio técnico
     if (!isTechnicalService) {
@@ -215,7 +215,7 @@ const generatePaymentReceipt = async (appointmentData) => {
        .fontSize(10)
        .text(appointmentData.serviceName || 'Servicio', tableLeft + 12, rowY + 10, { width: 180, ellipsis: true })
        .text(formatColombiaDate(appointmentData.startTime, 'short'), tableLeft + 200, rowY + 10)
-       .text(appointmentData.employeeName || (isTechnicalService ? 'Técnico por asignar' : 'Profesional'), tableLeft + 320, rowY + 10, { width: 120, ellipsis: true });
+       .text(appointmentData.employeeName || 'Profesional', tableLeft + 320, rowY + 10, { width: 120, ellipsis: true });
     
     // Solo mostrar precio si no es servicio técnico
     if (!isTechnicalService) {
@@ -487,12 +487,12 @@ const generatePaymentReceipt = async (appointmentData) => {
 
     // Texto del footer
     const footerText1 = isTechnicalService 
-      ? 'Este documento confirma la solicitud de su servicio.' 
+      ? 'Este documento confirma la realización de su servicio.' 
       : 'Este documento certifica que el pago fue recibido.';
     const footerText2 = isTechnicalService 
-      ? 'Conserve esta orden para cualquier reclamación.' 
+      ? 'Conserve este reporte para cualquier reclamación.' 
       : 'Conserve este comprobante para cualquier reclamación.';
-    const referenceLabel = isTechnicalService ? 'N° Orden de Servicio' : 'N° Comprobante';
+    const referenceLabel = isTechnicalService ? 'N° Reporte de Servicio' : 'N° Comprobante';
     
     doc.fillColor(colors.secondary)
        .font('Helvetica')

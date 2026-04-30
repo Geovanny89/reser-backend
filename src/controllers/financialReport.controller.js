@@ -1,12 +1,12 @@
-const { Appointment, Expense, InventoryUsage, InventoryItem, Deposit, Business } = require('../models');
+const { Appointment, Expense, InventoryUsage, InventoryItem, Deposit, Business, CashRegisterShift, CashMovement } = require('../models');
 const { Op } = require('sequelize');
 
 exports.getFinancialReport = async (req, res) => {
   try {
-    const { businessId, year, month } = req.query;
+    const { businessId, year, month, startDate: queryStartDate, endDate: queryEndDate } = req.query;
     
-    if (!businessId || !year || !month) {
-      return res.status(400).json({ error: 'businessId, year y month son requeridos' });
+    if (!businessId) {
+      return res.status(400).json({ error: 'businessId es requerido' });
     }
 
     // Verificar que el negocio tiene los módulos habilitados
@@ -15,10 +15,23 @@ exports.getFinancialReport = async (req, res) => {
     
     const enabledModules = business.enabledModules || {};
 
-    // Fechas del mes
-    const startDate = `${year}-${month.padStart(2, '0')}-01`;
-    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-    const endDate = `${year}-${month.padStart(2, '0')}-${lastDay}`;
+    // Calcular fechas del período
+    let startDate, endDate, periodInfo;
+    
+    if (queryStartDate && queryEndDate) {
+      // Usar fechas personalizadas
+      startDate = queryStartDate;
+      endDate = queryEndDate;
+      periodInfo = { startDate, endDate, type: 'custom' };
+    } else if (year && month) {
+      // Modo legacy: fechas del mes
+      startDate = `${year}-${month.padStart(2, '0')}-01`;
+      const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+      endDate = `${year}-${month.padStart(2, '0')}-${lastDay}`;
+      periodInfo = { year, month, startDate, endDate, type: 'month' };
+    } else {
+      return res.status(400).json({ error: 'Debe proporcionar year+month o startDate+endDate' });
+    }
 
     // === INGRESOS: Citas completadas en el mes ===
     const appointments = await Appointment.findAll({
@@ -114,13 +127,79 @@ exports.getFinancialReport = async (req, res) => {
       });
     }
 
+    // === CAJA: Turnos y movimientos de efectivo ===
+    let cashRegister = {
+      shifts: [],
+      totalOpeningAmount: 0,
+      totalIncome: 0,
+      totalExpenses: 0,
+      totalWithdrawals: 0,
+      totalDifference: 0,
+      shiftsCount: 0
+    };
+    if (enabledModules.cashRegister) {
+      const shifts = await CashRegisterShift.findAll({
+        where: {
+          businessId,
+          openedAt: { [Op.between]: [new Date(startDate), new Date(`${endDate}T23:59:59`)] }
+        },
+        include: [{ model: require('../models').Employee, as: 'Employee' }]
+      });
+
+      cashRegister.shiftsCount = shifts.length;
+
+      // Para cada turno, obtener sus movimientos
+      for (const shift of shifts) {
+        const movements = await CashMovement.findAll({
+          where: { shiftId: shift.id }
+        });
+
+        const income = movements
+          .filter(m => m.type === 'income')
+          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+        
+        const expenses = movements
+          .filter(m => m.type === 'expense')
+          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+        
+        const withdrawals = movements
+          .filter(m => m.type === 'withdrawal')
+          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+
+        cashRegister.totalOpeningAmount += parseFloat(shift.openingAmount || 0);
+        cashRegister.totalIncome += income;
+        cashRegister.totalExpenses += expenses;
+        cashRegister.totalWithdrawals += withdrawals;
+
+        // Diferencia del turno = ingresos - gastos - retiros (flujo neto)
+        const shiftDifference = income - expenses - withdrawals;
+        cashRegister.totalDifference += shiftDifference;
+
+        cashRegister.shifts.push({
+          id: shift.id,
+          openedAt: shift.openedAt,
+          closedAt: shift.closedAt,
+          openingAmount: parseFloat(shift.openingAmount),
+          closingAmount: shift.closingAmount ? parseFloat(shift.closingAmount) : null,
+          expectedAmount: shift.expectedAmount ? parseFloat(shift.expectedAmount) : null,
+          difference: shift.difference ? parseFloat(shift.difference) : null,
+          status: shift.status,
+          employee: shift.Employee?.name || null,
+          movementsCount: movements.length,
+          income,
+          expenses,
+          withdrawals
+        });
+      }
+    }
+
     // === CÁLCULOS FINALES ===
     const totalExpenses = expenses.total + inventory.total;
     const netProfit = totalIncome - totalExpenses;
     const margin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
 
     res.json({
-      period: { year, month, startDate, endDate },
+      period: periodInfo.type === 'month' ? { year, month, startDate, endDate } : { startDate, endDate, type: periodInfo.type },
       summary: {
         totalIncome,
         totalExpenses,
@@ -156,6 +235,15 @@ exports.getFinancialReport = async (req, res) => {
           totalHeld: deposits.totalHeld,
           totalApplied: deposits.totalApplied,
           count: deposits.count
+        },
+        cashRegister: {
+          shiftsCount: cashRegister.shiftsCount,
+          totalOpeningAmount: cashRegister.totalOpeningAmount,
+          totalIncome: cashRegister.totalIncome,
+          totalExpenses: cashRegister.totalExpenses,
+          totalWithdrawals: cashRegister.totalWithdrawals,
+          totalDifference: cashRegister.totalDifference,
+          shifts: cashRegister.shifts
         }
       },
       enabledModules

@@ -47,5 +47,12 @@ module.exports = (sequelize) => {
       type: DataTypes.BOOLEAN, 
       defaultValue: false 
     }
+  }, {
+    indexes: [
+      { fields: ['businessId'], name: 'idx_promotion_businessId' },
+      { fields: ['businessId', 'active'], name: 'idx_promotion_businessId_active' },
+      { fields: ['serviceId'], name: 'idx_promotion_serviceId' },
+      { fields: ['startDate', 'endDate'], name: 'idx_promotion_date_range' },
+    ]
   });
 };

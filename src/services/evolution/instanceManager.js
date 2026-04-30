@@ -13,7 +13,7 @@ console.log(`[Evolution API] Config - URL: ${EVOLUTION_URL}, API_KEY exists: ${!
 const api = axios.create({
   baseURL: EVOLUTION_URL,
   headers: { 'apikey': API_KEY },
-  timeout: 30000
+  timeout: 60000 // Aumentado a 60 segundos para dar más tiempo a Evolution API
 });
 
 const {
@@ -50,8 +50,18 @@ async function createInstance(businessId, forceFresh = false) {
     
     if (forceFresh && existingInstance) {
       console.log(`[Evolution API] 🔄 Eliminando instancia previa...`);
-      await stopInstance(businessId);
-      await new Promise(r => setTimeout(r, 2000)); // Espera a que la DB se libere
+      const stopped = await stopInstance(businessId);
+      if (!stopped) {
+        console.log(`[Evolution API] ⚠️ No se pudo eliminar la instancia, intentando reiniciarla...`);
+        // Intentar reiniciar la instancia existente en lugar de crear nueva
+        try {
+          await configureWebhook(businessId);
+          return existingInstance;
+        } catch (e) {
+          console.log(`[Evolution API] ℹ️ No se pudo reiniciar, continuando con creación...`);
+        }
+      }
+      await new Promise(r => setTimeout(r, 3000)); // Espera más a que la DB se libere
     }
     
     console.log(`[Evolution API] 🆕 Solicitando creación en Evolution API...`);
@@ -86,6 +96,31 @@ async function createInstance(businessId, forceFresh = false) {
     return instanceData;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error en createInstance:`, err.response?.data || err.message);
+    
+    // Si el error es 403 (nombre ya en uso), intentar usar la instancia existente
+    if (err.response?.status === 403) {
+      const errorMsg = JSON.stringify(err.response?.data || '');
+      if (errorMsg.includes('already in use') || errorMsg.includes('name')) {
+        console.log(`[Evolution API] ℹ️ Nombre ya en uso, intentando usar instancia existente...`);
+        try {
+          const allInstances = await fetchAllInstances();
+          const existingInstance = allInstances.find(inst => inst.name === businessId);
+          if (existingInstance) {
+            console.log(`[Evolution API] ✅ Usando instancia existente`);
+            setInstance(businessId, {
+              instanceName: existingInstance.name,
+              status: existingInstance.connectionStatus || existingInstance.state || 'unknown',
+              createdAt: existingInstance.createdAt
+            });
+            await configureWebhook(businessId);
+            return existingInstance;
+          }
+        } catch (e) {
+          console.log(`[Evolution API] ℹ️ No se pudo obtener instancia existente:`, e.message);
+        }
+      }
+    }
+    
     throw err;
   }
 }
@@ -95,8 +130,9 @@ async function createInstance(businessId, forceFresh = false) {
  */
 async function configureWebhook(businessId) {
   try {
-    // Usar host.docker.internal para Docker Desktop en Windows
-    const webhookUrl = 'http://72.62.165.89:4000/api/notifications/evolution/webhook';
+    // Usar host.docker.internal para Docker Desktop en Windows, o la IP local si es red local
+    const webhookHost = process.env.WEBHOOK_HOST || 'host.docker.internal';
+    const webhookUrl = `http://${webhookHost}:4000/api/notifications/evolution/webhook`;
     
     console.log(`[Evolution API] 🔗 Configurando webhook para ${businessId}: ${webhookUrl}`);
     
@@ -107,11 +143,7 @@ async function configureWebhook(businessId) {
         webhookByEvents: false,
         webhookBase64: false,
         events: [
-          "QRCODE_UPDATED",
           "MESSAGES_UPSERT",
-          "MESSAGES_UPDATE",
-          "MESSAGES_DELETE",
-          "SEND_MESSAGE",
           "CONNECTION_UPDATE"
         ]
       }
@@ -220,11 +252,11 @@ async function tryGetQRFromConnect(businessId) {
     console.log(`[Evolution API] 📲 Intentando /instance/connect/${businessId}...`);
     
     let attempts = 0;
-    const maxAttempts = 25; // Aumentado: el QR de Baileys puede tardar hasta 90 segundos
+    const maxAttempts = 40; // Aumentado a 40 intentos para dar margen a Evolution API (aprox 120 seg)
     
     while (attempts < maxAttempts) {
       attempts++;
-      console.log(`[Evolution API] 📲 Intento ${attempts}/${maxAttempts}...`);
+      console.log(`[Evolution API] 📲 Intento ${attempts}/${maxAttempts} de obtención de QR...`);
       
       try {
         const response = await api.get(`/instance/connect/${businessId}`);
@@ -328,27 +360,83 @@ async function tryGetQRFromQRCode(businessId) {
 
 async function stopInstance(businessId) {
   try {
-    // PASO 1: Desconectar la instancia primero (requerido por Evolution API)
-    console.log(`[Evolution API] 🔌 Desconectando instancia ${businessId}...`);
+    // PASO 0: Verificar estado real de la instancia
+    let state = null;
     try {
-      await api.post(`/instance/logout/${businessId}`);
-      console.log(`[Evolution API] ✅ Instancia desconectada`);
-      // Esperar a que se complete la desconexión
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (logoutErr) {
-      // Si la instancia ya está desconectada o no existe, continuar con la eliminación
-      console.log(`[Evolution API] ℹ️ Logout no fue necesario o falló:`, logoutErr.response?.status || logoutErr.message);
+      state = await getConnectionState(businessId);
+      console.log(`[Evolution API] 📡 Estado actual de ${businessId}: ${state}`);
+    } catch (e) {
+      console.log(`[Evolution API] ℹ️ No se pudo obtener estado, asumiendo que no existe`);
     }
 
-    // PASO 2: Eliminar la instancia
+    // PASO 1: Desconectar la instancia primero si está conectada
+    if (state === 'open' || state === 'connected') {
+      console.log(`[Evolution API] 🔌 Desconectando instancia ${businessId} (estado: ${state})...`);
+      try {
+        await api.delete(`/instance/logout/${businessId}`);
+        console.log(`[Evolution API] ✅ Logout exitoso`);
+      } catch (logoutErr) {
+        console.log(`[Evolution API] ⚠️ Logout falló:`, logoutErr.response?.status || logoutErr.message);
+      }
+      
+      // Esperar a que se complete la desconexión (más tiempo)
+      console.log(`[Evolution API] ⏳ Esperando desconexión...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // Verificar si se desconectó
+      try {
+        const newState = await getConnectionState(businessId);
+        if (newState === 'open' || newState === 'connected') {
+          console.log(`[Evolution API] ⚠️ Instancia aún conectada, intentando método alternativo...`);
+          // Intentar con endpoint de disconnect si existe
+          try {
+            await api.post(`/instance/disconnect/${businessId}`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          } catch (disconnectErr) {
+            console.log(`[Evolution API] ℹ️ Disconnect alternativo falló:`, disconnectErr.response?.status || disconnectErr.message);
+          }
+        }
+      } catch (e) {
+        // Si falla al obtener estado, probablemente ya se eliminó
+      }
+    }
+
+    // PASO 2: Eliminar la instancia con reintentos
     console.log(`[Evolution API] 🗑️ Eliminando instancia ${businessId}...`);
-    await api.delete(`/instance/delete/${businessId}`);
+    let deleteAttempts = 0;
+    const maxDeleteAttempts = 3;
+    
+    while (deleteAttempts < maxDeleteAttempts) {
+      deleteAttempts++;
+      try {
+        await api.delete(`/instance/delete/${businessId}`);
+        console.log(`[Evolution API] ✅ Instancia eliminada en intento ${deleteAttempts}`);
+        break;
+      } catch (deleteErr) {
+        console.log(`[Evolution API] ⚠️ Intento ${deleteAttempts}/${maxDeleteAttempts} falló:`, deleteErr.response?.status || deleteErr.message);
+        
+        if (deleteAttempts < maxDeleteAttempts) {
+          // Si dice que necesita estar desconectada, esperar más
+          const errorMsg = JSON.stringify(deleteErr.response?.data || '');
+          if (errorMsg.includes('disconnected') || errorMsg.includes('needs to be')) {
+            console.log(`[Evolution API] ⏳ Esperando más tiempo para desconexión...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        } else {
+          console.error(`[Evolution API] ❌ No se pudo eliminar después de ${maxDeleteAttempts} intentos`);
+          return false;
+        }
+      }
+    }
+    
     deleteInstance(businessId);
     deleteQR(businessId);
     console.log(`[Evolution API] ⏸️ Instancia detenida: ${businessId}`);
     
-    // Esperar un momento para asegurar que Evolution API procese la eliminación
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Esperar más tiempo para asegurar que Evolution API procese la eliminación
+    await new Promise(resolve => setTimeout(resolve, 3000));
     
     return true;
   } catch (err) {
@@ -404,10 +492,22 @@ function formatPhoneForEvolution(phone) {
 }
 
 async function sendMessageDirect(businessId, phone, text) {
+  if (process.env.MOCK_WHATSAPP === 'true') {
+    console.log(`[Evolution API] 🟡 MOCK ACTIVADO: Simulando envío de mensaje a ${phone}: ${text.substring(0, 30)}...`);
+    await new Promise(resolve => setTimeout(resolve, 300)); // Simular latencia de red
+    return { status: 'mock_success', message: 'Mensaje simulado por MOCK_WHATSAPP' };
+  }
+
   try {
     const formattedPhone = formatPhoneForEvolution(phone);
     if (!formattedPhone) {
       throw new Error(`Número de teléfono inválido: ${phone}`);
+    }
+
+    // Verificar estado de conexión ANTES de intentar enviar (evita timeout de 60s)
+    const connectionState = await getConnectionState(businessId);
+    if (connectionState !== 'open' && connectionState !== 'connected') {
+      throw new Error(`WhatsApp no está conectado (estado: ${connectionState}). No se puede enviar mensaje.`);
     }
 
     console.log(`[Evolution API] 📤 Enviando a ${formattedPhone} (original: ${phone})`);
@@ -430,9 +530,28 @@ async function sendMessageDirect(businessId, phone, text) {
 }
 
 async function hasValidSession(businessId) {
-  // Evolution API mantiene sesiones persistentes - verificar estado real
-  const realState = await getConnectionState(businessId);
-  return realState === 'open' || realState === 'connected';
+  if (process.env.MOCK_WHATSAPP === 'true') {
+    console.log(`[Evolution API] 🟡 MOCK ACTIVADO: Simulando sesión válida para ${businessId}`);
+    return true;
+  }
+
+  try {
+    // PASO 1: Verificar que la instancia existe en Evolution API
+    const allInstances = await fetchAllInstances();
+    const exists = allInstances.find(inst => inst.name === businessId);
+    
+    if (!exists) {
+      console.log(`[Evolution API] ⚠️ Instancia ${businessId} no existe en Evolution API`);
+      return false;
+    }
+    
+    // PASO 2: Verificar el estado de conexión real
+    const realState = await getConnectionState(businessId);
+    return realState === 'open' || realState === 'connected';
+  } catch (e) {
+    console.error(`[Evolution API] ❌ Error verificando sesión válida para ${businessId}:`, e.message);
+    return false;
+  }
 }
 
 function extractPhoneFromInstance(instance) {

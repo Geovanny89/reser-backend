@@ -177,7 +177,7 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
   const slots = [];
   const safeDuration = (duration && duration > 0) ? Number(duration) : 30;
 
-  const SLOT_INTERVAL = 15; // 🔥 clave: granularidad (puedes usar 10, 15, 20, etc.)
+  const SLOT_INTERVAL = 15; // granularidad de inicio: revisa cada 15 min; el chequeo de conflictos descarta los solapados
 
   // ==================== HELPERS ====================
 

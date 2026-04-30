@@ -39,6 +39,10 @@ module.exports = (sequelize) => {
     }
   }, {
     tableName: 'ServiceGroups',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      { fields: ['businessId'], name: 'idx_serviceGroup_businessId' },
+      { fields: ['businessId', 'active'], name: 'idx_serviceGroup_businessId_active' },
+    ]
   });
 };

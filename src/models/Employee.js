@@ -15,5 +15,11 @@ module.exports = (sequelize) => {
     isManager:     { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si puede gestionar el negocio como administrador' },
     // Campos de calificación del empleado
    
+  }, {
+    indexes: [
+      { fields: ['businessId'], name: 'idx_employee_businessId' },
+      { fields: ['businessId', 'active'], name: 'idx_employee_businessId_active' },
+      { fields: ['userId'], name: 'idx_employee_userId' },
+    ]
   });
 };

@@ -12,6 +12,7 @@ module.exports = (sequelize) => {
       allowNull: true,
       references: { model: 'Users', key: 'id' }
     },
+
     userEmail: { 
       type: DataTypes.STRING, 
       allowNull: true 
@@ -69,7 +70,9 @@ module.exports = (sequelize) => {
     indexes: [
       { fields: ['userId'] },
       { fields: ['action'] },
+
       { fields: ['entityType'] },
+
       { fields: ['createdAt'] },
       { fields: ['userId', 'action'] },
       { fields: ['entityType', 'entityId'] }

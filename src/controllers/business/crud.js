@@ -6,6 +6,8 @@ const { deleteFromCloudinary } = require('../../config/cloudinary');
 const { ALLOWED_UPDATE_FIELDS } = require('./constants');
 const { buildBusinessInclude } = require('./utils');
 const cacheService = require('../../services/cacheService');
+const { logActivity } = require('../../utils/activityLogger');
+
 
 // POST /businesses (superadmin)
 exports.create = async (req, res) => {
@@ -26,7 +28,8 @@ exports.create = async (req, res) => {
       ...req.body,
       isBranch,
       branchStatus,
-      status
+      status,
+      referralDate: req.body.referredByCode ? new Date() : null
     });
 
     res.status(201).json(biz);
@@ -51,6 +54,17 @@ exports.update = async (req, res) => {
     }
     
     await biz.update(updates);
+    
+    // Registrar actividad
+    logActivity({ user: req.user }, {
+      action: 'UPDATE_BUSINESS',
+      entityType: 'Business',
+      entityId: biz.id,
+      businessId: biz.id,
+      description: `Configuración de negocio actualizada: ${biz.name}`,
+      newValues: updates
+    });
+
     
     // Invalidar caché del negocio público
     if (biz.slug) {
@@ -164,7 +178,19 @@ exports.remove = async (req, res) => {
       await deleteFromCloudinary(url);
     }
 
+    const bizInfo = { name: biz.name, slug: biz.slug, ownerId: biz.ownerId };
     await biz.destroy();
+    
+    // Registrar actividad
+    logActivity({ user: req.user }, {
+      action: 'DELETE_BUSINESS',
+      entityType: 'Business',
+      entityId: biz.id,
+      businessId: biz.id,
+      description: `Negocio eliminado permanentemente: ${bizInfo.name} (${bizInfo.slug})`,
+      oldValues: bizInfo
+    });
+
     res.json({ message: 'Negocio y todos sus datos eliminados correctamente' });
   } catch (e) {
     console.error('Error eliminando negocio:', e);

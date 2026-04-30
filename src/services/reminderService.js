@@ -73,6 +73,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win24HEnd, [Op.gte]: win24HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder24hSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -99,6 +100,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win12HEnd, [Op.gte]: win12HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder12hSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -125,6 +127,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win2HEnd, [Op.gte]: win2HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder2hSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -199,6 +202,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win1HEnd, [Op.gt]: new Date(now) },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminderSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -258,6 +262,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: winRefEnd, [Op.gte]: winRefStart },
         status: { [Op.in]: ['confirmed'] }, // Solo citas confirmadas
         referenceMessageSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -282,6 +287,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win30MEnd, [Op.gt]: new Date(now) },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder30mSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -394,9 +400,9 @@ async function processReminder12h(appt) {
     const dayText = getRelativeDayText(new Date(appt.startTime), timeStr);
 
     // Determinar estado de confirmación
-    const isConfirmed = appt.confirmed === true;
-    const alreadyAskingForConfirmation = appt.messageFlowStatus === 'awaiting_confirmation';
-    const needsConfirmation = !isConfirmed && !alreadyAskingForConfirmation;
+    const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
+    // Si no está confirmada, volvemos a pedir confirmación (aunque ya hayamos pedido a las 24h)
+    const needsConfirmation = !isConfirmed;
 
     // 1. Push al cliente
     let clientPushToken = appt.Client?.pushToken;
@@ -429,12 +435,12 @@ async function processReminder12h(appt) {
         const templates = [
           `👋 Hola *${appt.clientName}*, te esperamos ${dayText} para tu cita de *${serviceName}* en *${businessName}*. ¡Gracias por confirmar! 🗓️`,
           `🎯 *${appt.clientName}*, todo listo para tu cita de *${serviceName}* ${dayText} en *${businessName}*. ¡Te esperamos con gusto! 😊`,
-          `✅ Confirmado *${appt.clientName}*! Tu cita de *${serviceName}* es ${dayText} en *${businessName}*. ¡Nos vemos pronto! 🗓️`
+          `✅ ¡Confirmado *${appt.clientName}*! Tu cita de *${serviceName}* es ${dayText} en *${businessName}*. ¡Nos vemos pronto! 🗓️`
         ];
         text = templates[Math.floor(Math.random() * templates.length)];
       } else {
-        // Cita NO confirmada: pedir confirmación
-        text = `👋 Hola *${appt.clientName}*, tienes una cita para *${serviceName}* ${dayText} en *${businessName}*.\n\n¿Confirmas tu asistencia?\nResponde: *SI* para confirmar\nResponde: *NO* para cancelar`;
+        // Cita NO confirmada: volver a pedir confirmación
+        text = `🌻 *${appt.clientName}*, recordatorio: cita de *${serviceName}* ${dayText} en *${businessName}*.\n\n¿Confirmas?\nResponde *SI* para CONFIRMAR ✅\nResponde *NO* para CANCELAR ❌`;
         msgType = 'confirmation';
       }
 
@@ -638,6 +644,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win60MEnd, [Op.gt]: new Date(now) },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert60mSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -661,6 +668,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win30MTechEnd, [Op.gt]: new Date(now) },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert30mSent: false,
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },
@@ -684,6 +692,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win15MEnd, [Op.gt]: new Date(now) },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlertSent: false, // Usamos el campo existente para 15min
+        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
       },
       include: [
         { model: Service },

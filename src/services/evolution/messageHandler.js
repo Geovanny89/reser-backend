@@ -143,7 +143,8 @@ async function findAppointmentsForPhone(businessIds, phone, isFromList = false) 
     
     // Solo filtrar por teléfono si NO es una lista de difusión
     if (!isFromList) {
-      whereClause.clientPhone = { [require('sequelize').Op.like]: `%${phone}%` };
+      const basePhone = phone.length > 10 ? phone.slice(-10) : phone;
+      whereClause.clientPhone = { [require('sequelize').Op.like]: `%${basePhone}%` };
     }
     
     const appointments = await Appointment.findAll({
@@ -216,36 +217,54 @@ function determineAction(matchedAppointments, text) {
   const number = parseInt(cleanText);
   const isRatingNumber = !isNaN(number) && number >= 1 && number <= 5;
   
-  // Si hay múltiples citas, priorizar:
-  // 1. Citas en awaiting_confirmation (para confirmar/cancelar)
-  // 2. Citas activas pendientes (pending, attention)
-  // 3. Citas en awaiting_rating
-  // 4. La más reciente
+  // Si hay múltiples citas, priorizar según el tipo de respuesta:
+  // - Si es un número (calificación), priorizar awaiting_rating primero
+  // - Si no, priorizar awaiting_confirmation, luego pending/attention, luego awaiting_rating
   let matchedAppt = matchedAppointments[0];
   
   if (matchedAppointments.length > 1) {
-    // Primero, buscar citas esperando confirmación
-    const awaitingConfirmAppt = matchedAppointments.find(a => 
-      a.messageFlowStatus === 'awaiting_confirmation' && 
-      ['pending', 'attention'].includes(a.status)
-    );
-    if (awaitingConfirmAppt) {
-      matchedAppt = awaitingConfirmAppt;
-      console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation: status=${awaitingConfirmAppt.status}`);
+    if (isRatingNumber) {
+      // PRIORIDAD 1 para calificaciones: citas en awaiting_rating
+      const ratingAppt = matchedAppointments.find(a => 
+        a.messageFlowStatus === 'awaiting_rating' ||
+        (a.status === 'done' && !a.rating)
+      );
+      if (ratingAppt) {
+        matchedAppt = ratingAppt;
+        console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating para calificación`);
+      } else {
+        // Si no hay awaiting_rating, buscar awaiting_confirmation
+        const awaitingConfirmAppt = matchedAppointments.find(a => 
+          a.messageFlowStatus === 'awaiting_confirmation' && 
+          ['pending', 'attention'].includes(a.status)
+        );
+        if (awaitingConfirmAppt) {
+          matchedAppt = awaitingConfirmAppt;
+          console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation (fallback)`);
+        }
+      }
     } else {
-      // Si no hay citas esperando confirmación, buscar citas activas pendientes
-      const pendingAppt = matchedAppointments.find(a => 
+      // PRIORIDAD normal: awaiting_confirmation -> pending/attention -> awaiting_rating
+      const awaitingConfirmAppt = matchedAppointments.find(a => 
+        a.messageFlowStatus === 'awaiting_confirmation' && 
         ['pending', 'attention'].includes(a.status)
       );
-      if (pendingAppt) {
-        matchedAppt = pendingAppt;
-        console.log(`[Evolution Message] 🎯 Usando cita pendiente: status=${pendingAppt.status}`);
+      if (awaitingConfirmAppt) {
+        matchedAppt = awaitingConfirmAppt;
+        console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation: status=${awaitingConfirmAppt.status}`);
       } else {
-        // Si no hay citas pendientes, buscar awaiting_rating
-        const ratingAppt = matchedAppointments.find(a => a.messageFlowStatus === 'awaiting_rating');
-        if (ratingAppt) {
-          matchedAppt = ratingAppt;
-          console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating`);
+        const pendingAppt = matchedAppointments.find(a => 
+          ['pending', 'attention'].includes(a.status)
+        );
+        if (pendingAppt) {
+          matchedAppt = pendingAppt;
+          console.log(`[Evolution Message] 🎯 Usando cita pendiente: status=${pendingAppt.status}`);
+        } else {
+          const ratingAppt = matchedAppointments.find(a => a.messageFlowStatus === 'awaiting_rating');
+          if (ratingAppt) {
+            matchedAppt = ratingAppt;
+            console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating`);
+          }
         }
       }
     }
@@ -258,7 +277,7 @@ function determineAction(matchedAppointments, text) {
  * Verifica si el texto es una confirmación
  */
 function isConfirmation(text) {
-  const confirmations = ['1', 'si', 'sí', 'yes', 'y', 'confirmar', 'confirmo', 'ok', 'vale', 'aceptar'];
+  const confirmations = ['1', 'si', 'sí', 'yes', 'y', 'confirmar', 'confirmo', 'ok', 'vale', 'aceptar', 'confirm'];
   return confirmations.includes(text.toLowerCase().trim());
 }
 
@@ -377,12 +396,44 @@ async function handleRating(appt, rating, phone, msg) {
 }
 
 /**
+ * Verifica si el mensaje es una respuesta válida (confirmación, cancelación, calificación o código de referencia)
+ */
+function isValidResponse(text) {
+  const cleanText = text.trim().toLowerCase();
+
+  // Verificar si es confirmación
+  const confirmations = ['1', 'si', 'sí', 'yes', 'y', 'confirmar', 'confirmo', 'ok', 'vale', 'aceptar', 'confirm'];
+  if (confirmations.includes(cleanText)) return true;
+
+  // Verificar si es cancelación
+  const cancellations = ['2', 'no', 'cancelar', 'cancelo', 'cancel', 'no puedo', 'no asistiré', 'no asistire', 'no asistir'];
+  if (cancellations.includes(cleanText)) return true;
+
+  // Verificar si es calificación (1-5)
+  const number = parseInt(cleanText);
+  if (!isNaN(number) && number >= 1 && number <= 5) return true;
+
+  // Verificar si parece un código de referencia (formato típico: ABC123 o similar)
+  const refCodePattern = /^[A-Z0-9]{3,10}$/i;
+  if (refCodePattern.test(text.trim())) return true;
+
+  return false;
+}
+
+/**
  * Maneja la respuesta del cliente
  */
 async function handleClientResponse(businessId, client, msg) {
   const text = (msg.body || '').trim().toLowerCase().replace(/\*/g, '');
+  const originalText = (msg.body || '').trim();
   const from = msg.from;
   const pushName = msg.pushName || msg.data?.pushName || '';
+
+  // FILTRO TEMPRANO: Solo procesar mensajes que sean respuestas válidas
+  if (!isValidResponse(originalText)) {
+    console.log(`[Evolution Message] 🔕 Mensaje ignorado (no es respuesta válida): "${originalText}"`);
+    return;
+  }
 
   // Extraer número de teléfono
   const phoneData = await extractPhoneNumber(msg, from);
@@ -408,7 +459,7 @@ async function handleClientResponse(businessId, client, msg) {
   }
 
   // 2. Buscar citas por teléfono (o todas si es lista de difusión)
-  const isFromList = from.includes('@lid');
+  const isFromList = from.includes('@g.us') || from.includes('@broadcast');
   const { activeAppts, doneAppts, allAppointments } = await findAppointmentsForPhone(businessIds, cleanIncomingPhone, isFromList);
 
   console.log(`[Evolution Message] 🔍 Buscando en ${allAppointments.length} citas (${activeAppts.length} activas, ${doneAppts.length} con solicitud enviada)`);

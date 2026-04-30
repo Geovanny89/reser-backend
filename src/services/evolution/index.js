@@ -70,6 +70,9 @@ async function initWhatsAppManager() {
     if (state.getInstanceCount() > 0) {
       heartbeat.startHeartbeat();
     }
+
+    // PASO 4b: Iniciar limpieza automática de instancias huérfanas en memoria
+    state.startAutoCleanup();
     
     // PASO 5: Recuperar mensajes pendientes
     try {

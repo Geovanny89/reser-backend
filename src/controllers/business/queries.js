@@ -17,8 +17,10 @@ exports.getAll = async (req, res) => {
       ],
       order: [['createdAt', 'DESC']]
     });
+    console.log(`[Business.getAll] Encontrados ${businesses.length} negocios`);
     res.json(businesses);
   } catch (e) {
+    console.error('❌ [Business.getAll] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -81,6 +83,16 @@ exports.getMyBusiness = async (req, res) => {
       bizData.parentHasFieldTechnicians = bizData.ParentBusiness.hasFieldTechnicians;
     }
     
+    // Calcular días restantes de suscripción
+    if (bizData.subscriptionEndDate) {
+      const now = new Date();
+      const endDate = new Date(bizData.subscriptionEndDate);
+      const diffTime = endDate - now;
+      bizData.subscriptionDaysLeft = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    } else {
+      bizData.subscriptionDaysLeft = null;
+    }
+    
     res.json(bizData);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -89,6 +101,7 @@ exports.getMyBusiness = async (req, res) => {
 
 // GET /businesses/:slug/public
 exports.getBySlug = async (req, res) => {
+  const t0 = Date.now();
   try {
     const { BusinessReview } = require('../../models');
     const cacheKey = `business_public_${req.params.slug}`;
@@ -96,12 +109,13 @@ exports.getBySlug = async (req, res) => {
     // Intentar obtener del caché primero
     const cached = cacheService.get(cacheKey);
     if (cached) {
-      console.log(`[CACHE HIT] getBySlug - ${cacheKey}`);
+      console.log(`[CACHE HIT] getBySlug - ${cacheKey} (${Date.now() - t0}ms)`);
       return res.json(cached);
     }
     
     console.log(`[CACHE MISS] getBySlug - ${cacheKey}`);
-    
+
+    const tBiz0 = Date.now();
     const biz = await Business.findOne({
       where: { slug: req.params.slug },
       include: [
@@ -141,12 +155,15 @@ exports.getBySlug = async (req, res) => {
         }
       ]
     });
+    const tBiz1 = Date.now();
+    console.log(`[PERF getBySlug] Business.findOne=${tBiz1 - tBiz0}ms slug=${req.params.slug}`);
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
     // Paralelizar consultas de promociones y reviews para mejor rendimiento
     const now = new Date();
     const today = now.toISOString().split('T')[0];
     
+    const tPR0 = Date.now();
     const [promotions, reviews] = await Promise.all([
       Promotion.findAll({
         where: {
@@ -168,6 +185,8 @@ exports.getBySlug = async (req, res) => {
         limit: 10
       })
     ]);
+    const tPR1 = Date.now();
+    console.log(`[PERF getBySlug] Promotions+Reviews=${tPR1 - tPR0}ms promos=${promotions.length} reviews=${reviews.length}`);
     
     console.log(`[DEBUG getBySlug] Promociones encontradas: ${promotions.length}`);
 
@@ -229,6 +248,7 @@ exports.getBySlug = async (req, res) => {
     // Guardar en caché por 5 minutos
     cacheService.set(cacheKey, bizJson, 5 * 60 * 1000);
     
+    console.log(`[PERF getBySlug] total=${Date.now() - t0}ms slug=${req.params.slug}`);
     res.json(bizJson);
   } catch (e) {
     console.error('[getBySlug] Error:', e);

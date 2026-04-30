@@ -6,18 +6,18 @@ const formatColombiaDate = (dateInput) => {
   if (isNaN(date.getTime())) return dateInput;
   const COLOMBIA_OFFSET = -5 * 60 * 60 * 1000;
   const colombiaTime = new Date(date.getTime() + COLOMBIA_OFFSET);
-  return colombiaTime.toLocaleString('es-CO', { 
-    timeZone: 'UTC', 
-    dateStyle: 'full', 
-    timeStyle: 'short' 
+  return colombiaTime.toLocaleString('es-CO', {
+    timeZone: 'UTC',
+    dateStyle: 'full',
+    timeStyle: 'short'
   });
 };
 
 const createTransporter = () => {
-  const host    = process.env.EMAIL_HOST || "smtp.hostinger.com";
-  const port    = parseInt(process.env.EMAIL_PORT || '465');
-  const user    = process.env.EMAIL_USER;
-  const pass    = process.env.EMAIL_PASS;
+  const host = process.env.EMAIL_HOST || "smtp.hostinger.com";
+  const port = parseInt(process.env.EMAIL_PORT || '465');
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASS;
 
   if (!user || !pass) {
     console.warn('[Email] ⚠️ Credenciales de email no configuradas.');
@@ -48,8 +48,8 @@ if (transporter) {
   });
 }
 
-const FROM_NAME  = process.env.EMAIL_FROM_NAME  || 'KDice POS';
-const FROM_EMAIL = process.env.EMAIL_USER        || 'noreply@kdice.app';
+const FROM_NAME = process.env.EMAIL_FROM_NAME || 'KDice POS';
+const FROM_EMAIL = process.env.EMAIL_USER || 'noreply@kdice.app';
 
 // ============================================================
 // PLANTILLA BASE HTML
@@ -250,6 +250,65 @@ const templates = {
     `, businessName),
   }),
 
+  // Notificación de nuevo negocio para el SuperAdmin
+  newBusinessAdmin: ({ businessName, ownerName, ownerEmail, businessType, phone }) => ({
+    subject: `🏢 Nuevo negocio registrado — ${businessName}`,
+    html: baseTemplate(`
+      <h2>🏢 ¡Nuevo negocio en la plataforma!</h2>
+      <p>Se ha registrado un nuevo negocio y ha iniciado su periodo de gracia de 24 horas.</p>
+      <div class="info-box">
+        <div class="info-row">
+          <span class="info-label">Negocio</span>
+          <span class="info-value">${businessName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Tipo</span>
+          <span class="info-value">${businessType}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Propietario</span>
+          <span class="info-value">${ownerName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Email</span>
+          <span class="info-value">${ownerEmail}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Teléfono</span>
+          <span class="info-value">${phone || 'No provisto'}</span>
+        </div>
+      </div>
+      <div style="text-align: center; margin: 24px 0;">
+        <a href="https://reservas.k-dice.com/superadmin/businesses" class="btn" style="background: #4f46e5; color: #ffffff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">Ver en Dashboard</a>
+      </div>
+      <span class="badge badge-warning">⏰ Periodo de gracia: 24h</span>
+    `, 'KDice POS'),
+  }),
+
+  // Bienvenida al nuevo negocio (Periodo de gracia)
+  gracePeriodWelcome: ({ ownerName, businessName, expiryDate }) => ({
+    subject: `🚀 ¡Bienvenido a KDice POS! — Tu periodo de prueba ha iniciado`,
+    html: baseTemplate(`
+      <h2>¡Bienvenido a la familia, ${ownerName}!</h2>
+      <p>Estamos felices de tener a <strong>${businessName}</strong> con nosotros. Tu cuenta ha sido creada exitosamente.</p>
+      <div style="background:#fff9c4; border:1px solid #fbc02d; padding:20px; border-radius:12px; margin:24px 0;">
+        <h3 style="color:#f57f17; font-size:16px; margin-bottom:8px;">⚠️ Periodo de activación (24 Horas)</h3>
+        <p style="margin:0; font-size:14px;">Tienes <strong>24 horas</strong> de acceso total para configurar tu negocio mientras validamos tu pago.</p>
+        <p style="margin-top:10px; font-weight:bold; color:#d32f2f;">Vence: ${expiryDate}</p>
+      </div>
+      <p>Aprovecha este tiempo para:</p>
+      <ul style="font-size:14px; color:#374151; margin-bottom:20px;">
+        <li>Configurar tus servicios y precios.</li>
+        <li>Registrar a tus empleados.</li>
+        <li>Conectar tu WhatsApp para notificaciones.</li>
+      </ul>
+      <p><strong>¿Cómo activar tu cuenta permanentemente?</strong><br>Sube tu comprobante de pago desde la sección "Suscripción" en tu panel de administración.</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="https://reservas.k-dice.com/admin/subscription" class="btn">Subir comprobante ahora</a>
+      </div>
+    `, businessName),
+  }),
+
   // Notificación de cita cancelada por el cliente (para el negocio)
   appointmentCancelled: ({ businessName, clientName, serviceName, employeeName, startTime, cancelTime }) => ({
     subject: `❌ Cita cancelada por cliente — ${businessName}`,
@@ -340,12 +399,12 @@ const templates = {
     `, businessName),
   }),
 
-  // Orden de servicio técnico (sin comprobante de pago)
+  // Reporte de servicio técnico (sin comprobante de pago)
   serviceOrder: ({ clientName, businessName, serviceName, employeeName, startTime, price, orderNumber, notes }) => ({
-    subject: `📋 Orden de Servicio — ${businessName}`,
+    subject: `📋 Reporte de Servicio — ${businessName}`,
     html: baseTemplate(`
-      <h2>Orden de Servicio Técnico</h2>
-      <p>Hola <strong>${clientName}</strong>, adjuntamos los detalles de tu orden de servicio.</p>
+      <h2>Reporte de Servicio Profesional</h2>
+      <p>Hola <strong>${clientName}</strong>, adjuntamos los detalles de tu reporte de servicio.</p>
       <div class="info-box">
         <div class="info-row">
           <span class="info-label">Negocio</span>
@@ -356,7 +415,7 @@ const templates = {
           <span class="info-value">${serviceName}</span>
         </div>
         <div class="info-row">
-          <span class="info-label">Técnico asignado</span>
+          <span class="info-label">Profesional asignado</span>
           <span class="info-value">${employeeName}</span>
         </div>
         <div class="info-row">
@@ -587,13 +646,13 @@ const templates = {
   }),
 
   // Cliente califica al técnico después del servicio
-  serviceCompletedRating: ({ 
-    clientName, 
-    businessName, 
-    serviceName, 
-    employeeName, 
+  serviceCompletedRating: ({
+    clientName,
+    businessName,
+    serviceName,
+    employeeName,
     ratingBaseUrl,
-    appointmentId 
+    appointmentId
   }) => ({
     subject: `⭐ ¿Cómo fue tu experiencia en ${businessName}?`,
     html: baseTemplate(`
@@ -677,13 +736,13 @@ const templates = {
   }),
 
   // Notificación al empleado cuando recibe una calificación
-  employeeRated: ({ 
-    employeeName, 
-    clientName, 
-    businessName, 
-    serviceName, 
-    rating, 
-    comment 
+  employeeRated: ({
+    employeeName,
+    clientName,
+    businessName,
+    serviceName,
+    rating,
+    comment
   }) => {
     const stars = '⭐'.repeat(rating);
     return {
@@ -765,7 +824,7 @@ const sendEmail = async (to, templateName, data, attachments = []) => {
   } catch (err) {
     console.error(`[Email] ❌ Error enviando a ${to}:`, err.message);
     console.error(`[Email] Código de error:`, err.code);
-    
+
     if (err.code === 'ETIMEDOUT') {
       console.error('[Email] 💡 Sugerencia: El puerto SMTP (465) podría estar bloqueado en el VPS. Prueba cambiando a EMAIL_PORT=587 en el .env');
     }

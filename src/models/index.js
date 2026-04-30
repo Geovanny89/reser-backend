@@ -27,6 +27,10 @@ const ServiceGroup = require('./ServiceGroup')(sequelize);
 const SpecialSchedule = require('./SpecialSchedule')(sequelize);
 const ActivityLog = require('./ActivityLog')(sequelize);
 const EmployeeVacation = require('./EmployeeVacation')(sequelize);
+const CashRegisterShift = require('./CashRegisterShift')(sequelize);
+const CashMovement = require('./CashMovement')(sequelize);
+const AppointmentReminderEvent = require('./AppointmentReminderEvent')(sequelize);
+const PlatformReview = require('./PlatformReview')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -143,10 +147,40 @@ AppointmentEmployee.belongsTo(Employee, { foreignKey: 'employeeId' });
 Appointment.hasMany(AppointmentEmployee, { foreignKey: 'appointmentId', as: 'AdditionalEmployees' });
 Employee.hasMany(AppointmentEmployee, { foreignKey: 'employeeId', as: 'AppointmentsAsExtra' });
 
-// ActivityLog — User
 ActivityLog.belongsTo(User, { foreignKey: 'userId', as: 'User' });
 User.hasMany(ActivityLog, { foreignKey: 'userId', as: 'ActivityLogs' });
 
+// ActivityLog — Business
+ActivityLog.belongsTo(Business, { foreignKey: 'businessId', as: 'Business' });
+Business.hasMany(ActivityLog, { foreignKey: 'businessId', as: 'ActivityLogs' });
+
+
+// CashRegisterShift — Business & Employee
+CashRegisterShift.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(CashRegisterShift, { foreignKey: 'businessId', as: 'CashRegisterShifts' });
+CashRegisterShift.belongsTo(Employee, { foreignKey: 'employeeId' });
+Employee.hasMany(CashRegisterShift, { foreignKey: 'employeeId', as: 'CashRegisterShifts' });
+
+// CashMovement — Business, Shift, Appointment, Expense
+CashMovement.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(CashMovement, { foreignKey: 'businessId', as: 'CashMovements' });
+CashMovement.belongsTo(CashRegisterShift, { foreignKey: 'shiftId', as: 'Shift' });
+CashRegisterShift.hasMany(CashMovement, { foreignKey: 'shiftId', as: 'Movements' });
+CashMovement.belongsTo(Appointment, { foreignKey: 'appointmentId' });
+Appointment.hasMany(CashMovement, { foreignKey: 'appointmentId', as: 'CashMovements' });
+CashMovement.belongsTo(Expense, { foreignKey: 'expenseId' });
+Expense.hasMany(CashMovement, { foreignKey: 'expenseId', as: 'CashMovements' });
+
+// AppointmentReminderEvent - Appointment & Business
+AppointmentReminderEvent.belongsTo(Appointment, { foreignKey: 'appointmentId' });
+Appointment.hasMany(AppointmentReminderEvent, { foreignKey: 'appointmentId', as: 'ReminderEvents' });
+AppointmentReminderEvent.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(AppointmentReminderEvent, { foreignKey: 'businessId', as: 'ReminderEvents' });
+
+// PlatformReview — Business
+PlatformReview.belongsTo(Business, { foreignKey: 'businessId', as: 'Business' });
+Business.hasMany(PlatformReview, { foreignKey: 'businessId', as: 'PlatformReviews' });
+
 const { Op } = require('sequelize');
 
-module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation };
+module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation, CashRegisterShift, CashMovement, AppointmentReminderEvent, PlatformReview };

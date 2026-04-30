@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { User, Business } = require('../models');
 const { JWT_SECRET, JWT_EXPIRES } = require('../config/jwt');
 const { sendEmail } = require('../config/email');
+const { logActivity } = require('../utils/activityLogger');
 
 exports.register = async (req, res) => {
   try {
@@ -26,7 +27,7 @@ exports.register = async (req, res) => {
 // Registro de vendedor con datos del negocio
 exports.registerVendor = async (req, res) => {
   try {
-    const { name, email, password, businessName, businessType, description, phone, address, isTechnicalServices, hasFieldTechnicians, subscriptionPlan } = req.body;
+    const { name, email, password, businessName, businessType, description, phone, address, isTechnicalServices, hasFieldTechnicians, subscriptionPlan, referredByCode } = req.body;
     
     // Configuración de planes de suscripción
     const SUBSCRIPTION_PLANS = {
@@ -52,10 +53,10 @@ exports.registerVendor = async (req, res) => {
       role: 'admin' 
     });
 
-    // Crear el negocio automáticamente con suscripción de 30 días
+    // Crear el negocio con un periodo de gracia de 24 horas
     const now = new Date();
-    const endDate = new Date(now);
-    endDate.setDate(endDate.getDate() + 30);
+    const gracePeriodEnd = new Date(now);
+    gracePeriodEnd.setHours(gracePeriodEnd.getHours() + 24); // 24 horas de gracia
     
     // Validar y aplicar el plan de suscripción seleccionado
     const selectedPlan = SUBSCRIPTION_PLANS[subscriptionPlan] || SUBSCRIPTION_PLANS.basic;
@@ -67,9 +68,9 @@ exports.registerVendor = async (req, res) => {
       phone: phone || '',
       address: address || '',
       ownerId: user.id,
-      subscriptionStatus: 'paid',
+      subscriptionStatus: 'pending', 
       subscriptionStartDate: now,
-      subscriptionEndDate: endDate,
+      subscriptionEndDate: gracePeriodEnd, // Activo por 24h
       isTechnicalServices: isTechnicalServices || false,
       hasFieldTechnicians: hasFieldTechnicians || false,
       // Campos de plan de suscripción según selección
@@ -77,7 +78,42 @@ exports.registerVendor = async (req, res) => {
       includedUsers: selectedPlan.includedUsers,
       additionalUsers: 0,
       additionalUserPrice: 20000,
-      monthlyTotal: selectedPlan.price
+      monthlyTotal: selectedPlan.price,
+      // Campos de referidos
+      referredByCode: referredByCode || null,
+      referralDate: referredByCode ? new Date() : null
+    });
+
+    // --- NOTIFICACIONES ASÍNCRONAS ---
+    setImmediate(async () => {
+      try {
+        // 1. Notificar al SuperAdmin (tú)
+        const superAdminEmail = process.env.SUPERADMIN_EMAIL || 'admin@admin.com';
+        await sendEmail(superAdminEmail, 'newBusinessAdmin', {
+          businessName: business.name,
+          ownerName: user.name,
+          ownerEmail: user.email,
+          businessType: business.type,
+          phone: business.phone
+        });
+
+        // 2. Notificar al dueño del negocio (Bienvenida + Gracia)
+        const expiryStr = gracePeriodEnd.toLocaleString('es-CO', { 
+          dateStyle: 'full', 
+          timeStyle: 'short', 
+          timeZone: 'America/Bogota' 
+        });
+        
+        await sendEmail(user.email, 'gracePeriodWelcome', {
+          ownerName: user.name,
+          businessName: business.name,
+          expiryDate: expiryStr
+        });
+        
+        console.log(`[Auth] Notificaciones de nuevo negocio enviadas para ${business.name}`);
+      } catch (err) {
+        console.error('[Auth] Error enviando notificaciones de registro:', err.message);
+      }
     });
 
     // Generar token JWT
@@ -105,7 +141,8 @@ exports.registerVendor = async (req, res) => {
         id: business.id,
         name: business.name,
         slug: business.slug,
-        type: business.type
+        type: business.type,
+        subscriptionStatus: business.subscriptionStatus
       }
     });
   } catch (e) {
@@ -191,6 +228,15 @@ exports.login = async (req, res) => {
       { expiresIn: JWT_EXPIRES }
     );
 
+    // Registrar inicio de sesión
+    await logActivity(req, {
+      action: 'LOGIN',
+      entityType: 'User',
+      entityId: user.id,
+      description: `El usuario ${user.email} inició sesión`,
+      businessId: business ? business.id : null
+    }).catch(err => console.error('[ActivityLog] Error al registrar login:', err));
+
     res.json({ 
       token, 
       user: { 
@@ -206,6 +252,7 @@ exports.login = async (req, res) => {
         slug: business.slug,
         type: business.type,
         status: business.status,
+        subscriptionStatus: business.subscriptionStatus,
         subscriptionDaysLeft: subscriptionDaysLeft,
         subscriptionEndDate: business.subscriptionEndDate,
         isTechnicalServices: business.isTechnicalServices
@@ -265,6 +312,7 @@ exports.me = async (req, res) => {
         slug: business.slug,
         type: business.type,
         status: business.status,
+        subscriptionStatus: business.subscriptionStatus,
         subscriptionDaysLeft: subscriptionDaysLeft,
         subscriptionEndDate: business.subscriptionEndDate,
         isTechnicalServices: business.isTechnicalServices

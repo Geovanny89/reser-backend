@@ -1,0 +1,48 @@
+config:
+  target: "http://localhost:4000"
+  phases:
+    - duration: 10
+      arrivalRate: 5
+      name: "Calentamiento (Warm up)"
+    - duration: 30
+      arrivalRate: 5
+      rampTo: 30
+      name: "Rampa (Ramp up)"
+    - duration: 60
+      arrivalRate: 50
+      name: "Estrés (Stress)"
+
+  variables:
+    businessId: "b83e418f-10aa-41c8-b37a-834d97d1b942" 
+    serviceId: "d54923df-8df1-4ee4-88e7-bbd79f93a1a8"
+    employeeId: "0a069653-cc5f-4b44-98d5-94b4cf979201"
+
+  processor: "./helpers.js"
+
+scenarios:
+  - name: "Flujo del Cliente - Explorar y agendar"
+    weight: 100
+    flow:
+      # 1. Obtener la información pública del negocio (ID real)
+      - get:
+          url: "/api/businesses/by-id/{{ businessId }}/public"
+      
+      # 2. Ver los servicios disponibles
+      - get:
+          url: "/api/services/business/{{ businessId }}"
+          
+      # 3. Simular tiempo de pensar
+      - think: 2
+      
+      # 4. Agendar cita con teléfono falso
+      - post:
+          url: "/api/appointments"
+          beforeRequest: "generateFakeAppointmentData"
+          json:
+            businessId: "{{ businessId }}"
+            serviceId: "{{ serviceId }}"
+            employeeId: "{{ employeeId }}"
+            clientName: "{{ fakeName }}"
+            clientPhone: "{{ fakePhone }}"
+            startTime: "{{ fakeStartTime }}"
+            status: "pending"

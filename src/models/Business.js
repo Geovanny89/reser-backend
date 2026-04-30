@@ -68,6 +68,13 @@ module.exports = (sequelize) => {
     subscriptionStartDate: { type: DataTypes.DATE },
     subscriptionEndDate: { type: DataTypes.DATE },
     paymentScreenshot: { type: DataTypes.STRING }, // Comprobante de pago mensual
+    paymentScreenshotViewed: { type: DataTypes.BOOLEAN, defaultValue: false },
+    paymentAmount: { type: DataTypes.INTEGER },
+    paymentMethod: { type: DataTypes.STRING },
+    paymentReference: { type: DataTypes.STRING },
+    lastPaymentDate: { type: DataTypes.DATE },
+    customMonthlyPrice: { type: DataTypes.INTEGER },
+
     
     // Nuevos campos para planes de suscripción por usuarios
     subscriptionPlan: { 
@@ -101,6 +108,13 @@ module.exports = (sequelize) => {
     parentBusinessId: { type: DataTypes.UUID },
     branchStatus: { type: DataTypes.ENUM('approved', 'pending_approval', 'rejected'), defaultValue: 'approved' },
     branchPaymentScreenshot: { type: DataTypes.STRING }, // Comprobante del 50% extra para activar sucursal
+    
+    // Datos bancarios para pagos (Admin)
+    adminNequiNumber: { type: DataTypes.STRING },
+    adminLlaveBancaria: { type: DataTypes.STRING },
+    adminBankName: { type: DataTypes.STRING },
+    adminAccountNumber: { type: DataTypes.STRING },
+
 
     // Horarios
     businessHours: { type: DataTypes.TEXT },
@@ -164,8 +178,31 @@ module.exports = (sequelize) => {
       },
       comment: 'Configuración de anticipos: requerido, monto, condiciones de penalidad'
     },
+
+    // === Configuración de caja registradora ===
+    includeTransfersInCashRegister: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      comment: 'Indica si las transferencias se incluyen en el total de caja registradora'
+    },
+
+    // === CAMPOS DE REFERIDOS ===
+    referralCode: { 
+      type: DataTypes.STRING, 
+      unique: true, 
+      comment: 'Código único para que otros se registren con este negocio' 
+    },
+    referredByCode: { 
+      type: DataTypes.STRING, 
+      comment: 'Código del negocio que refirió a este' 
+    },
+    referralDate: { 
+      type: DataTypes.DATE, 
+      comment: 'Fecha en que se completó la referencia' 
+    }
   }, {
     indexes: [
+      { fields: ['slug'], name: 'idx_business_slug', unique: true },
       { fields: ['ownerId'], name: 'idx_business_ownerId' },
       { fields: ['status'], name: 'idx_business_status' },
       { fields: ['subscriptionStatus'], name: 'idx_business_subscription' }
@@ -181,9 +218,27 @@ module.exports = (sequelize) => {
   };
 
   Business.beforeCreate(async (b) => {
+    // Generar código de referido único aleatorio (6 caracteres)
+    if (!b.referralCode) {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Evitamos O, 0, I, 1 para evitar confusiones
+      let code = '';
+      let isUnique = false;
+      
+      while (!isUnique) {
+        code = '';
+        for (let i = 0; i < 6; i++) {
+          code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        // Verificar unicidad
+        const existing = await b.constructor.findOne({ where: { referralCode: code } });
+        if (!existing) isUnique = true;
+      }
+      b.referralCode = code;
+    }
+
     // Si es una sucursal, crear slug combinado: principal$sucursal
     if (b.isBranch && b.parentBusinessId) {
-      const parentBusiness = await Business.findByPk(b.parentBusinessId);
+      const parentBusiness = await b.constructor.findByPk(b.parentBusinessId);
       if (parentBusiness) {
         const parentSlug = parentBusiness.slug;
         const branchSlug = slugify(b.name, { lower: true, strict: true });
@@ -192,7 +247,7 @@ module.exports = (sequelize) => {
         // Verificar unicidad y agregar sufijo si es necesario
         let count = 1;
         let finalSlug = combinedSlug;
-        while (await Business.findOne({ where: { slug: finalSlug } })) {
+        while (await b.constructor.findOne({ where: { slug: finalSlug } })) {
           finalSlug = `${combinedSlug}-${count++}`;
         }
         b.slug = finalSlug;
@@ -204,7 +259,7 @@ module.exports = (sequelize) => {
     let baseSlug = slugify(b.name, { lower: true, strict: true });
     let slug = baseSlug;
     let count = 1;
-    while (await Business.findOne({ where: { slug } })) {
+    while (await b.constructor.findOne({ where: { slug } })) {
       slug = `${baseSlug}-${count++}`;
     }
     b.slug = slug;

@@ -31,7 +31,7 @@ exports.requestBranch = async (req, res) => {
 
     const branch = await Business.create({
       name,
-      type: type || 'otro',
+      type: parentBiz.type,
       address,
       phone,
       ownerId: parentBiz.ownerId,
@@ -39,6 +39,8 @@ exports.requestBranch = async (req, res) => {
       isBranch: true,
       branchStatus: 'pending_approval',
       status: 'blocked',
+      isTechnicalServices: parentBiz.isTechnicalServices,
+      hasFieldTechnicians: parentBiz.hasFieldTechnicians,
       subscriptionStatus: parentBiz.subscriptionStatus,
       subscriptionPlan: parentBiz.subscriptionPlan,
       includedUsers: parentBiz.includedUsers,

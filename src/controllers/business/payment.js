@@ -1,7 +1,7 @@
 /**
  * Controladores para gestión de pagos y suscripciones
  */
-const { Business, User, Employee } = require('../../models');
+const { Business, User, Employee, Op } = require('../../models');
 const { deleteFromCloudinary } = require('../../config/cloudinary');
 const { sendEmail } = require('../../config/email');
 const { SUBSCRIPTION_PLANS, ADDITIONAL_USER_PRICE } = require('./constants');
@@ -11,13 +11,20 @@ exports.updateSubscription = async (req, res) => {
   try {
     const b = await Business.findByPk(req.params.id);
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
-    const { subscriptionStatus, lastPaymentDate, subscriptionStartDate, subscriptionEndDate } = req.body;
+    const { 
+      subscriptionStatus, lastPaymentDate, subscriptionStartDate, subscriptionEndDate,
+      paymentAmount, paymentReference
+    } = req.body;
     
+    const isValidDate = (d) => d && d !== 'Invalid date' && d !== '' && !isNaN(new Date(d).getTime());
+
     const updates = { 
       subscriptionStatus, 
-      lastPaymentDate,
-      subscriptionStartDate,
-      subscriptionEndDate
+      lastPaymentDate: isValidDate(lastPaymentDate) ? lastPaymentDate : b.lastPaymentDate,
+      subscriptionStartDate: isValidDate(subscriptionStartDate) ? subscriptionStartDate : b.subscriptionStartDate,
+      subscriptionEndDate: isValidDate(subscriptionEndDate) ? subscriptionEndDate : b.subscriptionEndDate,
+      paymentAmount: paymentAmount !== undefined ? paymentAmount : b.paymentAmount,
+      paymentReference: paymentReference !== undefined ? paymentReference : b.paymentReference
     };
 
     if (subscriptionStatus === 'paid') {
@@ -27,6 +34,7 @@ exports.updateSubscription = async (req, res) => {
     await b.update(updates);
     res.json(b);
   } catch (e) {
+    console.error('[UpdateSubscription Error]:', e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -76,19 +84,47 @@ exports.approvePayment = async (req, res) => {
       include: [{ model: User, as: 'Owner', attributes: ['id', 'name', 'email'] }]
     });
     if (!b) return res.status(404).json({ error: 'Negocio no encontrado' });
+    const { includeBranches } = req.body;
+    const { Op } = require('sequelize');
 
     const today = new Date();
-    const endDate = new Date(today);
+    let baseDate = today;
+
+    // Si la suscripción aún está vigente, sumamos a partir del vencimiento actual
+    if (b.subscriptionEndDate && new Date(b.subscriptionEndDate) > today) {
+      baseDate = new Date(b.subscriptionEndDate);
+    }
+
+    const endDate = new Date(baseDate);
     endDate.setDate(endDate.getDate() + 30);
 
-    await b.update({
+    const updateData = {
       subscriptionStatus: 'paid',
       subscriptionStartDate: today,
       subscriptionEndDate: endDate,
       lastPaymentDate: today,
+      paymentAmount: b.paymentAmount || b.monthlyTotal || 70000,
       paymentScreenshotViewed: true,
       status: 'active'
-    });
+    };
+
+    await b.update(updateData);
+
+    // Si se solicitó incluir sucursales, actualizamos a todas las demás
+    if (includeBranches) {
+      await Business.update({
+        subscriptionStatus: 'paid',
+        subscriptionStartDate: today,
+        subscriptionEndDate: endDate,
+        lastPaymentDate: today,
+        status: 'active'
+      }, {
+        where: { 
+          ownerId: b.ownerId, 
+          id: { [Op.ne]: b.id } 
+        }
+      });
+    }
 
     // Enviar email de confirmación
     try {
@@ -100,7 +136,8 @@ exports.approvePayment = async (req, res) => {
           ownerName: String(b.Owner?.name || 'Estimado cliente'),
           startDate: String(today.toLocaleDateString('es-CO')),
           endDate: String(endDate.toLocaleDateString('es-CO')),
-          amount: String(b.paymentAmount || 60000),
+          amount: String(b.paymentAmount || 70000),
+          includeBranches: includeBranches ? ' (Incluye todas las sedes)' : ''
         }
       );
     } catch (emailErr) {
@@ -108,10 +145,9 @@ exports.approvePayment = async (req, res) => {
     }
 
     res.json({ 
-      message: 'Pago aprobado correctamente', 
+      message: includeBranches ? 'Pago y sucursales aprobados correctamente' : 'Pago aprobado correctamente', 
       business: b,
-      subscriptionStartDate: today,
-      subscriptionEndDate: endDate
+      includeBranches
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -196,26 +232,32 @@ exports.submitPayment = async (req, res) => {
 // GET /businesses/:id/subscription-info
 exports.getSubscriptionInfo = async (req, res) => {
   try {
-    let businessId = req.params.id || req.query.businessId;
-    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
-    
-    if (businessId === 'my') {
-      const userId = req.user.id;
-      const user = await User.findByPk(userId);
-      
-      const ownedBiz = await Business.findOne({ where: { ownerId: userId } });
-      
-      if (ownedBiz) {
-        businessId = ownedBiz.id;
-      } else if (user && user.employeeId) {
-        const employee = await Employee.findByPk(user.employeeId);
-        if (employee && employee.businessId) {
-          businessId = employee.businessId;
+    let businessId = req.params.id;
+    const queryBusinessId = req.query.businessId;
+
+    if (businessId === 'my' || !businessId) {
+      // Si viene un businessId en la query, le damos prioridad
+      if (queryBusinessId && queryBusinessId !== 'my') {
+        businessId = queryBusinessId;
+      } else {
+        // Si no, buscamos el negocio del que es dueño
+        const userId = req.user.id;
+        const ownedBiz = await Business.findOne({ where: { ownerId: userId } });
+        
+        if (ownedBiz) {
+          businessId = ownedBiz.id;
+        } else {
+          // Si no es dueño, ver si es empleado/admin_suc
+          const user = await User.findByPk(userId);
+          if (user && user.employeeId) {
+            const employee = await Employee.findByPk(user.employeeId);
+            if (employee && employee.businessId) businessId = employee.businessId;
+          }
         }
       }
       
-      if (businessId === 'my') {
-        return res.status(404).json({ error: 'No tienes un negocio registrado' });
+      if (businessId === 'my' || !businessId) {
+        return res.status(404).json({ error: 'No se pudo determinar el negocio' });
       }
     }
     
@@ -234,37 +276,57 @@ exports.getSubscriptionInfo = async (req, res) => {
       }
     }
     
-    // Contar empleados activos (incluir active: true o active: null para compatibilidad)
-    const { Op } = require('sequelize');
-    
-    // DEBUG: Verificar qué empleados existen para este negocio
-    const allEmployees = await Employee.findAll({
-      where: { businessId },
-      attributes: ['id', 'active', 'businessId'],
-      raw: true
+    // Obtener todos los empleados activos para contar manualmente y evitar errores de conteo
+    // Obtener todos los empleados activos
+    const employees = await Employee.findAll({
+      where: { businessId: businessId, active: true },
+      include: [{ model: User, attributes: ['id', 'role'] }]
     });
-    console.log(`[getSubscriptionInfo] DEBUG businessId=${businessId}, found ${allEmployees.length} employees:`, allEmployees);
-    
-    const employeeCount = await Employee.count({
-      where: {
-        businessId,
-        active: { [Op.or]: [true, null] }
-      },
-      include: [{
-        model: User,
-        where: { role: { [Op.notIn]: ['admin', 'admin_suc'] } },
-        required: true
-      }],
-      distinct: true,
-      col: 'id'
+
+    let employeeCount = 0;
+    employees.forEach(emp => {
+      const isOwner = emp.User?.role === 'admin';
+      const isBranchManager = emp.isManager === true;
+      
+      // Solo exoneramos si es el dueño global o si es el gerente marcado de la sucursal
+      if (isOwner || isBranchManager) {
+        console.log(`[getSubscriptionInfo] EXCLUIDO: ${emp.id} (Owner:${isOwner}, Manager:${isBranchManager})`);
+      } else {
+        employeeCount++;
+        console.log(`[getSubscriptionInfo] CONTADO: ${emp.id} (Rol:${emp.User?.role})`);
+      }
     });
-    console.log(`[getSubscriptionInfo] DEBUG employeeCount=${employeeCount} (after filtering active, excluding admin/admin_suc)`);
+
+    console.log(`[getSubscriptionInfo] Resultado Final para ${businessId}: ${employeeCount} profesionales que ocupan cupo.`);
     
     const totalUsersAllowed = business.includedUsers + business.additionalUsers;
     const availableUsers = totalUsersAllowed - employeeCount;
     
     const planInfo = SUBSCRIPTION_PLANS[business.subscriptionPlan] || SUBSCRIPTION_PLANS.basic;
     
+    // Verificar referidos del mes actual para aplicar descuento del 20% (no acumulable)
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    
+    const monthlyReferrals = await Business.count({
+      where: {
+        referredByCode: business.referralCode || 'NONE',
+        createdAt: { [Op.gte]: new Date(now - 30 * 24 * 60 * 60 * 1000) },
+        subscriptionStatus: ['paid', 'active'], // Solo cuentan si ya pagaron
+        isBranch: false
+      }
+    });
+
+    let referralDiscountPercentage = 0;
+    if (monthlyReferrals >= 5) {
+      referralDiscountPercentage = 1.0; // 100% de descuento (Siguiente mes gratis)
+    } else if (monthlyReferrals >= 1) {
+      referralDiscountPercentage = 0.20; // 20% de descuento
+    }
+
+    const hasReferralDiscount = monthlyReferrals > 0;
+    const referralDiscountAmount = Math.round(business.monthlyTotal * referralDiscountPercentage);
+    const finalTotalWithDiscount = business.monthlyTotal - referralDiscountAmount;
     res.json({
       subscriptionPlan: business.subscriptionPlan,
       planName: planInfo.name,
@@ -279,7 +341,14 @@ exports.getSubscriptionInfo = async (req, res) => {
       totalUsersAllowed: totalUsersAllowed,
       availableUsers: availableUsers,
       canAddMore: availableUsers > 0,
-      adminExcluded: true
+      adminExcluded: true,
+      // Datos de referidos
+      referralCode: business.referralCode,
+      monthlyReferrals: monthlyReferrals,
+      hasReferralDiscount: hasReferralDiscount,
+      referralDiscountPercentage: referralDiscountPercentage,
+      referralDiscountAmount: referralDiscountAmount,
+      finalTotal: finalTotalWithDiscount
     });
   } catch (e) {
     console.error('[getSubscriptionInfo] Error:', e);

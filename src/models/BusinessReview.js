@@ -40,9 +40,9 @@ module.exports = (sequelize) => {
     tableName: 'BusinessReviews',
     timestamps: true,
     indexes: [
-      { fields: ['businessId'] },
-      { fields: ['isApproved'] },
-      { fields: ['createdAt'] }
+      { fields: ['businessId'], name: 'idx_businessReview_businessId' },
+      { fields: ['businessId', 'isApproved'], name: 'idx_businessReview_businessId_isApproved' },
+      { fields: ['createdAt'], name: 'idx_businessReview_createdAt' }
     ]
   });
 

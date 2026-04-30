@@ -47,6 +47,22 @@ module.exports = (sequelize) => {
       allowNull: true,
       comment: 'Notas adicionales'
     },
+    status: {
+      type: DataTypes.ENUM('active', 'void'),
+      allowNull: false,
+      defaultValue: 'active',
+      comment: 'Estado del gasto: active o void (anulado)'
+    },
+    voidedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Fecha/hora en que se anuló el gasto'
+    },
+    voidReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'Motivo de anulación'
+    },
     createdBy: { 
       type: DataTypes.UUID, 
       allowNull: true,

@@ -22,5 +22,5 @@ exports.ALLOWED_UPDATE_FIELDS = [
   'businessHours', 'metaDescription', 'isTechnicalServices', 'hasFieldTechnicians',
   'showPaymentMethods', 'paymentMethods', 'useParentWhatsApp',
   'showMissionVision', 'mission', 'vision', 'googleMapsUrl',
-  'enabledModules', 'depositConfig',
+  'enabledModules', 'depositConfig', 'includeTransfersInCashRegister',
 ];

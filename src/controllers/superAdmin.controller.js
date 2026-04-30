@@ -1,13 +1,14 @@
 const { sequelize, User, Business, Employee, Appointment, ActivityLog, Op } = require('../models');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { logActivity } = require('../utils/activityLogger');
 
 // ==================== USUARIOS ====================
 
 // Listar todos los usuarios con información relacionada
 exports.getAllUsers = async (req, res) => {
   try {
-    const { search, role, status, page = 1, limit = 50 } = req.query;
+    const { search, role, status, page = 1, limit = 10 } = req.query;
     const where = {};
     
     if (search) {
@@ -133,17 +134,12 @@ exports.createUser = async (req, res) => {
     });
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action: 'CREATE_USER',
       entityType: 'User',
       entityId: user.id,
       description: `Usuario creado: ${name} (${email}) con rol ${role}`,
-      newValues: { name, email, role, status },
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      newValues: { name, email, role, status }
     });
 
     res.status(201).json({
@@ -180,18 +176,13 @@ exports.updateUser = async (req, res) => {
     });
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action: 'UPDATE_USER',
       entityType: 'User',
       entityId: user.id,
       description: `Usuario actualizado: ${user.name} (${user.email})`,
       oldValues,
-      newValues: { name: user.name, email: user.email, role: user.role, status: user.status },
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      newValues: { name: user.name, email: user.email, role: user.role, status: user.status }
     });
 
     res.json({
@@ -221,19 +212,15 @@ exports.toggleUserStatus = async (req, res) => {
     await user.update({ status: newStatus });
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action,
       entityType: 'User',
       entityId: user.id,
       description: `Usuario ${newStatus === 'blocked' ? 'bloqueado' : 'desbloqueado'}: ${user.name} (${user.email})`,
       oldValues: { status: user.status === 'blocked' ? 'active' : 'blocked' },
-      newValues: { status: newStatus },
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      newValues: { status: newStatus }
     });
+
 
     res.json({
       message: `Usuario ${newStatus === 'blocked' ? 'bloqueado' : 'desbloqueado'} exitosamente`,
@@ -261,17 +248,13 @@ exports.resetPassword = async (req, res) => {
     await user.update({ password: hash });
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action: 'RESET_PASSWORD',
       entityType: 'User',
       entityId: user.id,
-      description: `Contraseña reseteada para: ${user.name} (${user.email})`,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      description: `Contraseña reseteada para: ${user.name} (${user.email})`
     });
+
 
     res.json({
       message: 'Contraseña actualizada exitosamente',
@@ -306,18 +289,14 @@ exports.deleteUser = async (req, res) => {
     await user.destroy();
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action: 'DELETE_USER',
       entityType: 'User',
       entityId: id,
       description: `Usuario eliminado: ${userInfo.name} (${userInfo.email})`,
-      oldValues: userInfo,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      oldValues: userInfo
     });
+
 
     res.json({ message: 'Usuario y empleado eliminados exitosamente' });
   } catch (e) {
@@ -386,21 +365,18 @@ exports.impersonateUser = async (req, res) => {
     }
 
     // Registrar actividad
-    await ActivityLog.create({
-      userId: req.user.id,
-      userEmail: req.user.email,
-      userRole: req.user.role,
+    logActivity({ user: req.user }, {
       action: 'IMPERSONATE_USER',
       entityType: 'User',
       entityId: user.id,
       description: `SuperAdmin ingresó como: ${user.name} (${user.email}) - Rol: ${user.role}`,
+      businessId: business?.id,
       metadata: { 
         impersonatedUserRole: user.role,
         targetBusinessId: business?.id 
-      },
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent']
+      }
     });
+
 
     res.json({
       message: `Ingresando como ${user.name}`,
@@ -448,14 +424,17 @@ exports.getActivityLogs = async (req, res) => {
       entityType, 
       startDate, 
       endDate, 
+      businessId,
       page = 1, 
-      limit = 50 
+      limit = 10 
     } = req.query;
     
     const where = {};
     
     if (userId) where.userId = userId;
+    if (businessId) where.businessId = businessId;
     if (action) where.action = action;
+
     if (entityType) where.entityType = entityType;
     if (startDate || endDate) {
       where.createdAt = {};
@@ -473,7 +452,14 @@ exports.getActivityLogs = async (req, res) => {
           as: 'User', 
           attributes: ['id', 'name', 'email', 'role'],
           required: false
+        },
+        {
+          model: Business,
+          as: 'Business',
+          attributes: ['id', 'name'],
+          required: false
         }
+
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
@@ -490,6 +476,7 @@ exports.getActivityLogs = async (req, res) => {
       }
     });
   } catch (e) {
+    console.error('❌ [getActivityLogs] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -577,7 +564,7 @@ exports.getGlobalFinancialReport = async (req, res) => {
       raw: true
     });
 
-    // Revenue por negocio
+    // Revenue por negocio (GMV - Lo que mueven los negocios)
     const byBusiness = await Appointment.findAll({
       where: Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {},
       attributes: [
@@ -590,16 +577,26 @@ exports.getGlobalFinancialReport = async (req, res) => {
       raw: true
     });
 
+    // Ingresos reales de la PLATAFORMA (Lo que te pagan a ti)
+    const platformRevenue = await Business.sum('paymentAmount', {
+      where: {
+        subscriptionStatus: 'paid',
+        ...(startDate || endDate ? { lastPaymentDate: dateFilter } : {})
+      }
+    }) || 0;
+
     res.json({
       summary: {
         totalAppointments: appointments.length,
-        totalRevenue,
+        totalGmv: totalRevenue, // Gross Merchandise Value (Ventas de los negocios)
+        platformRevenue,       // Tus ganancias reales por suscripciones
         averagePerAppointment: appointments.length > 0 ? totalRevenue / appointments.length : 0
       },
       byStatus,
       byBusiness
     });
   } catch (e) {
+    console.error('❌ [getGlobalFinancialReport] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };
@@ -654,6 +651,7 @@ exports.getGlobalStats = async (req, res) => {
 
     res.json(stats);
   } catch (e) {
+    console.error('❌ [getGlobalStats] Error:', e);
     res.status(500).json({ error: e.message });
   }
 };

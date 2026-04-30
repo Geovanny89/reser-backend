@@ -2,7 +2,7 @@
  * Acciones principales de citas (crear, actualizar, cancelar)
  */
 
-const { Appointment, Service, Employee, Business, User, AppointmentEmployee, Deposit, Promotion, sequelize } = require('../../models');
+const { Appointment, Service, Employee, Business, User, AppointmentEmployee, Deposit, Promotion, CashRegisterShift, CashMovement, sequelize } = require('../../models');
 const { Op } = require('sequelize');
 const { colombiaDateTimeToUTC } = require('./utils');
 const { APPOINTMENT_STATUS, MESSAGE_FLOW_STATUS } = require('./constants');
@@ -12,6 +12,72 @@ const { sendEmail } = require('../../config/email');
 const { sendPushNotification } = require('../../services/pushNotificationService');
 const { generatePaymentReceipt } = require('../../utils/pdfGenerator');
 const { generateAppointmentCreatedMessage } = require('../../services/reminder/message.generators');
+const { logActivity } = require('../../utils/activityLogger');
+
+
+/**
+ * Registra automáticamente un movimiento de caja cuando se completa una cita con pago en efectivo
+ */
+async function registerCashMovementForAppointment(appointment, userId) {
+  try {
+    // Registrar si el pago es en efectivo o transferencia
+    if (!appointment.paymentMethod || !['cash', 'transfer'].includes(appointment.paymentMethod)) {
+      console.log(`[Cash Register] Método de pago no válido para registro en caja (${appointment.paymentMethod}), omitiendo registro`);
+      return;
+    }
+
+    // Si es transferencia, verificar si el negocio incluye transferencias en caja
+    if (appointment.paymentMethod === 'transfer') {
+      const business = await Business.findByPk(appointment.businessId);
+      if (!business || !business.includeTransfersInCashRegister) {
+        console.log(`[Cash Register] Negocio no incluye transferencias en caja (${appointment.businessId}), omitiendo registro`);
+        return;
+      }
+    }
+
+    // Buscar turno de caja activo
+    const activeShift = await CashRegisterShift.findOne({
+      where: {
+        businessId: appointment.businessId,
+        status: 'open'
+      }
+    });
+
+    if (!activeShift) {
+      console.log(`[Cash Register] No hay turno de caja activo para negocio ${appointment.businessId}`);
+      return;
+    }
+
+    // Verificar si ya existe un movimiento para esta cita
+    const existingMovement = await CashMovement.findOne({
+      where: {
+        appointmentId: appointment.id
+      }
+    });
+
+    if (existingMovement) {
+      console.log(`[Cash Register] Ya existe movimiento para cita ${appointment.id}`);
+      return;
+    }
+
+    // Crear movimiento de caja
+    await CashMovement.create({
+      businessId: appointment.businessId,
+      shiftId: activeShift.id,
+      appointmentId: appointment.id,
+      type: 'income',
+      amount: appointment.finalPrice || appointment.Service?.price || 0,
+      paymentMethod: appointment.paymentMethod,
+      description: `Pago de cita: ${appointment.Service?.name || 'Servicio'} - ${appointment.clientName}`,
+      createdBy: userId
+    });
+
+    console.log(`[Cash Register] Movimiento registrado para cita ${appointment.id}: $${appointment.finalPrice || appointment.Service?.price}`);
+  } catch (error) {
+    console.error('[Cash Register] Error registrando movimiento de caja:', error.message);
+    // No lanzar error para no interrumpir el flujo principal
+  }
+}
 
 /**
  * Crea una nueva cita
@@ -212,6 +278,19 @@ async function createAppointment(data, user) {
 
   const appointment = await Appointment.create(appointmentData);
 
+  // Registrar actividad
+  if (user) {
+    logActivity({ user }, {
+      action: 'CREATE_APPOINTMENT',
+      entityType: 'Appointment',
+      entityId: appointment.id,
+      businessId: businessId,
+      description: `Nueva cita creada para ${clientName} (${service.name})`,
+      newValues: { startTime: start, serviceId, employeeId }
+    });
+  }
+
+
   // Agregar empleados adicionales si los hay
   if (additionalEmployees.length > 0) {
     const appointmentEmployees = additionalEmployees.map((addEmpId, index) => ({
@@ -360,8 +439,9 @@ async function createAppointment(data, user) {
       }
 
       // WhatsApp al cliente - Mensaje de confirmación 1 minuto después de crear la cita
-      // Solo si tiene teléfono y no es negocio de técnicos de campo
-      if (fullAppt.clientPhone && !fullAppt.Business?.hasFieldTechnicians) {
+      // Solo si tiene teléfono, no es negocio de técnicos de campo, y NO es cita express (walk-in)
+      const isExpressAppointment = fullAppt.status === 'attention';
+      if (fullAppt.clientPhone && !fullAppt.Business?.hasFieldTechnicians && !isExpressAppointment) {
         console.log('[Create Appointment] Programando mensaje de WhatsApp 1 min después...');
         try {
           const messageText = generateAppointmentCreatedMessage(fullAppt);
@@ -371,12 +451,14 @@ async function createAppointment(data, user) {
             phone: fullAppt.clientPhone,
             message: messageText,
             type: 'custom',
-            scheduledAt: new Date(Date.now() + 1 * 60 * 1000) // 1 minuto después
+            scheduledAt: new Date(Date.now() + 1 * 60 * 1000) // 1 minuto después (simula escritura humana)
           });
           console.log('[Create Appointment] ✅ Mensaje de cita creada programado para 1 minuto después');
         } catch (waErr) {
           console.error('[Create Appointment] Error programando mensaje WhatsApp:', waErr.message);
         }
+      } else if (isExpressAppointment) {
+        console.log('[Create Appointment] ℹ️ Cita express (walk-in): No se envía mensaje de confirmación, solo se enviará calificación al finalizar');
       }
 
       console.log('[Create Appointment] ✅ Notificaciones iniciadas (socket ya emitido)');
@@ -447,6 +529,19 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
         console.log(`[updateAppointmentStatus] Payment method saved: ${paymentMethod}`);
       }
 
+      // Registrar movimiento en caja si es pago en efectivo o transferencia
+      if (paymentMethod === 'cash' || paymentMethod === 'transfer') {
+        setImmediate(() => {
+          setTimeout(async () => {
+            try {
+              await registerCashMovementForAppointment(appointment, user?.id);
+            } catch (err) {
+              console.error('[Cash Register] Error en registro automático:', err.message);
+            }
+          }, 500); // Pequeño delay para asegurar que la cita se actualizó primero
+        });
+      }
+
       // Enviar comprobante de pago y solicitud de calificación (en background)
       if (oldStatus !== 'done') {
         setImmediate(() => {
@@ -469,9 +564,10 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
                 return;
               }
 
-              // Enviar comprobante de pago (solo si NO es servicio técnico a domicilio)
-              const isTechnicalService = freshAppt.Business?.isTechnicalServices || false;
-              if (!isTechnicalService) {
+              // 1. Decidir si enviamos comprobante de pago (PDF)
+              // NO se envía PDF si es técnico general o técnico de campo
+              const isAnyTechnical = freshAppt.Business?.isTechnicalServices || freshAppt.Business?.hasFieldTechnicians || false;
+              if (!isAnyTechnical) {
                 try {
                   await sendPaymentReceipt(freshAppt);
                   console.log(`[Done Action] Comprobante enviado para cita ${appointment.id}`);
@@ -479,31 +575,49 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
                   console.error('[Done Action] Error enviando comprobante:', receiptErr.message);
                 }
               } else {
-                console.log(`[Done Action] Servicio técnico a domicilio - omitiendo envío de comprobante para cita ${appointment.id}`);
+                console.log(`[Done Action] Negocio técnico - omitiendo envío de comprobante PDF para cita ${appointment.id}`);
+              }
+ 
+              // 2. Decidir si enviamos calificación por EMAIL
+              // SOLO se envía por email si es técnico de campo (porque ellos no tienen WhatsApp)
+              // Los técnicos especializados NO la reciben por email porque ya la reciben por WhatsApp
+              const isFieldTechnical = freshAppt.Business?.hasFieldTechnicians || false;
+              if (isFieldTechnical) {
+                try {
+                  await sendRatingEmail(freshAppt);
+                  console.log(`[Done Action] Solicitud de calificación por email enviada (Técnico de Campo) para cita ${appointment.id}`);
+                } catch (ratingEmailErr) {
+                  console.error('[Done Action] Error enviando solicitud de calificación por email:', ratingEmailErr.message);
+                }
               }
 
-              // Enviar solicitud de calificación por email (siempre se envía)
-              try {
-                await sendRatingEmail(freshAppt);
-                console.log(`[Done Action] Solicitud de calificación por email enviada para cita ${appointment.id}`);
-              } catch (ratingEmailErr) {
-                console.error('[Done Action] Error enviando solicitud de calificación por email:', ratingEmailErr.message);
-              }
-
-              // Enviar solicitud de calificación por WhatsApp (solo si NO es servicio técnico a domicilio)
-              if (!isTechnicalService && freshAppt.clientPhone && !freshAppt.ratingSent) {
+              // 3. Enviar solicitud de calificación por WhatsApp
+              // Se envía a todos EXCEPTO a los técnicos de campo (porque ellos no tienen WhatsApp configurado)
+              if (!isFieldTechnical && freshAppt.clientPhone && !freshAppt.ratingSent) {
                 try {
                   const { WhatsAppSession, Business } = require('../../models');
                   const { Op } = require('sequelize');
-                  const { queueMessage, getRandomRatingTemplate } = require('../../services/evolutionService');
+                  const { queueMessage, getRandomRatingTemplate, hasValidSession } = require('../../services/evolutionService');
 
                   const resolvedBizId = await Business.resolveWhatsAppBusinessId(freshAppt.businessId);
-                  const session = await WhatsAppSession.findOne({
+                  // Buscar sesión tanto con el ID resuelto (padre) como con el ID directo de la sucursal
+                  let session = await WhatsAppSession.findOne({
                     where: {
-                      businessId: resolvedBizId,
+                      businessId: { [Op.in]: [resolvedBizId, freshAppt.businessId] },
                       status: { [Op.in]: ['connected', 'session_saved'] }
                     }
                   });
+
+                  // Si no hay sesión en BD, verificar directamente con Evolution API
+                  if (!session) {
+                    console.log(`[Done Action] ℹ️ No se encontró sesión en BD para ${freshAppt.businessId}, verificando con Evolution API...`);
+                    const hasValidWhatsApp = await hasValidSession(freshAppt.businessId) || await hasValidSession(resolvedBizId);
+                    if (hasValidWhatsApp) {
+                      console.log(`[Done Action] ✅ WhatsApp está conectado según Evolution API`);
+                      // Crear una sesión temporal para permitir el envío
+                      session = { businessId: freshAppt.businessId, status: 'connected' };
+                    }
+                  }
 
                   if (session) {
                     const employeeName = freshAppt.Employee?.User?.name || 'nuestro profesional';
@@ -553,7 +667,7 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
 
                     console.log(`[Done Action] Mensajes programados en BD: Calificación (5min) + Reseña (2h) para cita ${appointment.id}`);
                   } else {
-                    console.log(`[Done Action] ℹ️ No se programa calificación: WhatsApp no configurado para el negocio ${freshAppt.businessId}`);
+                    console.log(`[Done Action] ℹ️ No se programa calificación: WhatsApp no configurado o no conectado para el negocio ${freshAppt.businessId} (verificado en BD y Evolution API)`);
                   }
                 } catch (waErr) {
                   console.error('[Done Action] Error programando solicitud de calificación:', waErr.message);
@@ -577,6 +691,21 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
   }
 
   await appointment.update(updateData);
+
+  // Registrar actividad
+  if (user) {
+    logActivity({ user }, {
+      action: 'UPDATE_APPOINTMENT_STATUS',
+      entityType: 'Appointment',
+      entityId: appointmentId,
+      businessId: appointment.businessId,
+      description: `Estado de cita cambiado de ${oldStatus} a ${newStatus}`,
+      oldValues: { status: oldStatus },
+      newValues: { status: newStatus },
+      metadata: { paymentMethod }
+    });
+  }
+
 
   // Recargar con todas las relaciones para emitir actualización completa
   const updatedAppointment = await Appointment.findByPk(appointmentId, {
@@ -750,7 +879,7 @@ async function sendPaymentReceipt(appointment) {
     return;
   }
 
-  const isTechnicalService = appointment.Business?.isTechnicalServices || false;
+  const isTechnicalService = appointment.Business?.isTechnicalServices || appointment.Business?.hasFieldTechnicians || false;
   const orderNumber = appointment.id.substring(0, 8).toUpperCase();
 
   const basePrice = parseFloat(appointment.basePrice || appointment.Service?.price || 0);
@@ -808,7 +937,7 @@ async function sendPaymentReceipt(appointment) {
     receiptNumber: orderNumber,
   };
 
-  const filename = isTechnicalService ? `orden-servicio-${orderNumber}.pdf` : `comprobante-${orderNumber}.pdf`;
+  const filename = isTechnicalService ? `reporte-servicio-${orderNumber}.pdf` : `comprobante-${orderNumber}.pdf`;
 
   await sendEmail(
     clientEmail,

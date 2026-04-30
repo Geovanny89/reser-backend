@@ -31,7 +31,7 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
 
     // Esperar un poco a que se genere el QR (el evento 'qr' en whatsappService lo guardará en currentQRs)
     let attempts = 0;
-    const maxAttempts = 30; // Aumentar a 30 segundos para dar tiempo a Puppeteer
+    const maxAttempts = 90; // Aumentar a 90 segundos para dar tiempo suficiente a Evolution API
     
     const waitForQR = setInterval(() => {
       attempts++;
@@ -63,7 +63,7 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
   }
 });
 
-// Ruta para ver estado de la conexión
+// Ruta para ver estado REAL de la conexión (consulta Evolution API, no solo BD)
 router.get('/whatsapp/status', auth, async (req, res) => {
   try {
     const { businessId } = req.query;
@@ -72,47 +72,61 @@ router.get('/whatsapp/status', auth, async (req, res) => {
     }
     
     const session = await models.WhatsAppSession.findOne({ where: { businessId } });
+    let dbStatus = session?.status || 'disconnected';
     
-    // Si en la DB dice conectado, verificar si la instancia realmente existe y está viva
-    let actualStatus = session?.status || 'disconnected';
-    
-    if (actualStatus === 'connected') {
-      // Usar getInstance con fallback de seguridad
-      const client = whatsappService.getInstance ? whatsappService.getInstance(businessId) : null;
-      if (!client) {
-        // Chrome no está corriendo, pero puede haber sesión guardada
-        actualStatus = 'disconnected';
-        // Verificar si hay sesión guardada en disco
-        if (whatsappService.hasValidSession && whatsappService.hasValidSession(businessId)) {
-          actualStatus = 'session_saved';
-          // Actualizar BD
-          await models.WhatsAppSession.update({ status: 'session_saved' }, { where: { businessId } });
+    // VERIFICAR ESTADO REAL EN EVOLUTION API (fuente de verdad)
+    let realState = 'disconnected';
+    try {
+      if (whatsappService.hasValidSession) {
+        const isValid = await whatsappService.hasValidSession(businessId);
+        if (isValid) {
+          realState = 'connected';
         } else {
-          // No hay sesión válida
-          await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+          // La instancia existe pero no está conectada, obtener estado exacto
+          const { getConnectionState } = require('../services/evolution/instanceManager');
+          const rawState = await getConnectionState(businessId);
+          if (rawState === 'connecting') {
+            realState = 'connecting';
+          } else {
+            realState = 'disconnected';
+          }
         }
       }
-    } else if (actualStatus === 'disconnected' || !session) {
-      // Verificar si hay sesión guardada en disco que no está reflejada en BD
-      // Solo para Evolution API - verificar que la instancia realmente existe
-      if (whatsappService.hasValidSession && await whatsappService.hasValidSession(businessId)) {
-        actualStatus = 'session_saved';
-        // Verificar que el negocio existe antes de crear/actualizar registro en BD
-        const businessExists = await models.Business.findByPk(businessId);
-        if (businessExists) {
-          await models.WhatsAppSession.upsert({
-            businessId,
-            status: 'session_saved',
-            lastActivity: new Date()
-          });
-        } else {
-          console.log(`⚠️ No se puede guardar sesión WhatsApp: negocio ${businessId} no existe`);
-        }
+    } catch (e) {
+      console.warn(`[WhatsApp Status] ⚠️ No se pudo consultar Evolution API:`, e.message);
+    }
+    
+    // Si hay discrepancia entre BD y realidad, actualizar BD
+    if (dbStatus === 'connected' && realState !== 'connected') {
+      console.log(`[WhatsApp Status] ⚠️ Discrepancia detectada: BD dice '${dbStatus}' pero Evolution API reporta '${realState}'. Sincronizando BD...`);
+      await models.WhatsAppSession.update(
+        { status: realState, lastActivity: new Date() },
+        { where: { businessId } }
+      );
+      dbStatus = realState;
+    }
+    
+    // Si BD dice disconnected pero Evolution dice connected, actualizar BD
+    if ((dbStatus === 'disconnected' || !session) && realState === 'connected') {
+      const businessExists = await models.Business.findByPk(businessId);
+      if (businessExists) {
+        await models.WhatsAppSession.upsert({
+          businessId,
+          status: 'connected',
+          lastActivity: new Date()
+        });
+        dbStatus = 'connected';
       }
+    }
+    
+    // Si está en connecting y hay QR en memoria, mantener como connecting
+    if (realState === 'connecting' && whatsappService.currentQRs && whatsappService.currentQRs.has && whatsappService.currentQRs.has(businessId)) {
+      dbStatus = 'connecting';
     }
 
     res.json({
-      status: actualStatus,
+      status: dbStatus,
+      realState: realState,
       phoneNumber: session?.phoneNumber || null,
       lastActivity: session?.lastActivity || null
     });
@@ -129,6 +143,20 @@ router.post('/whatsapp/reset', auth, async (req, res) => {
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
     
     console.log(`[WhatsApp Route] 🔄 Reiniciando servicio para ${businessId}...`);
+    
+    // PASO 1: Desconectar primero si hay instancia activa
+    try {
+      await whatsappService.stopInstance(businessId);
+      console.log(`[WhatsApp Route] ✅ Instancia detenida, esperando...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    } catch (stopErr) {
+      console.log(`[WhatsApp Route] ℹ️ No se pudo detener instancia (puede que no exista):`, stopErr.message);
+    }
+    
+    // PASO 2: Limpiar estado en base de datos
+    await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+    
+    // PASO 3: Crear nueva instancia
     await whatsappService.createInstance(businessId, true); // forceFresh = true
     res.json({ message: 'Servicio reiniciado. Generando nuevo QR...' });
   } catch (e) {
@@ -259,19 +287,27 @@ router.post('/evolution/configure-webhook', async (req, res) => {
 // Ruta para recibir webhooks de Evolution API
 router.post('/evolution/webhook', async (req, res) => {
   try {
-    console.log('[Evolution Webhook] 📨 Webhook recibido:', JSON.stringify(req.body).substring(0, 500));
+    const rawBody = JSON.stringify(req.body);
+    console.log('[Evolution Webhook] 📨 Webhook recibido:', rawBody.substring(0, 1000));
+    console.log('[Evolution Webhook] 🔍 Headers:', JSON.stringify(req.headers));
     
-    const { event, data, instance } = req.body;
+    const { event, data, instance, eventType } = req.body;
     
-    if (!instance) {
-      console.log('[Evolution Webhook] ⚠️ Webhook sin instancia, ignorando');
+    // Evolution API puede enviar el evento en diferentes campos
+    const actualEvent = event || eventType || req.body?.event;
+    const actualInstance = instance || data?.instanceId || req.body?.instanceId;
+    
+    console.log(`[Evolution Webhook] 🔍 Evento detectado: ${actualEvent}, Instancia: ${actualInstance}`);
+    
+    if (!actualInstance) {
+      console.log('[Evolution Webhook] ⚠️ Webhook sin instancia identificable, ignorando');
       return res.status(200).json({ message: 'OK' });
     }
     
-    const businessId = instance;
+    const businessId = actualInstance;
     
     // Manejar evento de conexión
-    if (event === 'connection.update' || event === 'connection_update') {
+    if (actualEvent === 'connection.update' || actualEvent === 'connection_update' || actualEvent === 'CONNECTION_UPDATE') {
       const connectionState = data?.state || data?.connectionState;
       console.log(`[Evolution Webhook] 🔌 Estado de conexión para ${businessId}: ${connectionState}`);
       
@@ -326,27 +362,59 @@ router.post('/evolution/webhook', async (req, res) => {
     }
     
     // Manejar evento de QR actualizado
-    if (event === 'qrcode.update' || event === 'qrcode_updated') {
-      console.log(`[Evolution Webhook] 📲 QR actualizado para ${businessId}`);
-      
+    if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED') {
       if (data?.base64) {
         whatsappService.currentQRs.set(businessId, data.base64);
-        console.log(`[Evolution Webhook] ✅ QR guardado en memoria para ${businessId}`);
       }
     }
     
     // Manejar evento de mensaje entrante
-    if (event === 'MESSAGES_UPSERT' || event === 'messages.upsert' || event === 'message_create') {
-      console.log(`[Evolution Webhook] 📥 Mensaje entrante para ${businessId}, evento: ${event}`);
+    if (actualEvent === 'MESSAGES_UPSERT' || actualEvent === 'messages.upsert' || actualEvent === 'message_create' || actualEvent === 'messages_update') {
+      console.log(`[Evolution Webhook] 📥 Mensaje entrante para ${businessId}, evento: ${actualEvent}`);
       console.log(`[Evolution Webhook] 📦 Payload completo:`, JSON.stringify(req.body).substring(0, 1000));
       
       try {
         // Evolution API v2.1.2 envía el mensaje en data.key y data.message
         const message = data?.key || data;
-        const msgBody = data?.message?.conversation || 
-                       data?.message?.extendedTextMessage?.text || 
-                       data?.text || 
-                       data?.body || '';
+        
+        // Buscar texto en mensaje normal
+        const messageText = data?.message?.conversation || 
+                           data?.message?.extendedTextMessage?.text || 
+                           data?.text || 
+                           data?.body || '';
+                           
+        // Buscar en respuestas interactivas (botones, listas, templates)
+        let interactiveResponse = '';
+        
+        try {
+          if (data?.message?.buttonsResponseMessage) {
+            interactiveResponse = data.message.buttonsResponseMessage.selectedDisplayText || 
+                                 data.message.buttonsResponseMessage.selectedButtonId || '';
+          } else if (data?.message?.templateButtonReplyMessage) {
+            interactiveResponse = data.message.templateButtonReplyMessage.selectedDisplayText || 
+                                 data.message.templateButtonReplyMessage.selectedId || '';
+          } else if (data?.message?.listResponseMessage) {
+            interactiveResponse = data.message.listResponseMessage.title || 
+                                 data.message.listResponseMessage.singleSelectReply?.selectedRowId || '';
+          } else if (data?.message?.interactiveResponseMessage) {
+             const nativeFlow = data.message.interactiveResponseMessage.nativeFlowResponseMessage;
+             if (nativeFlow) {
+               try {
+                 const params = JSON.parse(nativeFlow.paramsJson || '{}');
+                 // Priorizar id (puede ser "confirm", "cancel", etc.) o el nombre
+                 interactiveResponse = params.id || nativeFlow.name || '';
+               } catch (e) {
+                 interactiveResponse = nativeFlow.name || '';
+               }
+             } else {
+               interactiveResponse = data.message.interactiveResponseMessage.body?.text || '';
+             }
+          }
+        } catch (e) {
+          console.error('[Evolution Webhook] Error extrayendo respuesta interactiva:', e.message);
+        }
+        
+        const msgBody = interactiveResponse || messageText;
         
         const from = message?.remoteJid || 
                     message?.from || 

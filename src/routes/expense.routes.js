@@ -16,6 +16,9 @@ router.put('/:id', auth, role('admin', 'admin_suc', 'superadmin'), ctrl.update);
 // Eliminar gasto
 router.delete('/:id', auth, role('admin', 'admin_suc', 'superadmin'), ctrl.remove);
 
+// Anular gasto (recomendado en producción)
+router.post('/:id/void', auth, role('admin', 'admin_suc', 'superadmin'), ctrl.voidExpense);
+
 // Resumen de gastos
 router.get('/summary', auth, role('admin', 'admin_suc', 'superadmin'), ctrl.getSummary);
 

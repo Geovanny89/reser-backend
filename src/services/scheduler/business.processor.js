@@ -4,6 +4,105 @@
 const whatsappService = require('../evolutionService');
 const { CONFIG, RESPONSE_TYPES } = require('./config');
 
+// Tracker de timestamps por negocio para límite de velocidad (anti-bloqueo)
+const messageTimestampsByBusiness = new Map();
+
+// Tracker de warm-up por número de WhatsApp (ramp-up progresivo)
+const whatsappWarmUpTracker = new Map(); // businessId -> { createdAt, messageCount }
+
+/**
+ * Obtiene el límite de mensajes por minuto basado en warm-up del número
+ * Números nuevos tienen límites más estrictos para evitar bloqueos
+ */
+function getWarmUpLimit(businessId) {
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  if (!whatsappWarmUpTracker.has(businessId)) {
+    // Primer uso del número: registrar y aplicar límite estricto
+    whatsappWarmUpTracker.set(businessId, { createdAt: now, messageCount: 0 });
+    return 2; // Día 1: max 2 msgs/min
+  }
+
+  const warmUpData = whatsappWarmUpTracker.get(businessId);
+  const daysSinceCreation = (now - warmUpData.createdAt) / DAY_MS;
+
+  // Ramp-up progresivo
+  if (daysSinceCreation < 1) {
+    return 2; // Día 1: max 2 msgs/min
+  } else if (daysSinceCreation < 3) {
+    return 3; // Días 2-3: max 3 msgs/min
+  } else if (daysSinceCreation < 7) {
+    return 4; // Días 4-7: max 4 msgs/min
+  } else {
+    return CONFIG.MAX_MESSAGES_PER_MINUTE; // Después de 7 días: límite normal
+  }
+}
+
+/**
+ * Incrementa contador de mensajes para warm-up
+ */
+function incrementWarmUpCount(businessId) {
+  if (whatsappWarmUpTracker.has(businessId)) {
+    const data = whatsappWarmUpTracker.get(businessId);
+    data.messageCount++;
+    whatsappWarmUpTracker.set(businessId, data);
+  }
+}
+
+/**
+ * Genera delay con distribución sesgada (no uniforme) para comportamiento más humano
+ * Usa Math.pow(Math.random(), 2) para generar más valores bajos y pocos altos
+ */
+function getHumanLikeDelay(minMs, maxMs) {
+  const range = maxMs - minMs;
+  // Distribución sesgada: más valores cerca del mínimo, pocos cerca del máximo
+  const skewedRandom = Math.pow(Math.random(), 2);
+  return minMs + skewedRandom * range;
+}
+
+/**
+ * Verifica y aplica límite de velocidad por negocio (anti-bloqueo WhatsApp)
+ * Usa warm-up dinámico para números nuevos
+ * Retorna el delay adicional necesario para respetar el límite
+ */
+function checkRateLimit(businessId) {
+  const now = Date.now();
+  const oneMinuteAgo = now - 60 * 1000;
+
+  // Obtener límite dinámico basado en warm-up del número
+  const dynamicLimit = getWarmUpLimit(businessId);
+
+  if (!messageTimestampsByBusiness.has(businessId)) {
+    messageTimestampsByBusiness.set(businessId, []);
+  }
+
+  const timestamps = messageTimestampsByBusiness.get(businessId);
+
+  // Limpiar timestamps viejos (más de 1 minuto)
+  const recentTimestamps = timestamps.filter(ts => ts > oneMinuteAgo);
+  messageTimestampsByBusiness.set(businessId, recentTimestamps);
+
+  // Si ya envió el límite dinámico en el último minuto, calcular delay
+  if (recentTimestamps.length >= dynamicLimit) {
+    const oldestTimestamp = recentTimestamps[0];
+    const timeUntilOldestExpires = oldestTimestamp + 60 * 1000 - now;
+    if (timeUntilOldestExpires > 0) {
+      console.log(`[Scheduler] ⏸️ Rate limit para ${businessId}: esperando ${Math.round(timeUntilOldestExpires / 1000)}s para respetar límite de ${dynamicLimit} msgs/min (warm-up)`);
+      return timeUntilOldestExpires;
+    }
+  }
+
+  // Registrar este mensaje
+  recentTimestamps.push(now);
+  messageTimestampsByBusiness.set(businessId, recentTimestamps);
+
+  // Incrementar contador de warm-up
+  incrementWarmUpCount(businessId);
+
+  return 0; // No hay delay adicional
+}
+
 /**
  * Procesa mensajes de un negocio específico (con timeout)
  */
@@ -11,7 +110,7 @@ async function processBusinessMessages(businessId, messages) {
   console.log(`[Scheduler] 📦 Procesando ${messages.length} mensajes para negocio ${businessId}`);
 
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Timeout: procesamiento de negocio excedió 6 minutos')), CONFIG.BUSINESS_TIMEOUT_MS)
+    setTimeout(() => reject(new Error(`Timeout: procesamiento de negocio excedió ${CONFIG.BUSINESS_TIMEOUT_MS / 60000} minutos`)), CONFIG.BUSINESS_TIMEOUT_MS)
   );
 
   try {
@@ -63,8 +162,8 @@ async function processBusinessMessagesInternal(businessId, messages) {
       await new Promise(resolve => setTimeout(resolve, CONFIG.SYNC_WAIT_MS));
       console.log(`[Scheduler] ✅ Sincronización completa`);
 
-      const { processIncomingMessages } = require('./incoming.processor');
-      await processIncomingMessages(resolvedBusinessId, client);
+      // Los mensajes entrantes se procesan globalmente en runScheduler(), no aquí
+      // para evitar procesamiento duplicado en paralelo.
 
       console.log(`[Scheduler] ✅ Listo para enviar mensajes programados`);
     } catch (connError) {
@@ -80,9 +179,9 @@ async function processBusinessMessagesInternal(businessId, messages) {
 
     const result = await sendMessagesBatch(resolvedBusinessId, client, messages);
 
-    // Desconectar WhatsApp
-    if (result.hasResponseExpected) {
-      console.log(`[Scheduler] ⏳ Mensajes esperan respuesta. Manteniendo conexión 5 minutos...`);
+    // Desconectar WhatsApp (no bloqueamos por respuestas, se procesan en siguiente ciclo)
+    if (CONFIG.RESPONSE_WAIT_MS > 0 && result.hasResponseExpected) {
+      console.log(`[Scheduler] ⏳ Mensajes esperan respuesta. Manteniendo conexión ${CONFIG.RESPONSE_WAIT_MS / 1000}s...`);
       await new Promise(resolve => setTimeout(resolve, CONFIG.RESPONSE_WAIT_MS));
       console.log(`[Scheduler] ⏳ Tiempo de espera completado, desconectando...`);
     }
@@ -120,14 +219,36 @@ async function sendMessagesBatch(businessId, client, messages) {
 
   const hasResponseExpected = messages.some(msg => RESPONSE_TYPES.includes(msg.type));
 
+  // Delay adaptativo: más rápido si hay muchos mensajes, más lento si son pocos
+  const useHumanDelay = messages.length <= 3;
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
 
     try {
       if (i > 0) {
-        const delay = CONFIG.DELAY_BETWEEN_MESSAGES_MIN + Math.random() * (CONFIG.DELAY_BETWEEN_MESSAGES_MAX - CONFIG.DELAY_BETWEEN_MESSAGES_MIN);
-        console.log(`[Scheduler] ⏱️ Esperando ${Math.round(delay / 1000)}s antes del siguiente mensaje...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        // Pausa human-like cada HUMAN_PAUSE_INTERVAL mensajes para romper patrones
+        if (i > 0 && i % CONFIG.HUMAN_PAUSE_INTERVAL === 0) {
+          const humanPause = getHumanLikeDelay(CONFIG.HUMAN_PAUSE_MIN_MS, CONFIG.HUMAN_PAUSE_MAX_MS);
+          console.log(`[Scheduler] 🧘 Pausa human-like (${Math.round(humanPause / 1000)}s) después de ${CONFIG.HUMAN_PAUSE_INTERVAL} mensajes para romper patrones...`);
+          await new Promise(resolve => setTimeout(resolve, humanPause));
+        }
+
+        // Verificar límite de velocidad (anti-bloqueo)
+        const rateLimitDelay = checkRateLimit(businessId);
+
+        // Delay base adaptativo con distribución sesgada (no uniforme)
+        const baseDelay = useHumanDelay
+          ? getHumanLikeDelay(CONFIG.DELAY_BETWEEN_MESSAGES_HUMAN_MIN, CONFIG.DELAY_BETWEEN_MESSAGES_HUMAN_MAX)
+          : getHumanLikeDelay(CONFIG.DELAY_BETWEEN_MESSAGES_MIN, CONFIG.DELAY_BETWEEN_MESSAGES_MAX);
+
+        // Usar el mayor de los dos delays
+        const totalDelay = Math.max(baseDelay, rateLimitDelay);
+        console.log(`[Scheduler] ⏱️ Esperando ${Math.round(totalDelay / 1000)}s antes del siguiente mensaje...`);
+        await new Promise(resolve => setTimeout(resolve, totalDelay));
+      } else {
+        // Primer mensaje: verificar rate limit antes de enviar
+        checkRateLimit(businessId);
       }
 
       await whatsappService.sendMessageDirect(businessId, msg.phone, msg.message);
