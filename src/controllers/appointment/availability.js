@@ -83,17 +83,45 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   if (specialSchedules.length > 0) {
     const closedSchedule = specialSchedules.find(s => s.type === 'closed');
     if (closedSchedule) {
+      console.log(`[Availability] Fecha ${date} cerrada por horario especial.`);
       return { availableSlots: [] };
     }
 
-    const employeeSpecific = specialSchedules.filter(s => s.employeeId === employeeId);
-    const generalOnes = specialSchedules.filter(s => s.employeeId === null);
-    const schedulesToUse = employeeSpecific.length > 0 ? employeeSpecific : generalOnes;
+    // Clasificar horarios especiales
+    const empSpecial = specialSchedules.filter(s => s.employeeId === employeeId);
+    const bizSpecial = specialSchedules.filter(s => s.employeeId === null);
 
-    workSchedules = schedulesToUse.filter(s => s.type === 'work');
-    lunchRanges = schedulesToUse.filter(s => s.type === 'lunch');
-    blockedRanges = schedulesToUse.filter(s => s.type === 'blocked');
-    empSchedules = schedulesToUse;
+    // Prioridad para horarios de trabajo: Empleado > Negocio
+    const empWork = empSpecial.filter(s => s.type === 'work');
+    const bizWork = bizSpecial.filter(s => s.type === 'work');
+    workSchedules = empWork.length > 0 ? empWork : bizWork;
+
+    // Combinar bloqueos y almuerzos (negocio + empleado)
+    lunchRanges = specialSchedules.filter(s => s.type === 'lunch');
+    blockedRanges = specialSchedules.filter(s => s.type === 'blocked');
+
+    // Si los horarios especiales no incluyen un horario de trabajo ('work'),
+    // cargamos el horario regular y le agregamos estos bloqueos/almuerzos.
+    if (workSchedules.length === 0) {
+      const regularSchedules = await Schedule.findAll({
+        where: { employeeId, dayOfWeek, active: true }
+      });
+      
+      workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
+      
+      // Combinar con almuerzos y bloqueos regulares
+      lunchRanges = [
+        ...lunchRanges,
+        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
+      ];
+      
+      blockedRanges = [
+        ...blockedRanges,
+        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
+      ];
+    }
+    
+    console.log(`[Availability] Usando horarios especiales para ${date}. Work: ${workSchedules.length}, Blocked: ${blockedRanges.length}, Lunch: ${lunchRanges.length}`);
   } else {
     // Usar horarios regulares por día de la semana
     empSchedules = await Schedule.findAll({
@@ -107,9 +135,12 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     
     lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
     blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+    
+    console.log(`[Availability] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
   }
 
   if (workSchedules.length === 0) {
+    console.log(`[Availability] No se encontraron horarios de trabajo para ${date}.`);
     return { availableSlots: [] };
   }
 
@@ -376,16 +407,44 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
   if (specialSchedules.length > 0) {
     const closedSchedule = specialSchedules.find(s => s.type === 'closed');
     if (closedSchedule) {
+      console.log(`[validateManualTime] Fecha ${date} cerrada por horario especial.`);
       return { valid: false, reason: 'El negocio está cerrado en esta fecha' };
     }
 
-    const employeeSpecific = specialSchedules.filter(s => s.employeeId === employeeId);
-    const generalOnes = specialSchedules.filter(s => s.employeeId === null);
-    const schedulesToUse = employeeSpecific.length > 0 ? employeeSpecific : generalOnes;
+    // Clasificar horarios especiales
+    const empSpecial = specialSchedules.filter(s => s.employeeId === employeeId);
+    const bizSpecial = specialSchedules.filter(s => s.employeeId === null);
 
-    workSchedules = schedulesToUse.filter(s => s.type === 'work');
-    lunchRanges = schedulesToUse.filter(s => s.type === 'lunch');
-    blockedRanges = schedulesToUse.filter(s => s.type === 'blocked');
+    // Prioridad para horarios de trabajo: Empleado > Negocio
+    const empWork = empSpecial.filter(s => s.type === 'work');
+    const bizWork = bizSpecial.filter(s => s.type === 'work');
+    workSchedules = empWork.length > 0 ? empWork : bizWork;
+
+    // Combinar bloqueos y almuerzos (negocio + empleado)
+    lunchRanges = specialSchedules.filter(s => s.type === 'lunch');
+    blockedRanges = specialSchedules.filter(s => s.type === 'blocked');
+
+    // Si los horarios especiales no incluyen un horario de trabajo ('work'),
+    // cargamos el horario regular y le agregamos estos bloqueos/almuerzos.
+    if (workSchedules.length === 0) {
+      const regularSchedules = await Schedule.findAll({
+        where: { employeeId, dayOfWeek, active: true }
+      });
+      
+      workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
+      
+      // Combinar con almuerzos y bloqueos regulares
+      lunchRanges = [
+        ...lunchRanges,
+        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
+      ];
+      
+      blockedRanges = [
+        ...blockedRanges,
+        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
+      ];
+    }
+    console.log(`[validateManualTime] Usando horarios especiales para ${date}. Work: ${workSchedules.length}, Blocked: ${blockedRanges.length}, Lunch: ${lunchRanges.length}`);
   } else {
     const empSchedules = await Schedule.findAll({
       where: { employeeId, dayOfWeek, active: true }
@@ -398,9 +457,11 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     
     lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
     blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+    console.log(`[validateManualTime] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
   }
 
   if (workSchedules.length === 0) {
+    console.log(`[validateManualTime] No se encontraron horarios de trabajo para ${date}.`);
     return { valid: false, reason: 'El empleado no tiene horarios de trabajo configurados para este día' };
   }
 

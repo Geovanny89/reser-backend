@@ -195,11 +195,12 @@ async function sendReminders() {
     }
 
     // ─── RECORDATORIOS DE 1 HORA ───
-    const win1HEnd = new Date(now + REMINDER_1H_MS + (5 * 60 * 1000));
+    const win1HStart = new Date(now + REMINDER_1H_MS - (10 * 60 * 1000));
+    const win1HEnd = new Date(now + REMINDER_1H_MS + (10 * 60 * 1000));
 
     const appts1H = await Appointment.findAll({
       where: {
-        startTime: { [Op.lte]: win1HEnd, [Op.gt]: new Date(now) },
+        startTime: { [Op.lte]: win1HEnd, [Op.gte]: win1HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminderSent: false,
         createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
@@ -280,11 +281,12 @@ async function sendReminders() {
     }
 
     // ─── RECORDATORIOS DE 30 MINUTOS ───
-    const win30MEnd = new Date(now + REMINDER_30M_MS + (5 * 60 * 1000));
+    const win30MStart = new Date(now + REMINDER_30M_MS - (10 * 60 * 1000));
+    const win30MEnd = new Date(now + REMINDER_30M_MS + (10 * 60 * 1000));
 
     const appts30M = await Appointment.findAll({
       where: {
-        startTime: { [Op.lte]: win30MEnd, [Op.gt]: new Date(now) },
+        startTime: { [Op.lte]: win30MEnd, [Op.gte]: win30MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder30mSent: false,
         createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
@@ -638,10 +640,11 @@ async function processReferenceMessage(appt) {
 async function sendTechnicianFieldReminders(now, processingAppts) {
   try {
     // ─── 60 MINUTOS ───
-    const win60MEnd = new Date(now + REMINDER_60M_MS + (5 * 60 * 1000));
+    const win60MStart = new Date(now + REMINDER_60M_MS - (10 * 60 * 1000));
+    const win60MEnd = new Date(now + REMINDER_60M_MS + (10 * 60 * 1000));
     const appts60M = await Appointment.findAll({
       where: {
-        startTime: { [Op.lte]: win60MEnd, [Op.gt]: new Date(now) },
+        startTime: { [Op.lte]: win60MEnd, [Op.gte]: win60MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert60mSent: false,
         createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
@@ -662,10 +665,11 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
     }
 
     // ─── 30 MINUTOS ───
-    const win30MTechEnd = new Date(now + REMINDER_30M_MS + (5 * 60 * 1000));
+    const win30MTechStart = new Date(now + REMINDER_30M_MS - (10 * 60 * 1000));
+    const win30MTechEnd = new Date(now + REMINDER_30M_MS + (10 * 60 * 1000));
     const appts30MTech = await Appointment.findAll({
       where: {
-        startTime: { [Op.lte]: win30MTechEnd, [Op.gt]: new Date(now) },
+        startTime: { [Op.lte]: win30MTechEnd, [Op.gte]: win30MTechStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert30mSent: false,
         createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
@@ -686,10 +690,11 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
     }
 
     // ─── 15 MINUTOS ───
+    const win15MStart = new Date(now + REMINDER_15M_MS - (5 * 60 * 1000));
     const win15MEnd = new Date(now + REMINDER_15M_MS + (5 * 60 * 1000));
     const appts15M = await Appointment.findAll({
       where: {
-        startTime: { [Op.lte]: win15MEnd, [Op.gt]: new Date(now) },
+        startTime: { [Op.lte]: win15MEnd, [Op.gte]: win15MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlertSent: false, // Usamos el campo existente para 15min
         createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
