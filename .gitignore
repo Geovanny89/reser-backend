@@ -31,6 +31,9 @@ load-test-frontend.js
 
 # Scripts de mantenimiento (opcional)
 scripts/
+test_*.js
+debug_*.js
+*.log
 
 # Documentación (opcional)
 EVOLUTION_API_GUIDE.md
