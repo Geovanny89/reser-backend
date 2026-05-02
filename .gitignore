@@ -13,12 +13,12 @@ sessions/
 uploads/
 
 # Carpetas de desarrollo/test (No necesarias en VPS)
-load-tests/
-tests/
-test/
-migrations/
-scripts/
-scratch/
+/load-tests/
+/tests/
+/test/
+/migrations/
+/scripts/
+/scratch/
 
 # Ignorar todos los archivos JS en la raíz por seguridad/limpieza
 /*.js
