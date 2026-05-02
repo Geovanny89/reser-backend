@@ -40,6 +40,7 @@ app.use(cors({
 }));
 
 // 3. Rate Limiting (Aplica a las rutas de la API)
+app.set('trust proxy', 1); // Necesario para que express-rate-limit funcione detrás de NGINX
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 500, // Limitar a 500 peticiones por IP cada 15 minutos
