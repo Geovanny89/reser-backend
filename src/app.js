@@ -28,10 +28,11 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Permitir si no hay origen (postman, scripts locales) o si el origen está en la lista permitida
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Permitir si no hay origen, si es el string 'null' (WebViews), o si está en la lista permitida
+    if (!origin || origin === 'null' || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.error('[CORS ERROR] Origen bloqueado:', origin);
       callback(new Error('No permitido por CORS'));
     }
   },

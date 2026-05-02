@@ -13,7 +13,8 @@ const socketConfig = {
       "http://127.0.0.1:3000",
       "capacitor://localhost",
       "ionic://localhost",
-      "file://"
+      "file://",
+      "null"
     ],
     methods: ['GET', 'POST'],
     credentials: true,
