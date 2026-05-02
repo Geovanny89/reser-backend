@@ -31,63 +31,81 @@ async function processBirthdays() {
       return (b.getUTCMonth() + 1) === currentMonth && b.getUTCDate() === currentDay;
     });
 
-    console.log(`[Birthday Cron] 🎂 Se encontraron ${birthdayProfiles.length} posibles cumpleañeros`);
+    console.log(`[Birthday Cron] 🎂 Se encontraron ${birthdayProfiles.length} cumpleañeros para hoy`);
 
-    for (const profile of birthdayProfiles) {
+    // Agrupar por negocio para rotar plantillas correctamente
+    const groupedByBusiness = {};
+    birthdayProfiles.forEach(p => {
+      if (!groupedByBusiness[p.businessId]) groupedByBusiness[p.businessId] = [];
+      groupedByBusiness[p.businessId].push(p);
+    });
+
+    for (const [businessId, profiles] of Object.entries(groupedByBusiness)) {
       try {
         // 2. Obtener plantillas activas del negocio
         const templates = await BirthdayTemplate.findAll({
-          where: { businessId: profile.businessId, isActive: true }
+          where: { businessId, isActive: true },
+          order: [['createdAt', 'ASC']]
         });
 
         if (templates.length === 0) {
-          console.log(`[Birthday Cron] ⚠️ Negocio ${profile.businessId} no tiene plantillas activas. Saltando.`);
+          console.log(`[Birthday Cron] ⚠️ Negocio ${businessId} no tiene plantillas activas. Saltando.`);
           continue;
         }
 
-        // 3. Seleccionar una plantilla al azar y aplicar Blindaje Anti-Baneo
         const { getRandomTemplate } = require('../services/reminder/message.generators');
-        let finalMessage = getRandomTemplate(templates.map(t => t.content));
-        
-        // 3.1 Buscar el nombre del cliente en su última cita
-        const lastApt = await Appointment.findOne({
-          where: { 
-            businessId: profile.businessId,
-            clientPhone: profile.clientPhone 
-          },
-          order: [['startTime', 'DESC']]
-        });
-        
-        const clientName = lastApt ? lastApt.clientName : '';
-        
-        // 3.2 Reemplazar variables o añadir nombre al principio si no está la etiqueta
-        if (clientName) {
-          if (finalMessage.includes('{{name}}')) {
-            finalMessage = finalMessage.replace(/{{name}}/g, clientName);
-          } else {
-            finalMessage = `¡Hola *${clientName.trim()}*! ${finalMessage}`;
+
+        for (let i = 0; i < profiles.length; i++) {
+          const profile = profiles[i];
+          try {
+            // 3. Seleccionar una plantilla por rotación (i % templates.length)
+            // Esto asegura que se usen todas las plantillas disponibles de forma equitativa
+            const selectedTemplate = templates[i % templates.length].content;
+            let finalMessage = getRandomTemplate([selectedTemplate]);
+            
+            // 3.1 Buscar el nombre del cliente en su última cita
+            const lastApt = await Appointment.findOne({
+              where: { 
+                businessId: profile.businessId,
+                clientPhone: profile.clientPhone 
+              },
+              order: [['startTime', 'DESC']]
+            });
+            
+            const clientName = lastApt ? lastApt.clientName : '';
+            
+            // 3.2 Reemplazar variables o añadir nombre al principio si no está la etiqueta
+            if (clientName) {
+              if (finalMessage.includes('{{name}}')) {
+                finalMessage = finalMessage.replace(/{{name}}/g, clientName);
+              } else {
+                finalMessage = `¡Hola *${clientName.trim()}*! ${finalMessage}`;
+              }
+            }
+
+            // 4. Programar el mensaje
+            const phone = profile.clientPhone;
+            if (!phone) continue;
+
+            await scheduleMessage({
+              businessId: profile.businessId,
+              phone,
+              message: finalMessage,
+              type: 'birthday',
+              scheduledAt: new Date()
+            });
+
+            // 5. Marcar como enviado este año
+            await profile.update({ lastSentBirthdayYear: currentYear });
+
+            console.log(`[Birthday Cron] ✅ Cumpleaños programado para ${phone} (Negocio: ${profile.businessId}) - Plantilla ${ (i % templates.length) + 1 }`);
+
+          } catch (err) {
+            console.error(`[Birthday Cron] ❌ Error procesando perfil ${profile.id}:`, err.message);
           }
         }
-
-        // 4. Programar el mensaje
-        const phone = profile.clientPhone;
-        if (!phone) continue;
-
-        await scheduleMessage({
-          businessId: profile.businessId,
-          phone,
-          message: finalMessage,
-          type: 'birthday',
-          scheduledAt: new Date() // El scheduler lo ajustará a horario laboral si es necesario
-        });
-
-        // 5. Marcar como enviado este año
-        await profile.update({ lastSentBirthdayYear: currentYear });
-
-        console.log(`[Birthday Cron] ✅ Cumpleaños programado para ${phone} (Negocio: ${profile.businessId})`);
-
       } catch (err) {
-        console.error(`[Birthday Cron] ❌ Error procesando perfil ${profile.id}:`, err.message);
+        console.error(`[Birthday Cron] ❌ Error procesando negocio ${businessId}:`, err.message);
       }
     }
 

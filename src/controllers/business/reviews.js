@@ -2,6 +2,7 @@
  * Controladores para gestión de reseñas
  */
 const { Business } = require('../../models');
+const cacheService = require('../../services/cacheService');
 
 // POST /businesses/:slug/reviews
 exports.createReview = async (req, res) => {
@@ -24,6 +25,9 @@ exports.createReview = async (req, res) => {
       comment: comment || null,
       isApproved: true
     });
+    
+    // Invalida caché de la página pública del negocio
+    cacheService.invalidateBusinessPublic(slug);
     
     res.status(201).json({
       message: 'Reseña creada exitosamente',
@@ -73,6 +77,9 @@ exports.toggleReviewApproval = async (req, res) => {
     review.isApproved = !review.isApproved;
     await review.save();
     
+    // Invalida caché de la página pública del negocio
+    cacheService.invalidateBusinessPublic(business.slug);
+    
     res.json({
       message: `Reseña ${review.isApproved ? 'aprobada' : 'desaprobada'}`,
       review
@@ -99,6 +106,9 @@ exports.deleteReview = async (req, res) => {
     if (!isOwner && !isAdmin) return res.status(403).json({ error: 'No autorizado' });
     
     await review.destroy();
+    
+    // Invalida caché de la página pública del negocio
+    cacheService.invalidateBusinessPublic(business.slug);
     
     res.json({ message: 'Reseña eliminada' });
   } catch (e) {

@@ -1,7 +1,7 @@
 /**
  * Controladores de consulta para negocios
  */
-const { Business, Service, Employee, User, Promotion, ServiceGroup } = require('../../models');
+const { Business, Service, Employee, User, Promotion, ServiceGroup, sequelize } = require('../../models');
 const { Op } = require('sequelize');
 const { buildBusinessInclude } = require('./utils');
 const { SUBSCRIPTION_PLANS, ADDITIONAL_USER_PRICE } = require('./constants');
@@ -164,7 +164,7 @@ exports.getBySlug = async (req, res) => {
     const today = now.toISOString().split('T')[0];
     
     const tPR0 = Date.now();
-    const [promotions, reviews] = await Promise.all([
+    const [promotions, reviews, reviewStats] = await Promise.all([
       Promotion.findAll({
         where: {
           businessId: biz.id,
@@ -183,10 +183,18 @@ exports.getBySlug = async (req, res) => {
         },
         order: [['createdAt', 'DESC']],
         limit: 10
+      }),
+      BusinessReview.findOne({
+        where: { businessId: biz.id, isApproved: true },
+        attributes: [
+          [sequelize.fn('COUNT', sequelize.col('id')), 'total'],
+          [sequelize.fn('AVG', sequelize.col('rating')), 'average']
+        ],
+        raw: true
       })
     ]);
     const tPR1 = Date.now();
-    console.log(`[PERF getBySlug] Promotions+Reviews=${tPR1 - tPR0}ms promos=${promotions.length} reviews=${reviews.length}`);
+    console.log(`[PERF getBySlug] Promos+Reviews+Stats=${tPR1 - tPR0}ms promos=${promotions.length} reviews=${reviews.length} total=${reviewStats?.total || 0}`);
     
     console.log(`[DEBUG getBySlug] Promociones encontradas: ${promotions.length}`);
 
@@ -212,11 +220,9 @@ exports.getBySlug = async (req, res) => {
     console.log(`[DEBUG getBySlug] Asignado bizJson.Promotions:`, bizJson.Promotions?.length || 0);
     console.log(`[DEBUG getBySlug] bizJson.Promotions tipo:`, typeof bizJson.Promotions, Array.isArray(bizJson.Promotions));
     
-    // Calcular estadísticas de reseñas
-    const totalReviews = reviews.length;
-    const avgRating = totalReviews > 0 
-      ? (reviews.reduce((sum, r) => sum + r.rating, 0) / totalReviews).toFixed(1)
-      : null;
+    // Calcular estadísticas de reseñas reales
+    const totalReviews = parseInt(reviewStats?.total) || 0;
+    const avgRating = reviewStats?.average ? parseFloat(reviewStats.average).toFixed(1) : null;
     
     bizJson.ReviewStats = {
       avgRating: avgRating ? parseFloat(avgRating) : null,
