@@ -1,8 +1,8 @@
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
-const fs      = require('fs');
-const helmet  = require('helmet');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
@@ -16,7 +16,12 @@ app.use(helmet({
 // 2. Configuración CORS estricta
 const allowedOrigins = [
   'https://reservas.k-dice.com',
+  'https://api-reservas.k-dice.com',
   'http://localhost:5173',
+  'http://localhost:3000',
+  'capacitor://localhost',
+  'ionic://localhost',
+  'file://',
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
@@ -58,7 +63,7 @@ app.use('/downloads', express.static(path.join(__dirname, '../public/downloads')
 app.use('/apk', express.static(path.join(__dirname, '../../frontend/public-static/apk')));
 
 // Swagger UI
-const swaggerUi   = require('swagger-ui-express');
+const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customCss: '.swagger-ui .topbar { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }',
@@ -68,28 +73,28 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
 
 // Rutas
-app.use('/api/auth',           require('./routes/auth.routes'));
-app.use('/api/businesses',     require('./routes/business.routes'));
+app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/businesses', require('./routes/business.routes'));
 app.use('/api/business-types', require('./routes/businessType.routes'));
 
 const checkBusinessStatus = require('./middleware/checkBusinessStatus');
-app.use('/api/services',       checkBusinessStatus, require('./routes/service.routes'));
+app.use('/api/services', checkBusinessStatus, require('./routes/service.routes'));
 app.use('/api/service-groups', checkBusinessStatus, require('./routes/serviceGroup.routes'));
-app.use('/api/employees',      checkBusinessStatus, require('./routes/employee.routes'));
-app.use('/api/appointments',   checkBusinessStatus, require('./routes/appointment.routes'));
-app.use('/api/schedules',      checkBusinessStatus, require('./routes/schedule.routes'));
+app.use('/api/employees', checkBusinessStatus, require('./routes/employee.routes'));
+app.use('/api/appointments', checkBusinessStatus, require('./routes/appointment.routes'));
+app.use('/api/schedules', checkBusinessStatus, require('./routes/schedule.routes'));
 app.use('/api/special-schedules', checkBusinessStatus, require('./routes/specialSchedule.routes'));
 app.use('/api/employee-vacations', checkBusinessStatus, require('./routes/employeeVacation.routes'));
-app.use('/api/upload',         require('./routes/upload.routes'));
+app.use('/api/upload', require('./routes/upload.routes'));
 app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));
 app.use('/api/superadmin', require('./routes/superAdmin.routes'));
 app.use('/api/platform-reviews', require('./routes/platformReview.routes'));
 
 // Módulos opcionales configurables
-app.use('/api/expenses',   checkBusinessStatus, require('./routes/expense.routes'));
-app.use('/api/inventory',  checkBusinessStatus, require('./routes/inventory.routes'));
-app.use('/api/deposits',   checkBusinessStatus, require('./routes/deposit.routes'));
+app.use('/api/expenses', checkBusinessStatus, require('./routes/expense.routes'));
+app.use('/api/inventory', checkBusinessStatus, require('./routes/inventory.routes'));
+app.use('/api/deposits', checkBusinessStatus, require('./routes/deposit.routes'));
 app.use('/api/cash-register', checkBusinessStatus, require('./routes/cashRegister.routes'));
 
 // Informe financiero integrado

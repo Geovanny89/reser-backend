@@ -3,17 +3,17 @@
  */
 const socketConfig = {
   cors: {
-  origin: [
-    "https://reservas.k-dice.com",
-    "https://api-reservas.k-dice.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000"
-  ],
-  methods: ['GET', 'POST'],
-  credentials: true,
-},
+    origin: [
+      "https://reservas.k-dice.com",
+      "https://api-reservas.k-dice.com",
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "http://127.0.0.1:5173",
+      "http://127.0.0.1:3000"
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
   // Configuración para mínimo consumo de memoria
   pingTimeout: 60000,
   pingInterval: 25000,

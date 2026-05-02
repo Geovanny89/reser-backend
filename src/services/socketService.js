@@ -39,7 +39,7 @@ function initializeSocketServer(httpServer) {
   io.use(async (socket, next) => {
     try {
       const { token, businessId, userId, role } = socket.handshake.auth;
-      
+
       if (!businessId) {
         return next(new Error('businessId requerido'));
       }
@@ -49,7 +49,7 @@ function initializeSocketServer(httpServer) {
       socket.businessId = businessId;
       socket.userRole = role || 'client';
       socket.employeeId = socket.handshake.auth.employeeId || null;
-      
+
       next();
     } catch (err) {
       next(new Error('Autenticación fallida'));
@@ -69,7 +69,7 @@ function initializeSocketServer(httpServer) {
  */
 function handleConnection(socket) {
   const { businessId, userId, userRole, employeeId } = socket;
-  
+
   console.log(`🔌 [Socket] Nueva conexión:`, {
     socketId: socket.id,
     businessId,
@@ -77,32 +77,32 @@ function handleConnection(socket) {
     userRole,
     employeeId
   });
-  
+
   // Validar que tenemos businessId
   if (!businessId) {
     console.error(`🔌 [Socket] ERROR: Conexión sin businessId - socket ${socket.id}`);
     return;
   }
-  
+
   // Unirse a la sala del negocio (para notificaciones admin)
   socket.join(`business:${businessId}`);
   console.log(`🔌 [Socket] Unido a sala business:${businessId}`);
-  
+
   // Si es empleado, unirse a sala personal
   if (userRole === 'employee' && employeeId) {
     socket.join(`employee:${employeeId}`);
     console.log(`🔌 [Socket] Unido a sala employee:${employeeId}`);
   }
-  
+
   // Si es admin, unirse a sala admin del negocio
   if (userRole === 'admin' || userRole === 'admin_suc') {
     socket.join(`admin:${businessId}`);
     console.log(`🔌 [Socket] Unido a sala admin:${businessId}`);
   }
-  
+
   // Actualizar estadísticas
   updateConnectionStats('add', businessId, userRole);
-  
+
   console.log(`🔌 [Socket] ${userRole} conectado - Business: ${businessId}${employeeId ? `, Employee: ${employeeId}` : ''}`);
 
   // Evento de desconexión
@@ -141,10 +141,10 @@ function handleConnection(socket) {
 function updateConnectionStats(action, businessId, role) {
   if (action === 'add') {
     connectionStats.total++;
-    connectionStats.byBusiness.set(businessId, 
+    connectionStats.byBusiness.set(businessId,
       (connectionStats.byBusiness.get(businessId) || 0) + 1
     );
-    connectionStats.byRole.set(role, 
+    connectionStats.byRole.set(role,
       (connectionStats.byRole.get(role) || 0) + 1
     );
   } else {
@@ -195,16 +195,16 @@ async function emitNewAppointment(appointment, options = {}) {
     const targetRoom2 = `employee_appointments:${appointment.employeeId}`;
     console.log(`📢 [Socket] Emitiendo appointment:new_assigned a salas:`, [targetRoom, targetRoom2]);
     console.log(`📢 [Socket] Cita employeeId: ${appointment.employeeId}`);
-    
+
     // Verificar cuántos sockets están en cada sala
     const room1Sockets = io.sockets.adapter.rooms.get(`employee:${appointment.employeeId}`)?.size || 0;
     const room2Sockets = io.sockets.adapter.rooms.get(`employee_appointments:${appointment.employeeId}`)?.size || 0;
     console.log(`📢 [Socket] Clientes en sala ${targetRoom}: ${room1Sockets}, en ${targetRoom2}: ${room2Sockets}`);
-    
+
     io.to(targetRoom)
       .to(targetRoom2)
       .emit('appointment:new_assigned', apptData);
-    
+
     console.log(`📢 [Socket] Cita ${appointment.id} notificada a empleado ${appointment.employeeId}`);
   } else {
     console.log(`📢 [Socket] No se emitió a empleado - notifyEmployee: ${notifyEmployee}, employeeId: ${appointment.employeeId}`);
