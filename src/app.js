@@ -32,8 +32,9 @@ app.use(cors({
     if (!origin || origin === 'null' || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error('[CORS ERROR] Origen bloqueado:', origin);
-      callback(new Error('No permitido por CORS'));
+      console.warn(`[CORS ADVERTENCIA] Origen desconocido detectado y permitido temporalmente: "${origin}"`);
+      // Permitimos temporalmente cualquier origen para evitar que la APK se rompa (HTTP 500)
+      callback(null, true);
     }
   },
   credentials: true
