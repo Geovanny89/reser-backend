@@ -7,6 +7,7 @@ const socketConfig = {
       const allowedOrigins = [
         "https://reservas.k-dice.com",
         "https://api-reservas.k-dice.com",
+        "https://kdice.app",
         "http://localhost",
         "http://localhost:5173",
         "http://localhost:3000",
@@ -20,8 +21,8 @@ const socketConfig = {
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        console.warn(`[SOCKET CORS] Origen desconocido detectado y permitido: "${origin}"`);
-        callback(null, true);
+        console.error(`[SOCKET CORS ERROR] Origen bloqueado: "${origin}"`);
+        callback(new Error('No permitido por CORS'));
       }
     },
     methods: ['GET', 'POST'],

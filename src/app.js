@@ -17,6 +17,7 @@ app.use(helmet({
 const allowedOrigins = [
   'https://reservas.k-dice.com',
   'https://api-reservas.k-dice.com',
+  'https://kdice.app',
   'http://localhost',
   'http://localhost:5173',
   'http://localhost:3000',
@@ -28,13 +29,11 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Permitir si no hay origen, si es el string 'null' (WebViews), o si está en la lista permitida
     if (!origin || origin === 'null' || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`[CORS ADVERTENCIA] Origen desconocido detectado y permitido temporalmente: "${origin}"`);
-      // Permitimos temporalmente cualquier origen para evitar que la APK se rompa (HTTP 500)
-      callback(null, true);
+      console.error('[CORS ERROR] Origen bloqueado:', origin);
+      callback(new Error('No permitido por CORS'));
     }
   },
   credentials: true
