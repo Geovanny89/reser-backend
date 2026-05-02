@@ -32,11 +32,27 @@ async function checkUserLimit(businessId) {
     }]
   });
 
-  const nonAdminEmployees = allEmployees.filter(emp => 
-    !['admin', 'admin_suc'].includes(emp.User?.role)
-  ).length;
+  let nonAdminEmployees = 0;
+  let branchManagerExonerated = false;
+  const isBranch = business.isBranch === true;
 
-  // El dueño/admin NO cuenta en el límite, solo contamos empleados
+  allEmployees.forEach(emp => {
+    const isGlobalOwner = emp.User?.role === 'admin';
+    const isManagerRole = emp.User?.role === 'admin_suc' || emp.isManager === true;
+    
+    let shouldBeExempt = false;
+
+    if (isGlobalOwner) {
+      shouldBeExempt = true;
+    } else if (isBranch && isManagerRole && !branchManagerExonerated) {
+      shouldBeExempt = true;
+      branchManagerExonerated = true;
+    }
+
+    if (!shouldBeExempt) {
+      nonAdminEmployees++;
+    }
+  });
 
   if (nonAdminEmployees >= maxUsers) {
     return {

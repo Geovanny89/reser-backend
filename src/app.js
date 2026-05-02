@@ -2,12 +2,47 @@ const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
+const helmet  = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// 1. Cabeceras de seguridad
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" } // Permite cargar recursos cruzados (imágenes/pdfs) en el frontend
+}));
+
+// 2. Configuración CORS estricta
+const allowedOrigins = [
+  'https://reservas.k-dice.com',
+  'http://localhost:5173',
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Permitir si no hay origen (postman, scripts locales) o si el origen está en la lista permitida
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('No permitido por CORS'));
+    }
+  },
+  credentials: true
+}));
+
+// 3. Rate Limiting (Aplica a las rutas de la API)
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 500, // Limitar a 500 peticiones por IP cada 15 minutos
+  message: { error: 'Demasiadas peticiones desde esta IP, por favor intenta de nuevo después de 15 minutos.' }
+});
+app.use('/api/', limiter);
+
+// 4. Límites de Payload (ajustado a 10mb para excel e imágenes)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rutas críticas primero para probar
 app.post('/api/test-post', (req, res) => res.json({ ok: true }));

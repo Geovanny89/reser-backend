@@ -2,7 +2,7 @@
  * Gestión de clientes y etiquetas
  */
 
-const { Appointment, Service, Employee, User, Business, ClientTag, ClientTagAssignment, Op } = require('../../models');
+const { Appointment, Service, Employee, User, Business, ClientTag, ClientTagAssignment, ClientProfile, Op } = require('../../models');
 
 /**
  * Obtiene lista de clientes únicos con estadísticas para un negocio
@@ -18,7 +18,7 @@ async function getClientsByBusiness(businessId, search = null) {
     ];
   }
 
-  const [appointments, tagAssignments, availableTags] = await Promise.all([
+  const [appointments, tagAssignments, availableTags, profiles] = await Promise.all([
     Appointment.findAll({
       where,
       include: [
@@ -34,8 +34,18 @@ async function getClientsByBusiness(businessId, search = null) {
     ClientTag.findAll({
       where: { businessId, active: true },
       attributes: ['id', 'name', 'color']
+    }),
+    ClientProfile.findAll({
+      where: { businessId }
     })
   ]);
+
+  // Crear mapa de perfiles (cumpleaños)
+  const profilesByClient = new Map();
+  profiles.forEach(p => {
+    if (p.clientPhone) profilesByClient.set(p.clientPhone, p.birthday);
+    if (p.clientEmail) profilesByClient.set(p.clientEmail, p.birthday);
+  });
 
   // Crear mapa de etiquetas por cliente
   const tagsByClient = new Map();
@@ -67,6 +77,7 @@ async function getClientsByBusiness(businessId, search = null) {
         name: appt.clientName || 'Sin nombre',
         phone: appt.clientPhone || null,
         email: appt.clientEmail || null,
+        birthday: profilesByClient.get(appt.clientPhone) || profilesByClient.get(appt.clientEmail) || null,
         totalAppointments: 0,
         completedAppointments: 0,
         cancelledAppointments: 0,
@@ -210,9 +221,9 @@ async function removeTagFromClient(assignmentId) {
 }
 
 /**
- * Actualiza datos de un cliente en todas sus citas
+ * Actualiza datos de un cliente en todas sus citas y su perfil
  */
-async function updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail) {
+async function updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail, birthday) {
   const where = { businessId };
   
   if (originalPhone) where.clientPhone = originalPhone;
@@ -224,7 +235,33 @@ async function updateClientData(businessId, originalPhone, originalEmail, newNam
   if (newPhone) updateData.clientPhone = newPhone.replace(/\D/g, '');
   if (newEmail) updateData.clientEmail = newEmail.toLowerCase().trim();
 
+  // Actualizar citas
   const [updatedCount] = await Appointment.update(updateData, { where });
+
+  // Actualizar o crear perfil de cliente (cumpleaños)
+  if (birthday !== undefined) {
+    const profileWhere = { businessId };
+    if (originalPhone) profileWhere.clientPhone = originalPhone;
+    else if (originalEmail) profileWhere.clientEmail = originalEmail;
+
+    const [profile, created] = await ClientProfile.findOrCreate({
+      where: profileWhere,
+      defaults: {
+        businessId,
+        clientPhone: newPhone || originalPhone,
+        clientEmail: newEmail || originalEmail,
+        birthday: birthday || null
+      }
+    });
+
+    if (!created) {
+      await profile.update({
+        clientPhone: newPhone || profile.clientPhone,
+        clientEmail: newEmail || profile.clientEmail,
+        birthday: birthday || null
+      });
+    }
+  }
   
   return { updatedCount };
 }

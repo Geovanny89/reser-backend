@@ -478,16 +478,69 @@ async function forceDisconnectAllInstances(reason = 'manual') {
   return disconnectedCount;
 }
 
+/**
+ * Mapa de prefijos de país conocidos.
+ * Si el número ya inicia con alguno de estos, se usa directamente.
+ * Orden importa: los más largos primero para evitar falsos positivos.
+ */
+const KNOWN_COUNTRY_CODES = [
+  { code: '57',  length: 10, startsWith: '3'  },  // Colombia: 10 dígitos, empieza en 3
+  { code: '58',  length: 10, startsWith: '4'  },  // Venezuela: 10 dígitos después de quitar el 0 inicial (04XX → 58 4XX)
+  { code: '51',  length: 9,  startsWith: null },   // Perú: 9 dígitos
+  { code: '52',  length: 10, startsWith: null },   // México: 10 dígitos
+  { code: '54',  length: 10, startsWith: null },   // Argentina: 10 dígitos
+  { code: '55',  length: 11, startsWith: null },   // Brasil: 11 dígitos
+  { code: '593', length: 9,  startsWith: null },   // Ecuador: 9 dígitos
+  { code: '506', length: 8,  startsWith: null },   // Costa Rica: 8 dígitos
+  { code: '1',   length: 10, startsWith: null },   // EEUU/Canadá: 10 dígitos
+];
+
 function formatPhoneForEvolution(phone) {
   if (!phone) return '';
-  // Eliminar todo desde @ en adelante (c.us, s.whatsapp.net, etc.)
+
+  // Eliminar lo que viene desde '@' (formato WhatsApp interno)
   let cleaned = String(phone).split('@')[0];
   // Eliminar todo excepto dígitos
   cleaned = cleaned.replace(/\D/g, '');
-  // Si es número colombiano de 10 dígitos que empieza con 3, agregar prefijo 57
-  if (cleaned.length === 10 && cleaned.startsWith('3')) {
-    cleaned = '57' + cleaned;
+
+  if (!cleaned) return '';
+
+  // ─── CASO 1: Ya tiene prefijo de país ──────────────────────────────────
+  // Si el número tiene más de 11 dígitos, casi seguro ya tiene código de país
+  if (cleaned.length > 11) {
+    return cleaned;
   }
+
+  // ─── CASO 2: Detectar Venezuela (números que empiezan con 0) ──────────
+  // Venezuela: 0414-XXX-XXXX → quitar el 0, agregar 58 → 584XXXXXXXXX
+  if (cleaned.startsWith('0') && cleaned.length === 11) {
+    const withoutLeadingZero = cleaned.substring(1); // Quitar el 0 inicial
+    return '58' + withoutLeadingZero;
+  }
+
+  // ─── CASO 3: Colombia (10 dígitos, empieza con 3) ─────────────────────
+  if (cleaned.length === 10 && cleaned.startsWith('3')) {
+    return '57' + cleaned;
+  }
+
+  // ─── CASO 4: Intentar detectar por longitud y prefijos conocidos ───────
+  for (const country of KNOWN_COUNTRY_CODES) {
+    if (cleaned.length === country.length) {
+      if (!country.startsWith || cleaned.startsWith(country.startsWith)) {
+        return country.code + cleaned;
+      }
+    }
+  }
+
+  // ─── CASO 5: Si ya empieza con un código de país conocido, usarlo tal cual
+  for (const country of KNOWN_COUNTRY_CODES) {
+    if (cleaned.startsWith(country.code)) {
+      return cleaned; // Ya tiene prefijo
+    }
+  }
+
+  // ─── FALLBACK: Devolver como está (podría ser ya un número completo) ───
+  console.warn(`[Evolution API] ⚠️ No se pudo determinar el código de país para: ${phone} (limpiado: ${cleaned})`);
   return cleaned;
 }
 

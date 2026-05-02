@@ -1,52 +1,37 @@
+# Dependencias y entorno
 node_modules
 .env
 .env.example
 src/config/firebase-service-account.json
 
-# WhatsApp / Puppeteer sessions (no subir a git)
+# WhatsApp / Puppeteer sessions
 sessions/
 .wwebjs_cache/
 .wwebjs_auth/
 
-# Git repository
-.git/
-
 # Uploads
 uploads/
 
-# Archivos de error
-*.stackdump
-
-# Scripts de migración/corrección (ya ejecutados)
-fix-*.js
-run-*.js
-migrate_v5.js
-sync-activity-logs.js
-update_appt_db.js
-fix_all_migrations.js
-
-# Scripts de prueba
-load-test.js
-load-test-frontend.js
-
-# Scripts de mantenimiento (opcional)
+# Carpetas de desarrollo/test (No necesarias en VPS)
+load-tests/
+tests/
+test/
+migrations/
 scripts/
-test_*.js
-debug_*.js
+scratch/
+
+# Ignorar todos los archivos JS en la raíz por seguridad/limpieza
+/*.js
+!/ecosystem.config.js
+
+# Permitir archivos de configuración importantes
+!/docker-compose.yml
+!/package.json
+!/package-lock.json
+!/.gitignore
+!/README.md
+
+# Logs y volcados
 *.log
-
-# Documentación (opcional)
-EVOLUTION_API_GUIDE.md
-PM2_SETUP.md
-
-# Scripts temporales de diagnóstico/pruebas (NO subir)
-check-instances.js
-check_enums.js
-fix_postgres.js
-get-test-ids.js
-get_real_ids.js
-migrate_referrals.js
-sync_db.js
-reset-whatsapp-instances.js
-truncar.js
-test_fetch.js
+*.stackdump
+*.sql

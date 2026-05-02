@@ -61,18 +61,32 @@ async function registerCashMovementForAppointment(appointment, userId) {
     }
 
     // Crear movimiento de caja
+    const amountToRecord = (appointment.finalPrice !== null && appointment.finalPrice !== undefined) 
+      ? appointment.finalPrice 
+      : (appointment.Service?.price || 0);
+
+    // Construir descripción incluyendo servicios extra
+    let descriptionText = `Pago de cita: ${appointment.Service?.name || 'Servicio'}`;
+    
+    if (appointment.extraServices && Array.isArray(appointment.extraServices) && appointment.extraServices.length > 0) {
+      const extrasText = appointment.extraServices.map(s => s.name).join(', ');
+      descriptionText += ` (+ ${extrasText})`;
+    }
+    
+    descriptionText += ` - ${appointment.clientName}`;
+
     await CashMovement.create({
       businessId: appointment.businessId,
       shiftId: activeShift.id,
       appointmentId: appointment.id,
       type: 'income',
-      amount: appointment.finalPrice || appointment.Service?.price || 0,
+      amount: amountToRecord,
       paymentMethod: appointment.paymentMethod,
-      description: `Pago de cita: ${appointment.Service?.name || 'Servicio'} - ${appointment.clientName}`,
+      description: descriptionText,
       createdBy: userId
     });
 
-    console.log(`[Cash Register] Movimiento registrado para cita ${appointment.id}: $${appointment.finalPrice || appointment.Service?.price}`);
+    console.log(`[Cash Register] Movimiento registrado para cita ${appointment.id}: $${amountToRecord}`);
   } catch (error) {
     console.error('[Cash Register] Error registrando movimiento de caja:', error.message);
     // No lanzar error para no interrumpir el flujo principal
@@ -85,7 +99,8 @@ async function registerCashMovementForAppointment(appointment, userId) {
 async function createAppointment(data, user) {
   const {
     businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, address,
-    startTime, notes, status, additionalEmployeeIds = [], depositAmount, depositAccepted
+    startTime, notes, status, additionalEmployeeIds = [], depositAmount, depositAccepted,
+    extraServices = []
   } = data;
 
   console.log('[Create Appointment] Datos recibidos:', {
@@ -154,7 +169,13 @@ async function createAppointment(data, user) {
     startTimeWithOffset = startTime + '-05:00'; // Colombia UTC-5
   }
   const start = new Date(startTimeWithOffset);
-  const end = new Date(start.getTime() + service.durationMin * 60000);
+  
+  // Calcular duración total (Principal + Extras)
+  const mainDuration = parseInt(service.durationMin || 0);
+  const extrasDuration = (extraServices || []).reduce((sum, s) => sum + (parseInt(s.durationMin) || 0), 0);
+  const totalDuration = mainDuration + extrasDuration;
+
+  const end = new Date(start.getTime() + totalDuration * 60000);
   console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString(), originalStartTime: startTime });
 
   // Validar que la hora no sea en el pasado (con margen de 5 minutos)
@@ -177,14 +198,14 @@ async function createAppointment(data, user) {
         employeeId,
         businessId,
         status: { [Op.notIn]: ['cancelled'] },
-        startTime: { [Op.lt]: end },
-        endTime: { [Op.gt]: start },
+        startTime: { [Op.lt]: new Date(end.getTime() - 10000) }, // Margen de 10 seg
+        endTime: { [Op.gt]: new Date(start.getTime() + 10000) }, // Margen de 10 seg
       }
     });
     if (conflict) throw new Error('El empleado ya tiene una cita en ese horario');
   }
 
-  // CALCULAR PRECIO CON PROMOCIONES
+  // CALCULAR PRECIO CON PROMOCIONES Y SERVICIOS EXTRA
   const today = new Date().toISOString().split('T')[0];
   const promotion = await Promotion.findOne({
     where: {
@@ -200,14 +221,17 @@ async function createAppointment(data, user) {
     order: [['applyToAllServices', 'ASC']] // Priorizar promociones específicas sobre las generales
   });
 
-  const basePrice = parseFloat(service.price || 0);
+  const mainPrice = parseFloat(service.price || 0);
+  const extrasPrice = (extraServices || []).reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0);
+  const basePrice = mainPrice + extrasPrice;
+  
   let discountApplied = 0;
   let promotionId = null;
 
   if (promotion) {
     promotionId = promotion.id;
     if (promotion.discountType === 'percentage') {
-      discountApplied = basePrice * (parseFloat(promotion.discountValue) / 100);
+      discountApplied = mainPrice * (parseFloat(promotion.discountValue) / 100);
     } else {
       discountApplied = parseFloat(promotion.discountValue);
     }
@@ -239,8 +263,8 @@ async function createAppointment(data, user) {
           employeeId: addEmpId,
           businessId,
           status: { [Op.notIn]: ['cancelled'] },
-          startTime: { [Op.lt]: end },
-          endTime: { [Op.gt]: start },
+          startTime: { [Op.lt]: new Date(end.getTime() - 10000) },
+          endTime: { [Op.gt]: new Date(start.getTime() + 10000) },
         }
       });
       if (addEmpConflict && !isExpress) {
@@ -273,7 +297,8 @@ async function createAppointment(data, user) {
     basePrice,
     discountApplied,
     finalPrice,
-    promotionId
+    promotionId,
+    extraServices: extraServices || []
   };
 
   const appointment = await Appointment.create(appointmentData);
@@ -485,7 +510,11 @@ function generateReferenceCode() {
 /**
  * Actualiza el estado de una cita
  */
-async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMethod = null) {
+async function updateAppointmentStatus(appointmentId, newStatus, user, options = {}) {
+  // Manejar compatibilidad si options es solo paymentMethod (string)
+  const opt = typeof options === 'string' ? { paymentMethod: options } : options;
+  const { paymentMethod, discountApplied, finalPrice, additionalAmount, additionalNote } = opt;
+
   const appointment = await Appointment.findByPk(appointmentId, {
     include: [
       { model: Service },
@@ -512,34 +541,58 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, paymentMe
       // Si viene de confirmed/pending, marcar que ya atendieron
       break;
     case APPOINTMENT_STATUS.DONE:
-      // Calcular y guardar el precio final si no está calculado
-      if (!appointment.finalPrice) {
+      // Si vienen valores explícitos desde el modal de completar, usarlos
+      if (discountApplied !== undefined) updateData.discountApplied = parseFloat(discountApplied);
+      if (finalPrice !== undefined) updateData.finalPrice = parseFloat(finalPrice);
+      if (additionalAmount !== undefined) updateData.additionalAmount = parseFloat(additionalAmount);
+      if (additionalNote !== undefined) updateData.additionalNote = additionalNote;
+
+      // Calcular precio final si no viene explícitamente y no está guardado
+      if (updateData.finalPrice === undefined && !appointment.finalPrice) {
         const basePrice = parseFloat(appointment.basePrice || appointment.Service?.price || 0);
-        // Sumar cargos adicionales desde el array additionalCharges
+        
+        // Sumar servicios extra guardados en la cita
+        const extraServices = updateData.extraServices || appointment.extraServices || [];
+        const extrasAmount = extraServices.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0);
+        
+        // Sumar cargos adicionales antiguos
         const additionalCharges = appointment.additionalCharges || [];
-        const additionalAmount = additionalCharges.reduce((sum, charge) => sum + parseFloat(charge.amount || 0), 0);
-        const discountApplied = parseFloat(appointment.discountApplied || 0);
-        const finalPrice = basePrice + additionalAmount - discountApplied;
-        updateData.finalPrice = finalPrice;
-        console.log(`[updateAppointmentStatus] Calculated finalPrice for appointment ${appointment.id}: ${finalPrice} (base: ${basePrice}, additional: ${additionalAmount}, discount: ${discountApplied})`);
-      }
-      // Guardar método de pago si se proporcionó
-      if (paymentMethod && ['cash', 'transfer'].includes(paymentMethod)) {
-        updateData.paymentMethod = paymentMethod;
-        console.log(`[updateAppointmentStatus] Payment method saved: ${paymentMethod}`);
+        const additionalAmountSum = additionalCharges.reduce((sum, charge) => sum + parseFloat(charge.amount || 0), 0);
+        
+        // Monto adicional directo
+        const directAdditional = parseFloat(updateData.additionalAmount || appointment.additionalAmount || 0);
+        
+        const discount = parseFloat(updateData.discountApplied !== undefined ? updateData.discountApplied : (appointment.discountApplied || 0));
+        
+        const calculatedFinalPrice = basePrice + extrasAmount + additionalAmountSum + directAdditional - discount;
+        updateData.finalPrice = Math.max(0, calculatedFinalPrice);
+        
+        console.log(`[updateAppointmentStatus] Calculated finalPrice for appointment ${appointment.id}: ${updateData.finalPrice}`);
       }
 
-      // Registrar movimiento en caja si es pago en efectivo o transferencia
-      if (paymentMethod === 'cash' || paymentMethod === 'transfer') {
-        setImmediate(() => {
-          setTimeout(async () => {
-            try {
-              await registerCashMovementForAppointment(appointment, user?.id);
-            } catch (err) {
-              console.error('[Cash Register] Error en registro automático:', err.message);
-            }
-          }, 500); // Pequeño delay para asegurar que la cita se actualizó primero
-        });
+      // Guardar método de pago si se proporcionó
+      const finalPaymentMethod = paymentMethod || appointment.paymentMethod;
+      if (finalPaymentMethod && ['cash', 'transfer'].includes(finalPaymentMethod)) {
+        updateData.paymentMethod = finalPaymentMethod;
+        console.log(`[updateAppointmentStatus] Payment method saved: ${finalPaymentMethod}`);
+      }
+
+      // Registrar movimiento en caja si es pago en efectivo o transferencia (SIN DELAY)
+      if (updateData.paymentMethod === 'cash' || updateData.paymentMethod === 'transfer') {
+        try {
+          // Usar los datos que ya tenemos para asegurar consistencia
+          const currentAppt = await Appointment.findByPk(appointmentId, { include: [{ model: Service }] });
+          // Fusionar los cambios pendientes para el registro en caja
+          const apptForRegister = { 
+            ...currentAppt.toJSON(), 
+            ...updateData,
+            Service: currentAppt.Service 
+          };
+          await registerCashMovementForAppointment(apptForRegister, user?.id);
+          console.log(`[Cash Register] Registro inmediato exitoso para cita ${appointmentId}`);
+        } catch (err) {
+          console.error('[Cash Register] Error en registro inmediato:', err.message);
+        }
       }
 
       // Enviar comprobante de pago y solicitud de calificación (en background)

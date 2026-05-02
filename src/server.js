@@ -149,6 +149,34 @@ function startSubscriptionCheck() {
   setInterval(checkExpiringSubscriptions, 24 * 60 * 60 * 1000);
 }
 
+/**
+ * Tarea programada para enviar mensajes de cumpleaños (cada hora)
+ */
+function startBirthdayCron() {
+  console.log('🎂 Iniciando monitor de cumpleaños');
+  const { processBirthdays } = require('./scripts/birthdayCron');
+
+  // Ejecutar inmediatamente al iniciar
+  processBirthdays();
+
+  // Y luego revisar cada hora (se ejecutará si son las 8 AM COL)
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const colombiaOffset = -5 * 60 * 60 * 1000;
+      const colombiaTime = new Date(now.getTime() + colombiaOffset);
+      const hour = colombiaTime.getUTCHours();
+
+      // Ejecutar entre las 8:00 AM y 9:00 AM Colombia
+      if (hour === 8) {
+        await processBirthdays();
+      }
+    } catch (err) {
+      console.error('[BirthdayCron] Error en ejecución programada:', err.message);
+    }
+  }, 60 * 60 * 1000);
+}
+
 async function checkExpiringSubscriptions() {
   try {
     const now = new Date();
@@ -338,6 +366,9 @@ async function start() {
       // Iniciar servicio de alertas para citas pendientes no atendidas
       startPendingAlertService();
       console.log('🔔 Servicio de alertas de citas pendientes iniciado');
+
+      // Iniciar monitor de cumpleaños
+      startBirthdayCron();
 
       // Iniciar instancias de WhatsApp (crear promesa para que scheduler espere)
       const whatsappReadyPromise = initWhatsAppManager().then(count => {

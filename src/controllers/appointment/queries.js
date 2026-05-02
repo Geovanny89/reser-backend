@@ -9,7 +9,7 @@ const { colombiaDateFromString } = require('./utils');
  * Obtiene citas por negocio con filtros de fecha
  */
 async function getAppointmentsByBusiness(businessId, filters = {}) {
-  const { date, startDate, endDate, employeeId, limit = 100, offset = 0 } = filters;
+  const { date, startDate, endDate, employeeId, limit = 5000, offset = 0 } = filters;
   const where = { businessId };
 
   if (employeeId) {

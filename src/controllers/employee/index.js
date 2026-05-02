@@ -29,6 +29,7 @@ module.exports = {
   invite: crud.invite,
   update: crud.update,
   remove: crud.remove,
+  resetPassword: crud.resetPassword,
   
   // Agenda
   getTodayAppointments: schedule.getTodayAppointments,

@@ -35,6 +35,14 @@ async function updateDatabase() {
       }
     }
 
+    // 2.5 Agregar columna extraServices a Appointments
+    try {
+      await sequelize.query('ALTER TABLE "Appointments" ADD COLUMN IF NOT EXISTS "extraServices" JSON DEFAULT \'[]\';');
+      console.log('✅ Columna "extraServices" verificada/agregada en Appointments.');
+    } catch (e) {
+      console.error('❌ Error al agregar extraServices:', e.message);
+    }
+
     // 3. Agregar columnas de trazabilidad para caja (cash_movements)
     try {
       await sequelize.query('ALTER TABLE "cash_movements" ADD COLUMN IF NOT EXISTS "isReversal" BOOLEAN NOT NULL DEFAULT false;');

@@ -43,6 +43,7 @@ module.exports = (sequelize) => {
     paymentMethod: { type: DataTypes.ENUM('cash', 'transfer'), comment: 'Método de pago: efectivo o transferencia' },
     whatsappReminderSent: { type: DataTypes.BOOLEAN, defaultValue: false, comment: 'Indica si ya se envió el recordatorio por WhatsApp' },
     extendedDuration: { type: DataTypes.INTEGER, defaultValue: 0, comment: 'Minutos adicionales extendidos durante la cita' },
+    extraServices: { type: DataTypes.JSON, defaultValue: [], comment: 'Lista de servicios adicionales: [{serviceId, name, price, durationMin}]' },
     referenceCode: { type: DataTypes.STRING(8), unique: true, comment: 'Código único de 6 caracteres para referencia en WhatsApp (ej: ABC123)' },
 
     // === Campo para flujo de mensajes automáticos (independiente del status principal) ===

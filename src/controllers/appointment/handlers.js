@@ -106,8 +106,8 @@ async function create(req, res) {
 async function updateStatus(req, res) {
   try {
     const { status, paymentMethod } = req.body;
-    const appointment = await updateAppointmentStatus(req.params.id, status, req.user, paymentMethod);
-    res.json(appointment);
+    const updated = await updateAppointmentStatus(req.params.id, status, req.user, req.body);
+    res.json(updated);
   } catch (e) {
     console.error('[updateStatus] Error:', e);
     res.status(400).json({ error: e.message });

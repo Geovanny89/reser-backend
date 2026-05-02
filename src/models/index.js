@@ -31,6 +31,8 @@ const CashRegisterShift = require('./CashRegisterShift')(sequelize);
 const CashMovement = require('./CashMovement')(sequelize);
 const AppointmentReminderEvent = require('./AppointmentReminderEvent')(sequelize);
 const PlatformReview = require('./PlatformReview')(sequelize);
+const ClientProfile = require('./ClientProfile')(sequelize);
+const BirthdayTemplate = require('./BirthdayTemplate')(sequelize);
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -186,6 +188,14 @@ Business.hasMany(AppointmentReminderEvent, { foreignKey: 'businessId', as: 'Remi
 PlatformReview.belongsTo(Business, { foreignKey: 'businessId', as: 'Business' });
 Business.hasMany(PlatformReview, { foreignKey: 'businessId', as: 'PlatformReviews' });
 
+// ClientProfile — Business
+ClientProfile.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(ClientProfile, { foreignKey: 'businessId', as: 'ClientProfiles' });
+
+// BirthdayTemplate — Business
+BirthdayTemplate.belongsTo(Business, { foreignKey: 'businessId' });
+Business.hasMany(BirthdayTemplate, { foreignKey: 'businessId', as: 'BirthdayTemplates' });
+
 const { Op } = require('sequelize');
 
-module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation, CashRegisterShift, CashMovement, AppointmentReminderEvent, PlatformReview };
+module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation, CashRegisterShift, CashMovement, AppointmentReminderEvent, PlatformReview, ClientProfile, BirthdayTemplate };

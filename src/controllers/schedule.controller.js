@@ -1,4 +1,5 @@
 const { Schedule, Employee, User } = require('../models');
+const { Op } = require('sequelize');
 
 exports.getByEmployee = async (req, res) => {
   try {
@@ -73,5 +74,47 @@ exports.remove = async (req, res) => {
     res.json({ message: 'Horario eliminado' });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+};
+
+exports.createBulk = async (req, res) => {
+  try {
+    const { employeeId, businessId, days, startTime, endTime, type, description, includeLunch, lunchStart, lunchEnd } = req.body;
+    
+    if (!days || !Array.isArray(days) || days.length === 0) {
+      return res.status(400).json({ error: 'Selecciona al menos un día' });
+    }
+
+    const records = [];
+    for (const day of days) {
+      // Main schedule block
+      records.push({
+        employeeId, 
+        businessId,
+        dayOfWeek: parseInt(day),
+        startTime, 
+        endTime,
+        type: type || 'work',
+        description: description || null,
+      });
+
+      // Optional lunch block (only for work type)
+      if (type === 'work' && includeLunch && lunchStart && lunchEnd) {
+        records.push({
+          employeeId, 
+          businessId,
+          dayOfWeek: parseInt(day),
+          startTime: lunchStart,
+          endTime: lunchEnd,
+          type: 'lunch',
+          description: 'Almuerzo',
+        });
+      }
+    }
+
+    const created = await Schedule.bulkCreate(records);
+    res.status(201).json(created);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 };

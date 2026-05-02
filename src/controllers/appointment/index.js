@@ -20,6 +20,7 @@ const clients = require('./clients');
 const public = require('./public');
 const availability = require('./availability');
 const technical = require('./technical');
+const birthday = require('./birthday');
 
 // Re-exportar todo para compatibilidad
 module.exports = {
@@ -110,8 +111,35 @@ module.exports = {
   updateClient: async (req, res) => {
     try {
       const { businessId } = req.query;
-      const { originalPhone, originalEmail, newName, newPhone, newEmail } = req.body;
-      const result = await clients.updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail);
+      const { originalPhone, originalEmail, newName, newPhone, newEmail, birthday } = req.body;
+      const result = await clients.updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail, birthday);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+  
+  // Handlers de cumpleaños
+  getBirthdayTemplates: async (req, res) => {
+    try {
+      const { businessId } = req.query;
+      const result = await birthday.getTemplates(businessId);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+  saveBirthdayTemplate: async (req, res) => {
+    try {
+      const result = await birthday.saveTemplate(req.body);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+  deleteBirthdayTemplate: async (req, res) => {
+    try {
+      const result = await birthday.deleteTemplate(req.params.id);
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: e.message });

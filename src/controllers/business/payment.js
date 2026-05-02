@@ -284,16 +284,33 @@ exports.getSubscriptionInfo = async (req, res) => {
     });
 
     let employeeCount = 0;
+    let branchManagerExonerated = false;
+
     employees.forEach(emp => {
-      const isOwner = emp.User?.role === 'admin';
-      const isBranchManager = emp.isManager === true;
+      const isGlobalOwner = emp.User?.role === 'admin';
+      const isBranch = business.isBranch === true;
+      // Es gerente si tiene el flag isManager o si su rol es admin_suc
+      const isManagerRole = emp.User?.role === 'admin_suc' || emp.isManager === true;
       
-      // Solo exoneramos si es el dueño global o si es el gerente marcado de la sucursal
-      if (isOwner || isBranchManager) {
-        console.log(`[getSubscriptionInfo] EXCLUIDO: ${emp.id} (Owner:${isOwner}, Manager:${isBranchManager})`);
+      let shouldBeExempt = false;
+
+      // REGLA:
+      // 1. El dueño global (admin) NUNCA cuenta (ya sea en padre o sucursal)
+      // 2. En una SUCURSAL, el PRIMER gerente (admin_suc/isManager) es GRATIS.
+      // 3. En el negocio PADRE, los admin_suc SÍ cuentan (solo el dueño es gratis).
+      
+      if (isGlobalOwner) {
+        shouldBeExempt = true;
+      } else if (isBranch && isManagerRole && !branchManagerExonerated) {
+        shouldBeExempt = true;
+        branchManagerExonerated = true;
+      }
+      
+      if (shouldBeExempt) {
+        console.log(`[getSubscriptionInfo] EXCLUIDO: ${emp.id} (Owner:${isGlobalOwner}, BranchManagerExempt:${shouldBeExempt && !isGlobalOwner})`);
       } else {
         employeeCount++;
-        console.log(`[getSubscriptionInfo] CONTADO: ${emp.id} (Rol:${emp.User?.role})`);
+        console.log(`[getSubscriptionInfo] CONTADO: ${emp.id} (Rol:${emp.User?.role}, isManager:${emp.isManager})`);
       }
     });
 

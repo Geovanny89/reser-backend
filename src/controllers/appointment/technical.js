@@ -260,8 +260,8 @@ async function transferAppointment(appointmentId, newEmployeeId, newStartTime, u
         employeeId: newEmployeeId,
         id: { [Op.ne]: appointmentId },
         status: { [Op.notIn]: ['cancelled'] },
-        startTime: { [Op.lt]: endTime },
-        endTime: { [Op.gt]: startTime },
+        startTime: { [Op.lt]: new Date(endTime.getTime() - 10000) },
+        endTime: { [Op.gt]: new Date(startTime.getTime() + 10000) },
       }
     });
 

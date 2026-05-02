@@ -39,6 +39,7 @@ router.post('/',                     role('admin', 'admin_suc', 'superadmin'), c
 router.post('/invite',               role('admin', 'admin_suc', 'superadmin'), ctrl.invite);
 router.put('/:id',                   role('admin', 'admin_suc', 'superadmin'), ctrl.update);
 router.delete('/:id',                role('admin', 'admin_suc', 'superadmin'), ctrl.remove);
+router.post('/:id/reset-password',   role('admin', 'admin_suc', 'superadmin'), ctrl.resetPassword);
 
 // ========== RUTAS PARA GESTIÓN DE SERVICIOS POR EMPLEADO ==========
 

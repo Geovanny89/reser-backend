@@ -207,6 +207,11 @@ router.post('/client-tags/assign', role('admin', 'admin_suc', 'superadmin'), ctr
 router.delete('/client-tags/assign/:assignmentId', role('admin', 'admin_suc', 'superadmin'), ctrl.removeTagFromClient);
 router.get('/business/:businessId', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 
+// Cumpleaños
+router.get('/birthday-templates', role('admin', 'admin_suc', 'superadmin'), ctrl.getBirthdayTemplates);
+router.post('/birthday-templates', role('admin', 'admin_suc', 'superadmin'), ctrl.saveBirthdayTemplate);
+router.delete('/birthday-templates/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.deleteBirthdayTemplate);
+
 /**
  * @swagger
  * /appointments/my:

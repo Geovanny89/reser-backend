@@ -42,9 +42,10 @@ exports.getFinancialReport = async (req, res) => {
       }
     });
 
-    const totalIncome = appointments.reduce((sum, apt) => 
-      sum + parseFloat(apt.finalPrice || apt.basePrice || 0), 0
-    );
+    const totalIncome = appointments.reduce((sum, apt) => {
+      const price = (apt.finalPrice !== null && apt.finalPrice !== undefined) ? apt.finalPrice : (apt.basePrice || 0);
+      return sum + parseFloat(price);
+    }, 0);
     const appointmentCount = appointments.length;
 
     // === GASTOS: Solo si el módulo está habilitado ===
@@ -214,7 +215,7 @@ exports.getFinancialReport = async (req, res) => {
             id: a.id,
             date: a.startTime,
             client: a.clientName,
-            amount: parseFloat(a.finalPrice || a.basePrice || 0)
+            amount: parseFloat((a.finalPrice !== null && a.finalPrice !== undefined) ? a.finalPrice : (a.basePrice || 0))
           }))
         },
         expenses: {

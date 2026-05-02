@@ -9,6 +9,7 @@ const { sendEmail } = require('../config/email');
 const { sendPushNotification } = require('./pushNotificationService');
 const { getRandomReminderTemplate } = require('./evolutionService');
 const { scheduleMessage, isBusinessHours } = require('./schedulerService');
+const messageGenerators = require('./reminder/message.generators');
 const { Op } = require('sequelize');
 
 const REMINDER_24H_MS = 24 * 60 * 60 * 1000; // 24 horas
@@ -150,22 +151,9 @@ async function sendReminders() {
         let msgType = 'reminder';
         
         if (isConfirmed) {
-          // Cita YA confirmada: recordatorio amable
-          const templates = [
-            `⏰ *${appt.clientName}*, te esperamos en 2 horas (${timeStr}) para tu cita de *${appt.Service?.name || 'Servicio'}* en *${appt.Business?.name || 'Negocio'}*. ¡Todo listo! 🗓️`,
-            `🎯 *${appt.clientName}*, recordatorio: tu cita confirmada es en *2 horas* (${timeStr}) en *${appt.Business?.name || 'Negocio'}*. ¡Nos vemos pronto! 😊`,
-            `✅ *${appt.clientName}*, nos vemos en 2 horas (${timeStr}) para *${appt.Service?.name || 'Servicio'}*. ¡Gracias por confirmar! 🗓️`
-          ];
-          text = templates[Math.floor(Math.random() * templates.length)];
+          text = messageGenerators.generateConfirmedReminder2h(appt, timeStr);
         } else {
-          // Cita NO confirmada: pedir confirmación
-          const template = getRandomReminderTemplate();
-          const intro = template.intro
-            .replace('{name}', appt.clientName)
-            .replace('{service}', appt.Service?.name || 'Servicio')
-            .replace('{business}', appt.Business?.name || 'Negocio')
-            .replace('{time}', timeStr);
-          text = `${intro}\n\n${template.question}\nResponde *SI* para CONFIRMAR ✅\nResponde *NO* para CANCELAR ❌`;
+          text = messageGenerators.generateUnconfirmedReminder2h(appt, timeStr);
           msgType = 'confirmation';
         }
 
@@ -222,19 +210,7 @@ async function sendReminders() {
         const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
         const timeStr = new Date(appt.startTime).toLocaleTimeString('es-CO', { timeStyle: 'short', timeZone: 'America/Bogota' });
         
-        // Recordatorio amable con diferentes plantillas
-        const templates = isConfirmed 
-          ? [
-              `⏰ *${appt.clientName}*, te esperamos en 1 hora (${timeStr}) para tu cita de *${appt.Service?.name || 'Servicio'}* en *${appt.Business?.name || 'Negocio'}*. ¡Todo listo! 🗓️`,
-              `🎯 *${appt.clientName}*, recordatorio: tu cita confirmada es en *1 hora* (${timeStr}) en *${appt.Business?.name || 'Negocio'}*. ¡Nos vemos pronto! 😊`,
-              `✅ *${appt.clientName}*, nos vemos en 1 hora (${timeStr}) para *${appt.Service?.name || 'Servicio'}*. ¡Gracias por confirmar! 🗓️`
-            ]
-          : [
-              `⏰ *${appt.clientName}*, te esperamos en 1 hora (${timeStr}) para tu cita de *${appt.Service?.name || 'Servicio'}* en *${appt.Business?.name || 'Negocio'}*. ¡No faltes! 🗓️`,
-              `🎯 *${appt.clientName}*, recordatorio: tu cita es en *1 hora* (${timeStr}) en *${appt.Business?.name || 'Negocio'}*. ¡Te esperamos! 😊`,
-              `📅 *${appt.clientName}*, nos vemos en 1 hora (${timeStr}) para *${appt.Service?.name || 'Servicio'}*. ¡Gracias por tu puntualidad! 🗓️`
-            ];
-        const text = templates[Math.floor(Math.random() * templates.length)];
+        const text = messageGenerators.generateReminder1h(appt, timeStr, isConfirmed);
 
         await scheduleMessage({
           businessId: appt.businessId,
@@ -351,16 +327,9 @@ async function processReminder24h(appt) {
       let msgType = 'reminder';
       
       if (isConfirmed) {
-        // Cita YA confirmada: recordatorio amable con diferentes plantillas
-        const templates = [
-          `👋 Hola *${appt.clientName}*, te esperamos mañana a las *${timeStr}* para tu cita de *${serviceName}* en *${businessName}*. ¡Gracias por confirmar! 🗓️`,
-          `🎯 *${appt.clientName}*, todo listo para mañana a las *${timeStr}*. Tu cita de *${serviceName}* en *${businessName}* está confirmada. ¡Te esperamos! 😊`,
-          `✅ Confirmado *${appt.clientName}*! Nos vemos mañana a las *${timeStr}* para tu cita de *${serviceName}* en *${businessName}*. 🗓️`
-        ];
-        text = templates[Math.floor(Math.random() * templates.length)];
+        text = messageGenerators.generateConfirmedReminder24h(appt, timeStr);
       } else {
-        // Cita NO confirmada: pedir confirmación
-        text = `👋 Hola *${appt.clientName}*, tienes una cita para *${serviceName}* mañana a las *${timeStr}* en *${businessName}*.\n\n¿Confirmas tu asistencia?\nResponde: *SI* para confirmar\nResponde: *NO* para cancelar`;
+        text = messageGenerators.generateUnconfirmedReminder24h(appt, timeStr);
         msgType = 'confirmation';
       }
 
@@ -433,16 +402,9 @@ async function processReminder12h(appt) {
       let msgType = 'reminder';
       
       if (isConfirmed) {
-        // Cita YA confirmada: recordatorio amable con diferentes plantillas
-        const templates = [
-          `👋 Hola *${appt.clientName}*, te esperamos ${dayText} para tu cita de *${serviceName}* en *${businessName}*. ¡Gracias por confirmar! 🗓️`,
-          `🎯 *${appt.clientName}*, todo listo para tu cita de *${serviceName}* ${dayText} en *${businessName}*. ¡Te esperamos con gusto! 😊`,
-          `✅ ¡Confirmado *${appt.clientName}*! Tu cita de *${serviceName}* es ${dayText} en *${businessName}*. ¡Nos vemos pronto! 🗓️`
-        ];
-        text = templates[Math.floor(Math.random() * templates.length)];
+        text = messageGenerators.generateConfirmedReminder12h(appt, dayText);
       } else {
-        // Cita NO confirmada: volver a pedir confirmación
-        text = `🌻 *${appt.clientName}*, recordatorio: cita de *${serviceName}* ${dayText} en *${businessName}*.\n\n¿Confirmas?\nResponde *SI* para CONFIRMAR ✅\nResponde *NO* para CANCELAR ❌`;
+        text = messageGenerators.generateUnconfirmedReminder12h(appt, dayText);
         msgType = 'confirmation';
       }
 
@@ -520,17 +482,8 @@ async function processReminder(appt, timeLabel, fieldToUpdate) {
       let text;
       let msgType = 'reminder';
       
-      if (is2h && !isConfirmed) {
-        // Última oportunidad para confirmar (2 horas antes)
-        text = `⏰ *${appt.clientName}*, tu cita para *${serviceName}* en *${businessName}* es en *2 horas* (${timeStr}).\n\n⚠️ *IMPORTANTE:* Aún no has confirmado tu asistencia.\n\nResponde *SI* para confirmar ahora\nResponde *NO* si no podrás asistir\n\n¡Tu confirmación es importante! 🗓️`;
-        msgType = 'confirmation';
-      } else if (is1h && !isConfirmed) {
-        // 1 hora antes sin confirmar: recordatorio de cortesía (ya es tarde para cancelar formalmente)
-        text = `⏰ *${appt.clientName}*, recordatorio: tu cita para *${serviceName}* en *${businessName}* es en *1 hora* (${timeStr}).\n\nNota: Aún no has confirmado tu asistencia. Por favor llega puntual.\n\n¡Te esperamos! 🗓️`;
-      } else {
-        // Confirmada o cualquier otro caso: recordatorio normal
-        text = `⏰ *${appt.clientName}*, tu cita para *${serviceName}* en *${businessName}* es *${timeLabel}* (${timeStr}).\n\n¡Te esperamos! 🗓️`;
-      }
+      text = messageGenerators.generateGenericReminder(appt, timeLabel, timeStr, is2h, isConfirmed);
+      if (is2h && !isConfirmed) msgType = 'confirmation';
 
       await scheduleMessage({
         businessId: appt.businessId,
@@ -607,11 +560,7 @@ async function processReferenceMessage(appt) {
       const API_URL = process.env.API_URL || 'https://api-reservas.k-dice.com';
       const statusUrl = `${API_URL}/api/appointments/${appt.id}/status`;
 
-      const text = `🕐 *${appt.clientName}*, es la hora de tu cita para *${serviceName}* en *${businessName}* con *${employeeName}*.
-
-✅ Cita confirmada - ${startTimeStr}
-
-¡Te esperamos! 💫`;
+      const text = messageGenerators.generateReferenceMessage(appt, startTimeStr);
 
       // Programar mensaje en BD (se enviará cuando el scheduler procese dentro del horario 7am-8pm)
       await scheduleMessage({

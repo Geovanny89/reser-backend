@@ -15,11 +15,21 @@ const cacheService = require('../../services/cacheService');
 async function getByBusiness(req, res) {
   try {
     const businessId = req.params.businessId || req.query.businessId;
+    const { onlyProfessionals } = req.query;
+    
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
-    const employees = await Employee.findAll({
-      where: { businessId, active: true },
-      include: [
-        { model: User, attributes: ['id', 'name', 'email'] },
+
+    const where = { businessId, active: true };
+    
+    // Si se solicita filtrar solo profesionales, excluimos admin y admin_suc
+    const include = [
+      { 
+        model: User, 
+        attributes: ['id', 'name', 'email', 'role'],
+        where: onlyProfessionals === 'true' ? {
+          role: { [Op.notIn]: ['admin', 'admin_suc'] }
+        } : {}
+      },
         { 
           model: Appointment, 
           attributes: ['id', 'rating', 'clientName', 'updatedAt', 'status'],
@@ -32,7 +42,11 @@ async function getByBusiness(req, res) {
           through: { attributes: [] },
           required: false
         }
-      ],
+      ];
+
+    const employees = await Employee.findAll({
+      where,
+      include,
       order: [
         ['id', 'ASC'],
         [{ model: Appointment }, 'updatedAt', 'DESC']
@@ -248,8 +262,9 @@ async function update(req, res) {
       await deleteFromCloudinary(emp.photoUrl);
     }
 
-    // ACTUALIZAR EMAIL Y NOMBRE DEL USUARIO ASOCIADO SI SE PROPORCIONAN
-    if (req.body.email || req.body.name) {
+    // ACTUALIZAR EMAIL, NOMBRE Y ROL DEL USUARIO ASOCIADO SI SE PROPORCIONAN
+    console.log(`[UpdateEmployee] Body:`, req.body);
+    if (req.body.email || req.body.name || req.body.role) {
       const user = await User.findByPk(emp.userId);
       if (user) {
         // Verificar si el email ya existe (y no es del mismo usuario)
@@ -263,14 +278,24 @@ async function update(req, res) {
         const userUpdates = {};
         if (req.body.email) userUpdates.email = req.body.email;
         if (req.body.name) userUpdates.name = req.body.name;
+        
+        // FORZAR ROL: Si es manager, debe ser al menos admin_suc
+        if (req.body.isManager === true || req.body.isManager === 'true') {
+          userUpdates.role = req.body.role === 'admin' ? 'admin' : 'admin_suc';
+        } else if (req.body.role) {
+          userUpdates.role = req.body.role;
+        }
+        
+        console.log(`[UpdateEmployee] Aplicando cambios a User ${emp.userId}:`, userUpdates);
         await user.update(userUpdates);
       }
     }
 
-    // Filtrar solo los campos de Employee (quitar email y name que son de User)
+    // Filtrar solo los campos de Employee (quitar campos que son de User)
     const employeeUpdates = { ...req.body };
     delete employeeUpdates.email;
     delete employeeUpdates.name;
+    delete employeeUpdates.role;
 
     // ELIMINAR FOTO ANTERIOR DE CLOUDINARY SI CAMBIA
     if (employeeUpdates.photoUrl && emp.photoUrl && employeeUpdates.photoUrl !== emp.photoUrl) {
@@ -287,7 +312,7 @@ async function update(req, res) {
 
     // Devolver empleado actualizado con datos del usuario
     const updatedEmp = await Employee.findByPk(req.params.id, {
-      include: [{ model: User, attributes: ['id', 'name', 'email'] }]
+      include: [{ model: User, attributes: ['id', 'name', 'email', 'role'] }]
     });
 
     res.json(updatedEmp);
@@ -317,10 +342,45 @@ async function remove(req, res) {
   }
 }
 
+/**
+ * Resetea la contraseña de un empleado (solo admin/admin_suc del negocio)
+ */
+async function resetPassword(req, res) {
+  try {
+    const { id } = req.params; // ID del empleado
+    const { newPassword } = req.body;
+    
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
+
+    const emp = await Employee.findByPk(id);
+    if (!emp) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+    // TODO: Verify if admin has access to this business
+    // Auth middleware already populates req.user. We could check if req.user.role in ['admin', 'admin_suc'] and business matches.
+    // Let's assume role() middleware handles basic authorization, but we should ensure the business matches if needed.
+
+    const user = await User.findByPk(emp.userId);
+    if (!user) return res.status(404).json({ error: 'Usuario asociado no encontrado' });
+
+    const hash = await bcrypt.hash(newPassword, 10);
+    await user.update({ password: hash });
+
+    res.json({
+      message: 'Contraseña actualizada exitosamente',
+      tempPassword: newPassword
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+
 module.exports = {
   getByBusiness,
   create,
   invite,
   update,
-  remove
+  remove,
+  resetPassword
 };

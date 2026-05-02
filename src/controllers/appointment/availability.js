@@ -20,17 +20,21 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   const business = await Business.findByPk(businessId);
   if (!business) throw new Error('Negocio no encontrado');
 
+  // Asegurar que la fecha sea solo YYYY-MM-DD para la consulta de base de datos
+  const dateOnly = date.split('T')[0];
+
   // Verificar si el empleado está de vacaciones en esta fecha
   const vacationCount = await EmployeeVacation.count({
     where: {
       employeeId,
       active: true,
-      startDate: { [Op.lte]: date },
-      endDate: { [Op.gte]: date }
+      startDate: { [Op.lte]: dateOnly },
+      endDate: { [Op.gte]: dateOnly }
     }
   });
 
   if (vacationCount > 0) {
+    console.log(`[Availability] Empleado ${employeeId} en vacaciones para la fecha ${dateOnly}`);
     return { availableSlots: [] };
   }
 
@@ -346,13 +350,16 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
   const business = await Business.findByPk(businessId);
   if (!business) throw new Error('Negocio no encontrado');
 
+  // Asegurar que la fecha sea solo YYYY-MM-DD
+  const dateOnly = date.split('T')[0];
+
   // Verificar si el empleado está de vacaciones
   const vacationCount = await EmployeeVacation.count({
     where: {
       employeeId,
       active: true,
-      startDate: { [Op.lte]: date },
-      endDate: { [Op.gte]: date }
+      startDate: { [Op.lte]: dateOnly },
+      endDate: { [Op.gte]: dateOnly }
     }
   });
 
@@ -539,9 +546,14 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
   const slotEndTime = new Date(slotTime.getTime() + duration * 60000);
 
   const conflictAppt = existingAppointments.find(appt => {
-    const apptStart = new Date(appt.startTime);
-    const apptEnd = new Date(appt.endTime);
-    return slotTime < apptEnd && slotEndTime > apptStart;
+    const apptStart = new Date(appt.startTime).getTime();
+    const apptEnd = new Date(appt.endTime).getTime();
+    const slotS = slotTime.getTime();
+    const slotE = slotEndTime.getTime();
+    
+    // Un slot nuevo puede empezar exactamente cuando termina el anterior
+    // Usamos un margen de 1000ms (1 segundo) para evitar problemas de precisión
+    return slotS < (apptEnd - 1000) && slotE > (apptStart + 1000);
   });
 
   if (conflictAppt) {
