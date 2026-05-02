@@ -28,7 +28,7 @@ module.exports = (sequelize) => {
       comment: 'Contenido del mensaje'
     },
     type: {
-      type: DataTypes.ENUM('reminder', 'rating', 'review', 'confirmation', 'cancellation', 'custom', 'queue_fallback'),
+      type: DataTypes.ENUM('reminder', 'rating', 'review', 'confirmation', 'cancellation', 'custom', 'queue_fallback', 'birthday'),
       defaultValue: 'custom',
       comment: 'Tipo de mensaje para clasificación'
     },

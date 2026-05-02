@@ -167,8 +167,8 @@ function startBirthdayCron() {
       const colombiaTime = new Date(now.getTime() + colombiaOffset);
       const hour = colombiaTime.getUTCHours();
 
-      // Ejecutar entre las 8:00 AM y 9:00 AM Colombia
-      if (hour === 8) {
+      // Ejecutar entre las 9:00 AM y 10:00 AM Colombia
+      if (hour === 9) {
         await processBirthdays();
       }
     } catch (err) {

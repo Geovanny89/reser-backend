@@ -169,4 +169,5 @@ module.exports = {
   generateGenericReminder,
   generateReferenceMessage,
   generateAppointmentCreatedMessage,
+  getRandomTemplate,
 };

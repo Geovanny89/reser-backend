@@ -1,4 +1,4 @@
-const { ClientProfile, BirthdayTemplate, Business, WhatsAppSession, Op } = require('../models');
+const { ClientProfile, BirthdayTemplate, Business, WhatsAppSession, Appointment, Op } = require('../models');
 const { scheduleMessage } = require('../services/schedulerService');
 
 /**
