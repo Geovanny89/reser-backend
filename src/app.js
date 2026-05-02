@@ -17,6 +17,7 @@ app.use(helmet({
 const allowedOrigins = [
   'https://reservas.k-dice.com',
   'https://api-reservas.k-dice.com',
+  'http://localhost',
   'http://localhost:5173',
   'http://localhost:3000',
   'capacitor://localhost',
