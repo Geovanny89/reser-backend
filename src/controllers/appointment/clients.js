@@ -121,7 +121,7 @@ async function getClientsByBusiness(businessId, search = null) {
   return {
     total: clients.length,
     availableTags,
-    clients: clients.sort((a, b) => new Date(b.lastVisit) - new Date(a.lastVisit))
+    clients: clients.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   };
 }
 

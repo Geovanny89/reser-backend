@@ -23,6 +23,7 @@ exports.getByBusiness = async (req, res) => {
 
     const services = await Service.findAll({
       where: { businessId, active: true },
+      order: [['name', 'ASC']],
       include: [
         {
           model: Promotion,
