@@ -72,6 +72,10 @@ async function registerCashMovementForAppointment(appointment, userId) {
       const extrasText = appointment.extraServices.map(s => s.name).join(', ');
       descriptionText += ` (+ ${extrasText})`;
     }
+
+    if (appointment.discountApplied && parseFloat(appointment.discountApplied) > 0) {
+      descriptionText += ` (Desc: -$${parseFloat(appointment.discountApplied).toLocaleString()})`;
+    }
     
     descriptionText += ` - ${appointment.clientName}`;
 
@@ -90,6 +94,69 @@ async function registerCashMovementForAppointment(appointment, userId) {
   } catch (error) {
     console.error('[Cash Register] Error registrando movimiento de caja:', error.message);
     // No lanzar error para no interrumpir el flujo principal
+  }
+}
+
+/**
+ * Reversa un movimiento de caja asociado a una cita (cuando se anula o cambia de estado)
+ */
+async function reverseCashMovementForAppointment(appointmentId, userId) {
+  try {
+    const movement = await CashMovement.findOne({
+      where: {
+        appointmentId,
+        isReversal: false
+      }
+    });
+
+    if (!movement) return;
+
+    // Verificar si ya tiene una reversa activa
+    const existingReversal = await CashMovement.findOne({
+      where: {
+        reversesMovementId: movement.id,
+        isReversal: true
+      }
+    });
+
+    if (existingReversal) {
+      console.log(`[Cash Register] El movimiento para la cita ${appointmentId} ya fue reversado anteriormente.`);
+      return;
+    }
+
+    // Buscar turno de caja activo para el negocio
+    const activeShift = await CashRegisterShift.findOne({
+      where: {
+        businessId: movement.businessId,
+        status: 'open'
+      }
+    });
+
+    if (!activeShift) {
+      console.log(`[Cash Register] No hay turno abierto para reversar el movimiento de la cita ${appointmentId}`);
+      return;
+    }
+
+    // Crear el movimiento de reversa (tipo opuesto)
+    const reversalType = movement.type === 'income' ? 'expense' : 'income';
+
+    await CashMovement.create({
+      businessId: movement.businessId,
+      shiftId: activeShift.id, // Se registra en el turno actual
+      type: reversalType,
+      amount: movement.amount,
+      paymentMethod: movement.paymentMethod,
+      description: `REVERSA: Cita #${appointmentId.slice(0, 8)} - Cambio de estado / Anulación`,
+      notes: `Reversa automática por cambio de estado desde el sistema. ID Original: ${movement.id}`,
+      isReversal: true,
+      reversesMovementId: movement.id,
+      appointmentId: appointmentId,
+      createdBy: userId
+    });
+
+    console.log(`[Cash Register] ✅ Reversa exitosa para cita ${appointmentId} en el turno ${activeShift.id}`);
+  } catch (error) {
+    console.error('[Cash Register] Error reversando movimiento:', error.message);
   }
 }
 
@@ -528,6 +595,11 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
 
   const oldStatus = appointment.status;
   const now = new Date();
+
+  // Si el estado anterior era DONE y el nuevo NO lo es, reversar movimiento en caja
+  if (oldStatus === APPOINTMENT_STATUS.DONE && newStatus !== APPOINTMENT_STATUS.DONE) {
+    await reverseCashMovementForAppointment(appointment.id, user?.id);
+  }
 
   // Actualizar según el nuevo estado
   const updateData = { status: newStatus };

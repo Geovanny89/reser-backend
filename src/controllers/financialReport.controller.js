@@ -3,7 +3,8 @@ const { Op } = require('sequelize');
 
 exports.getFinancialReport = async (req, res) => {
   try {
-    const { businessId, year, month, startDate: queryStartDate, endDate: queryEndDate } = req.query;
+    const { businessId, year, month, startDate: queryStartDate, endDate: queryEndDate, employeeId } = req.query;
+    console.log('FINANCIAL_REPORT_QUERY:', { businessId, queryStartDate, queryEndDate, employeeId });
     
     if (!businessId) {
       return res.status(400).json({ error: 'businessId es requerido' });
@@ -15,37 +16,113 @@ exports.getFinancialReport = async (req, res) => {
     
     const enabledModules = business.enabledModules || {};
 
-    // Calcular fechas del período
+    // Calcular fechas del período (Colombia Time -05:00)
     let startDate, endDate, periodInfo;
     
     if (queryStartDate && queryEndDate) {
-      // Usar fechas personalizadas
-      startDate = queryStartDate;
-      endDate = queryEndDate;
-      periodInfo = { startDate, endDate, type: 'custom' };
+      startDate = new Date(`${queryStartDate}T00:00:00-05:00`);
+      endDate = new Date(`${queryEndDate}T23:59:59-05:00`);
+      periodInfo = { startDate: queryStartDate, endDate: queryEndDate, type: 'custom' };
     } else if (year && month) {
-      // Modo legacy: fechas del mes
-      startDate = `${year}-${month.padStart(2, '0')}-01`;
+      const startStr = `${year}-${month.padStart(2, '0')}-01`;
       const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
-      endDate = `${year}-${month.padStart(2, '0')}-${lastDay}`;
-      periodInfo = { year, month, startDate, endDate, type: 'month' };
+      const endStr = `${year}-${month.padStart(2, '0')}-${lastDay}`;
+      
+      startDate = new Date(`${startStr}T00:00:00-05:00`);
+      endDate = new Date(`${endStr}T23:59:59-05:00`);
+      periodInfo = { year, month, startDate: startStr, endDate: endStr, type: 'month' };
     } else {
       return res.status(400).json({ error: 'Debe proporcionar year+month o startDate+endDate' });
     }
 
-    // === INGRESOS: Citas completadas en el mes ===
-    const appointments = await Appointment.findAll({
-      where: {
-        businessId,
-        status: 'done',
-        startTime: { [Op.between]: [new Date(startDate), new Date(`${endDate}T23:59:59`)] }
+    // === INGRESOS: Basados en movimientos de caja (dinero real) ===
+    const movementsWhere = {
+      businessId,
+      createdAt: { [Op.between]: [startDate, endDate] }
+    };
+
+    const movements = await CashMovement.findAll({
+      where: movementsWhere,
+      include: [
+        { model: CashMovement, as: 'ReversedMovement' },
+        { 
+          model: Appointment, 
+          attributes: ['id', 'employeeId', 'finalPrice', 'basePrice', 'discountApplied'],
+          include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
+        }
+      ]
+    });
+
+    let totalIncome = 0;
+    let transferIncome = 0;
+    let cashIncome = 0;
+    let totalDiscounts = 0;
+
+    movements.forEach(m => {
+      // Solo contar ingresos (y restar sus reversas)
+      let amount = parseFloat(m.amount || 0);
+      let isIncome = false;
+      let paymentMethod = m.paymentMethod;
+
+      if (m.type === 'income' && !m.isReversal) {
+        isIncome = true;
+      } else if (m.isReversal && m.ReversedMovement?.type === 'income') {
+        isIncome = true;
+        amount = -amount; // Restar reversa
+        paymentMethod = m.ReversedMovement.paymentMethod;
+      }
+
+      if (isIncome) {
+        // Si hay filtro de empleado, verificar que el movimiento esté asociado a una cita de ese empleado
+        if (employeeId && employeeId !== 'all' && employeeId !== '') {
+          if (!m.Appointment || String(m.Appointment.employeeId) !== employeeId) {
+            return; // Omitir si no coincide el empleado
+          }
+        }
+
+        totalIncome += amount;
+        if (paymentMethod === 'transfer') {
+          transferIncome += amount;
+        } else {
+          cashIncome += amount;
+        }
+
+        if (m.Appointment?.discountApplied) {
+          totalDiscounts += parseFloat(m.Appointment.discountApplied);
+        }
       }
     });
 
-    const totalIncome = appointments.reduce((sum, apt) => {
-      const price = (apt.finalPrice !== null && apt.finalPrice !== undefined) ? apt.finalPrice : (apt.basePrice || 0);
-      return sum + parseFloat(price);
+    // === COMISIONES: Siguen basándose en citas completadas ===
+    const appointmentsWhere = {
+      businessId,
+      status: 'done',
+      startTime: { [Op.between]: [startDate, endDate] }
+    };
+
+    if (employeeId && employeeId !== 'all' && employeeId !== '') {
+      appointmentsWhere.employeeId = employeeId;
+    }
+
+    const appointments = await Appointment.findAll({
+      where: appointmentsWhere,
+      include: [
+        {
+          model: require('../models').Employee,
+          attributes: ['id', 'commissionPct']
+        }
+      ]
+    });
+
+    const totalCommissions = appointments.reduce((sum, apt) => {
+      const priceForCommission = (apt.finalPrice !== null && apt.finalPrice !== undefined) ? apt.finalPrice : (apt.basePrice || 0);
+      const commPct = parseFloat(apt.Employee?.commissionPct || 0);
+      const earned = (apt.employeeEarns !== null && apt.employeeEarns !== undefined)
+        ? parseFloat(apt.employeeEarns)
+        : (priceForCommission * commPct) / 100;
+      return sum + (isNaN(earned) ? 0 : earned);
     }, 0);
+
     const appointmentCount = appointments.length;
 
     // === GASTOS: Solo si el módulo está habilitado ===
@@ -76,182 +153,133 @@ exports.getFinancialReport = async (req, res) => {
           businessId,
           date: { [Op.between]: [startDate, endDate] }
         },
-        include: [{ model: InventoryItem, attributes: ['name', 'unit', 'costPerUnit'] }]
+        include: [{ model: InventoryItem }]
       });
 
-      inventory.items = usages.map(u => {
-        const costPerUnit = parseFloat(u.InventoryItem?.costPerUnit || 0);
-        const quantity = parseFloat(u.quantity || 0);
-        const totalCost = costPerUnit * quantity;
-        
-        return {
-          name: u.InventoryItem?.name || 'Insumo desconocido',
-          unit: u.InventoryItem?.unit || 'unidad',
-          quantity,
-          costPerUnit,
-          totalCost,
-          date: u.date,
-          notes: u.notes
-        };
-      });
-
-      inventory.total = inventory.items.reduce((sum, item) => sum + item.totalCost, 0);
       inventory.usageCount = usages.length;
-    }
-
-    // === DEPÓSITOS: Flujo de caja ===
-    let deposits = { 
-      totalReceived: 0, 
-      totalApplied: 0, 
-      totalHeld: 0,
-      count: 0 
-    };
-    if (enabledModules.deposits) {
-      const depositData = await Deposit.findAll({
-        where: {
-          businessId,
-          date: { [Op.between]: [startDate, endDate] }
-        }
-      });
-
-      deposits.count = depositData.length;
-      
-      depositData.forEach(d => {
-        const amount = parseFloat(d.amount || 0);
-        deposits.totalReceived += amount;
-        
-        if (d.status === 'held') {
-          deposits.totalHeld += amount;
-        } else if (d.status === 'applied') {
-          deposits.totalApplied += amount;
-        }
+      usages.forEach(u => {
+        const cost = parseFloat(u.InventoryItem?.unitCost || 0);
+        const qty = parseFloat(u.quantity || 1);
+        inventory.total += (cost * qty);
       });
     }
 
-    // === CAJA: Turnos y movimientos de efectivo ===
+    // === CAJA: Turnos y movimientos ===
     let cashRegister = {
-      shifts: [],
       totalOpeningAmount: 0,
       totalIncome: 0,
       totalExpenses: 0,
       totalWithdrawals: 0,
       totalDifference: 0,
-      shiftsCount: 0
+      shiftsCount: 0,
+      shifts: []
     };
+
     if (enabledModules.cashRegister) {
       const shifts = await CashRegisterShift.findAll({
         where: {
           businessId,
-          openedAt: { [Op.between]: [new Date(startDate), new Date(`${endDate}T23:59:59`)] }
+          openedAt: { [Op.between]: [startDate, endDate] }
         },
-        include: [{ model: require('../models').Employee, as: 'Employee' }]
+        include: [
+          { model: require('../models').Employee, as: 'Employee' },
+          { 
+            model: require('../models').CashMovement, as: 'Movements',
+            include: [{ model: require('../models').CashMovement, as: 'ReversedMovement' }]
+          }
+        ]
       });
 
       cashRegister.shiftsCount = shifts.length;
 
       // Para cada turno, obtener sus movimientos
-      for (const shift of shifts) {
-        const movements = await CashMovement.findAll({
-          where: { shiftId: shift.id }
-        });
+      shifts.forEach(shift => {
+        const movements = shift.Movements || [];
+        
+        let income = 0;
+        let expenses = 0;
+        let withdrawals = 0;
 
-        const income = movements
-          .filter(m => m.type === 'income')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-        
-        const expenses = movements
-          .filter(m => m.type === 'expense')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
-        
-        const withdrawals = movements
-          .filter(m => m.type === 'withdrawal')
-          .reduce((sum, m) => sum + parseFloat(m.amount), 0);
+        movements.forEach(m => {
+          const amount = parseFloat(m.amount);
+          if (m.isReversal) {
+            if (m.ReversedMovement?.type === 'income') income -= amount;
+            else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
+            else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+          } else {
+            if (m.type === 'income') {
+              income += amount;
+            } else if (m.type === 'expense') expenses += amount;
+            else if (m.type === 'withdrawal') withdrawals += amount;
+          }
+        });
 
         cashRegister.totalOpeningAmount += parseFloat(shift.openingAmount || 0);
         cashRegister.totalIncome += income;
         cashRegister.totalExpenses += expenses;
         cashRegister.totalWithdrawals += withdrawals;
-
-        // Diferencia del turno = ingresos - gastos - retiros (flujo neto)
-        const shiftDifference = income - expenses - withdrawals;
-        cashRegister.totalDifference += shiftDifference;
+        cashRegister.totalDifference += (income - expenses - withdrawals);
 
         cashRegister.shifts.push({
           id: shift.id,
           openedAt: shift.openedAt,
           closedAt: shift.closedAt,
+          employee: shift.Employee?.User?.name || shift.Employee?.name || 'Sistema',
           openingAmount: parseFloat(shift.openingAmount),
-          closingAmount: shift.closingAmount ? parseFloat(shift.closingAmount) : null,
-          expectedAmount: shift.expectedAmount ? parseFloat(shift.expectedAmount) : null,
-          difference: shift.difference ? parseFloat(shift.difference) : null,
-          status: shift.status,
-          employee: shift.Employee?.name || null,
-          movementsCount: movements.length,
           income,
           expenses,
-          withdrawals
+          withdrawals,
+          difference: parseFloat(shift.difference || 0),
+          status: shift.status,
+          movementsCount: movements.length
         });
-      }
+      });
     }
 
     // === CÁLCULOS FINALES ===
-    const totalExpenses = expenses.total + inventory.total;
+    const totalExpenses = expenses.total + inventory.total + totalCommissions;
     const netProfit = totalIncome - totalExpenses;
     const margin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
+
+    // === ALERTAS: Citas terminadas sin movimiento en caja (Descuadres) ===
+    const unrecordedAppointments = appointments.filter(apt => {
+      // Buscar si existe un movimiento de ingreso para esta cita
+      const hasMovement = movements.some(m => m.appointmentId === apt.id && (m.type === 'income' && !m.isReversal));
+      return !hasMovement;
+    }).map(apt => ({
+      id: apt.id,
+      clientName: apt.clientName,
+      startTime: apt.startTime,
+      finalPrice: parseFloat(apt.finalPrice || apt.basePrice || 0)
+    }));
+
+    const totalUnrecordedAmount = unrecordedAppointments.reduce((sum, apt) => sum + apt.finalPrice, 0);
 
     res.json({
       period: periodInfo.type === 'month' ? { year, month, startDate, endDate } : { startDate, endDate, type: periodInfo.type },
       summary: {
         totalIncome,
+        cashIncome,
+        transferIncome,
+        totalDiscounts,
         totalExpenses,
+        totalCommissions,
         inventoryCost: inventory.total,
         netProfit,
-        margin: parseFloat(margin.toFixed(2)),
-        appointmentCount
+        margin,
+        unrecordedIncome: totalUnrecordedAmount
       },
       details: {
-        income: {
-          appointments: appointments.map(a => ({
-            id: a.id,
-            date: a.startTime,
-            client: a.clientName,
-            amount: parseFloat((a.finalPrice !== null && a.finalPrice !== undefined) ? a.finalPrice : (a.basePrice || 0))
-          }))
-        },
-        expenses: {
-          total: expenses.total,
-          byCategory: expenses.byCategory,
-          list: expenses.list.map(e => ({
-            id: e.id,
-            date: e.date,
-            category: e.category,
-            description: e.description,
-            amount: parseFloat(e.amount),
-            paymentMethod: e.paymentMethod
-          }))
-        },
+        appointments: appointmentCount,
+        unrecordedAppointments,
+        expenses,
         inventory,
-        deposits: {
-          totalReceived: deposits.totalReceived,
-          totalHeld: deposits.totalHeld,
-          totalApplied: deposits.totalApplied,
-          count: deposits.count
-        },
-        cashRegister: {
-          shiftsCount: cashRegister.shiftsCount,
-          totalOpeningAmount: cashRegister.totalOpeningAmount,
-          totalIncome: cashRegister.totalIncome,
-          totalExpenses: cashRegister.totalExpenses,
-          totalWithdrawals: cashRegister.totalWithdrawals,
-          totalDifference: cashRegister.totalDifference,
-          shifts: cashRegister.shifts
-        }
+        cashRegister
       },
       enabledModules
     });
-
-  } catch (e) {
-    console.error('[getFinancialReport] Error:', e);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    console.error('Error en informe financiero:', error);
+    res.status(500).json({ error: 'Error al generar el informe financiero' });
   }
 };
