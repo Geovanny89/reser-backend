@@ -8,7 +8,7 @@ const axios = require('axios');
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const API_KEY = process.env.EVOLUTION_API_KEY;
 
-console.log(`[Evolution API] Config - URL: ${EVOLUTION_URL}, API_KEY exists: ${!!API_KEY}`);
+console.log(`[Evolution API] 🔍 Configuración - URL: ${EVOLUTION_URL}, API_KEY: ${API_KEY ? 'Presente' : 'Faltante'}`);
 
 const api = axios.create({
   baseURL: EVOLUTION_URL,
@@ -26,54 +26,124 @@ const {
   getInstanceCount
 } = require('./state');
 
+const { getBestProxy } = require('./proxyManager');
+const { WhatsAppSession, Business } = require('../../models');
+const sequelize = require('../../config/database');
+
 async function createInstance(businessId, forceFresh = false) {
   console.log(`[Evolution API] ⚙️ Gestionando instancia para ${businessId}...`);
-  
+
   try {
+    // 1. Obtener nombre del negocio SIEMPRE al inicio
+    let businessName = 'Chrome (Linux)';
+    try {
+      const biz = await Business.findByPk(businessId);
+      if (biz && biz.name) {
+        businessName = biz.name;
+      }
+    } catch (e) {
+      console.error(`[Evolution API] ⚠️ Error obteniendo nombre de negocio:`, e.message);
+    }
+
     const allInstances = await fetchAllInstances();
     const existingInstance = allInstances.find(inst => inst.name === businessId);
-    
+
     if (existingInstance && !forceFresh) {
       const status = existingInstance.connectionStatus || existingInstance.state || 'unknown';
-      console.log(`[Evolution API] ℹ️ Usando instancia existente con estado: ${status}`);
-      setInstance(businessId, {
-        instanceName: existingInstance.name,
-        status: status,
-        createdAt: existingInstance.createdAt
-      });
-      
-      // Configurar webhook para instancia existente
-      await configureWebhook(businessId);
-      
-      return existingInstance;
-    }
-    
-    if (forceFresh && existingInstance) {
-      console.log(`[Evolution API] 🔄 Eliminando instancia previa...`);
-      const stopped = await stopInstance(businessId);
-      if (!stopped) {
-        console.log(`[Evolution API] ⚠️ No se pudo eliminar la instancia, intentando reiniciarla...`);
-        // Intentar reiniciar la instancia existente en lugar de crear nueva
-        try {
-          await configureWebhook(businessId);
-          return existingInstance;
-        } catch (e) {
-          console.log(`[Evolution API] ℹ️ No se pudo reiniciar, continuando con creación...`);
-        }
+
+      // MEJORA: Si la instancia existe pero NO está abierta (incluyendo 'connecting'), 
+      // la recreamos para asegurar que se apliquen las nuevas configuraciones.
+      if (status !== 'open' && status !== 'connected') {
+        console.log(`[Evolution API] 🔄 Instancia '${businessId}' existe en estado '${status}'. Forzando recreación para aplicar cambios...`);
+        forceFresh = true;
+      } else {
+        console.log(`[Evolution API] ℹ️ Usando instancia existente con estado: ${status}`);
+        setInstance(businessId, {
+          instanceName: existingInstance.name,
+          status: status,
+          createdAt: existingInstance.createdAt
+        });
+
+        // Configurar webhook para instancia existente
+        await configureWebhook(businessId);
+
+        return existingInstance;
       }
-      await new Promise(r => setTimeout(r, 3000)); // Espera más a que la DB se libere
     }
-    
-    console.log(`[Evolution API] 🆕 Solicitando creación en Evolution API...`);
-    const response = await api.post('/instance/create', {
+
+    if (forceFresh) {
+      console.log(`[Evolution API] 🔄 Limpiando rastro de instancia previa...`);
+      deleteInstance(businessId); // Limpiar memoria local
+      deleteQR(businessId);       // Limpiar QR local
+
+      if (existingInstance) {
+        await stopInstance(businessId); // Borrar en Evolution API
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    console.log(`[Evolution API] 🆕 Seleccionando proxy para ${businessId}...`);
+    const proxy = await getBestProxy(businessId);
+
+    // Guardar proxy en la base de datos INMEDIATAMENTE para asegurar la reserva (SQL Directo)
+    if (proxy) {
+      try {
+        const { v4: uuidv4 } = require('uuid');
+        await sequelize.query(`
+          INSERT INTO "WhatsAppSessions" ("id", "businessId", "proxyConfig", "createdAt", "updatedAt")
+          VALUES (:id, :businessId, :proxyConfig, NOW(), NOW())
+          ON CONFLICT ("businessId") 
+          DO UPDATE SET "proxyConfig" = EXCLUDED."proxyConfig", "updatedAt" = NOW()
+        `, {
+          replacements: {
+            id: uuidv4(),
+            businessId: businessId,
+            proxyConfig: JSON.stringify(proxy)
+          }
+        });
+        console.log(`[Evolution API] 💾 Proxy reservado en DB para ${businessId}: ${proxy.host}`);
+      } catch (dbErr) {
+        console.error(`[Evolution API] ⚠️ Error reservando proxy en DB (SQL):`, dbErr.message);
+      }
+    }
+
+    console.log(`[Evolution API] 🆕 DIAGNÓSTICO ID: '${businessId}' (Longitud: ${businessId?.length})`);
+    console.log(`[Evolution API] 🆕 Solicitando creación para con nombre: ${businessName}`);
+
+    const createPayload = {
       instanceName: businessId,
       qrcode: true,
       integration: "WHATSAPP-BAILEYS",
-      deviceName: "Chrome (Linux)"
-    });
-    
+      // Orden correcto para Baileys: [SISTEMA, NAVEGADOR, VERSIÓN]
+      browser: ["Windows", "Google Chrome", "10.0"],
+      settings: {
+        rejectCall: false,
+        msgCall: "Servicio de Citas Activo"
+      }
+    };
+
+    if (proxy) {
+      console.log(`[Evolution API] 🛡️ Usando proxy para ${businessId}: ${proxy.host}`);
+      createPayload.proxy = proxy;
+    } else {
+      console.log(`[Evolution API] 🌐 No hay proxy disponible para ${businessId}, usando IP del VPS`);
+    }
+
+    console.log(`[Evolution API] 🧪 Creación de instancia:`, JSON.stringify(createPayload, null, 2));
+    const response = await api.post('/instance/create', createPayload);
+
     console.log(`[Evolution API] 📦 Respuesta createInstance:`, JSON.stringify(response.data, null, 2));
-    
+
+    // FORZAR configuración de nombre mediante endpoint de settings
+    try {
+      await api.post(`/settings/set/${businessId}`, {
+        browser: ["Windows", "Google Chrome", "10.0"]
+      });
+      console.log(`[Evolution API] ✅ Nombre de navegador forzado a Windows - Google Chrome`);
+    } catch (e) {
+      console.warn(`[Evolution API] ⚠️ No se pudo forzar el nombre en settings (Ignorar si ya está conectando):`, e.message);
+    }
+
     const instanceData = response.data.instance;
     setInstance(businessId, {
       instanceName: instanceData.instanceName,
@@ -81,22 +151,24 @@ async function createInstance(businessId, forceFresh = false) {
       createdAt: new Date()
     });
 
-    // IMPORTANTE: Si el QR no viene aquí, no lanzamos error, 
-    // dejamos que getQR lo busque con reintentos.
-    if (response.data.qrcode?.base64) {
-      setQR(businessId, response.data.qrcode.base64);
-      console.log(`[Evolution API] ✅ QR guardado en memoria desde createInstance`);
-    } else {
-      console.log(`[Evolution API] ℹ️ QR no vino en createInstance, se buscará en connect`);
-    }
-    
-    // Configurar webhook para la nueva instancia
+    // Configurar webhook DE INMEDIATO
     await configureWebhook(businessId);
-    
+
+    // PASO 4: Iniciar búsqueda de QR en SEGUNDO PLANO
+    if (!response.data.qrcode?.base64) {
+      console.log(`[Evolution API] 🚀 Iniciando búsqueda de QR en segundo plano para ${businessId}`);
+      tryGetQRFromConnect(businessId).then(qr => {
+        if (qr) setQR(businessId, qr);
+      }).catch(e => { });
+    } else {
+      setQR(businessId, response.data.qrcode.base64);
+      console.log(`[Evolution API] ✅ QR guardado desde respuesta inicial`);
+    }
+
     return instanceData;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error en createInstance:`, err.response?.data || err.message);
-    
+
     // Si el error es 403 (nombre ya en uso), intentar usar la instancia existente
     if (err.response?.status === 403) {
       const errorMsg = JSON.stringify(err.response?.data || '');
@@ -120,7 +192,7 @@ async function createInstance(businessId, forceFresh = false) {
         }
       }
     }
-    
+
     throw err;
   }
 }
@@ -133,9 +205,9 @@ async function configureWebhook(businessId) {
     // Usar host.docker.internal para Docker Desktop en Windows, o la IP local si es red local
     const webhookHost = process.env.WEBHOOK_HOST || 'host.docker.internal';
     const webhookUrl = `http://${webhookHost}:4000/api/notifications/evolution/webhook`;
-    
+
     console.log(`[Evolution API] 🔗 Configurando webhook para ${businessId}: ${webhookUrl}`);
-    
+
     const payload = {
       webhook: {
         enabled: true,
@@ -148,11 +220,11 @@ async function configureWebhook(businessId) {
         ]
       }
     };
-    
+
     console.log(`[Evolution API] 📦 Payload:`, JSON.stringify(payload, null, 2));
-    
+
     await api.post(`/webhook/set/${businessId}`, payload);
-    
+
     console.log(`[Evolution API] ✅ Webhook configurado para ${businessId}`);
   } catch (err) {
     console.error(`[Evolution API] ⚠️ Error configurando webhook para ${businessId}:`, JSON.stringify(err.response?.data, null, 2) || err.message);
@@ -160,16 +232,26 @@ async function configureWebhook(businessId) {
   }
 }
 
+const statusCache = new Map();
+const STATUS_CACHE_TTL = 10000; // 10 segundos
+
 /**
- * Obtiene el estado real de conexión desde Evolution API
+ * Obtiene el estado real de conexión desde Evolution API (con caché)
  */
 async function getConnectionState(businessId) {
+  const now = Date.now();
+  const cached = statusCache.get(businessId);
+
+  if (cached && (now - cached.timestamp < STATUS_CACHE_TTL)) {
+    return cached.state;
+  }
+
   try {
     const res = await api.get(`/instance/connectionState/${businessId}`);
-    console.log(`[Evolution API] 📡 Estado raw de ${businessId}:`, JSON.stringify(res.data).substring(0, 300));
     // v2.1.2 devuelve { instance: { state: '...' } }
     const state = res.data?.instance?.state || res.data?.state || res.data;
-    console.log(`[Evolution API] 📡 Estado extraído de ${businessId}: ${state}`);
+
+    statusCache.set(businessId, { state, timestamp: now });
     return state;
   } catch (e) {
     console.log(`[Evolution API] ⚠️ Error obteniendo estado de ${businessId}:`, e.response?.status || e.message);
@@ -181,33 +263,33 @@ async function getQR(businessId) {
   try {
     // El QR ya debería estar guardado en memoria cuando se creó la instancia
     const qrCode = getQRFromMemory(businessId);
-    
+
     if (qrCode) {
       console.log(`[Evolution API] 📲 QR recuperado de memoria para ${businessId}`);
       return qrCode;
     }
-    
+
     // PASO 1: Verificar el estado REAL desde Evolution API
     const realState = await getConnectionState(businessId);
     console.log(`[Evolution API] 📡 Estado real de ${businessId}: ${realState}`);
-    
+
     // Si ya está conectado, no hay QR
     if (realState === 'open' || realState === 'connected') {
       console.log(`[Evolution API] ℹ️ La instancia ya está conectada, no hay QR disponible`);
       throw new Error('La instancia ya está conectada. No se requiere QR.');
     }
-    
+
     // PASO 2: Intentar obtener QR según el estado
     let newQR = null;
-    
+
     // Si existe instancia pero no está conectada, intentar obtener QR
     const stateStr = typeof realState === 'string' ? realState : '';
     if (stateStr === 'close' || stateStr === 'connecting' || stateStr === 'disconnected') {
       console.log(`[Evolution API] 📲 Instancia en estado '${stateStr}', intentando obtener QR...`);
-      
+
       // Usar endpoint correcto según código fuente: /instance/connect/
       newQR = await tryGetQRFromConnect(businessId);
-      
+
       // Fallback: intentar con endpoint /instance/qrcode/
       if (!newQR) {
         console.log(`[Evolution API] 🔁 Fallback a /instance/qrcode/...`);
@@ -220,7 +302,7 @@ async function getQR(businessId) {
         newQR = await tryGetQRFromQRCode(businessId);
       }
     }
-    
+
     // PASO 3: Si no se obtuvo QR, NO recrear automáticamente la instancia
     // Esto evita ciclos infinitos de creación/destrucción
     if (!newQR) {
@@ -228,15 +310,15 @@ async function getQR(businessId) {
       console.log(`[Evolution API] 💡 Sugerencia: Espere unos segundos y vuelva a intentar, o verifique que Evolution API esté funcionando correctamente.`);
       // No recrear la instancia automáticamente - esto causaba ciclos infinitos
     }
-    
+
     if (newQR) {
       setQR(businessId, newQR);
       console.log(`[Evolution API] ✅ QR obtenido y guardado para ${businessId}`);
       return newQR;
     }
-    
+
     throw new Error('No se pudo obtener el QR de Evolution API después de todos los intentos');
-    
+
   } catch (err) {
     console.error(`[Evolution API] ❌ Error obteniendo QR:`, err.message);
     throw err;
@@ -249,61 +331,45 @@ async function getQR(businessId) {
  */
 async function tryGetQRFromConnect(businessId) {
   try {
-    console.log(`[Evolution API] 📲 Intentando /instance/connect/${businessId}...`);
-    
+    console.log(`[Evolution API] 🔍 Iniciando búsqueda activa de QR para ${businessId}...`);
+
     let attempts = 0;
-    const maxAttempts = 40; // Aumentado a 40 intentos para dar margen a Evolution API (aprox 120 seg)
-    
+    const maxAttempts = 60; // 60 intentos * 2s = 120 segundos
+
     while (attempts < maxAttempts) {
       attempts++;
-      console.log(`[Evolution API] 📲 Intento ${attempts}/${maxAttempts} de obtención de QR...`);
-      
+
       try {
         const response = await api.get(`/instance/connect/${businessId}`);
-        console.log(`[Evolution API] 📲 Respuesta:`, JSON.stringify(response.data, null, 2).substring(0, 500));
-        
-        // Según el código fuente, puede devolver:
-        // - instance.qrCode directamente (cuando state es 'connecting')
-        // - Un objeto con 'qrcode' property
-        let qr = null;
-        
-        // PRIORIDAD: base64 (imagen) sobre code (pairing string)
-        if (response.data?.base64) {
-          qr = response.data.base64;
-          console.log(`[Evolution API] ✅ QR encontrado en 'base64'`);
-        } else if (response.data?.qrcode?.base64) {
-          qr = response.data.qrcode.base64;
-          console.log(`[Evolution API] ✅ QR encontrado en qrcode.base64`);
-        } else if (response.data?.code) {
-          qr = response.data.code;
-          console.log(`[Evolution API] ✅ QR encontrado en 'code'`);
-        } else if (response.data?.qrcode?.code) {
-          qr = response.data.qrcode.code;
-          console.log(`[Evolution API] ✅ QR encontrado en qrcode.code`);
-        } else if (typeof response.data === 'string' && response.data.startsWith('2@')) {
-          qr = response.data;
-          console.log(`[Evolution API] ✅ QR encontrado como string`);
-        } else if (response.data?.instance?.qrcode) {
-          qr = response.data.instance.qrcode;
-          console.log(`[Evolution API] ✅ QR encontrado en instance.qrcode`);
+        console.log(`[Evolution API] 📡 Respuesta /instance/connect/${businessId}:`, JSON.stringify(response.data).substring(0, 500));
+
+        let qr = response.data?.base64 ||
+          response.data?.qrcode?.base64 ||
+          response.data?.code ||
+          response.data?.qrcode?.code;
+
+        if (qr) {
+          console.log(`[Evolution API] ✅ QR obtenido con éxito en intento ${attempts}`);
+          return qr;
         }
-        
-        if (qr) return qr;
-        
-        // Si count > 0 pero no hay QR, puede estar generándose
-        if (response.data?.count > 0 || response.data?.qrcode?.count > 0) {
-          console.log(`[Evolution API] ⏳ QR generándose, esperando 4s...`);
-          await new Promise(resolve => setTimeout(resolve, 4000));
-        } else {
-          console.log(`[Evolution API] ⏳ Esperando QR...`);
-          await new Promise(resolve => setTimeout(resolve, 4000));
+
+        // Si no, intentar con el endpoint específico de qrcode
+        const qrcodeResp = await api.get(`/instance/qrcode/${businessId}`);
+        let qrAlt = qrcodeResp.data?.base64 || qrcodeResp.data?.code;
+
+        if (qrAlt) {
+          console.log(`[Evolution API] ✅ QR obtenido vía endpoint alternativo en intento ${attempts}`);
+          return qrAlt;
         }
+
       } catch (e) {
-        console.log(`[Evolution API] ⚠️ Error intento ${attempts}:`, e.response?.status || e.message);
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Ignorar errores mientras se inicializa
       }
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    
+
+    console.error(`[Evolution API] ❌ No se pudo obtener el QR después de ${maxAttempts} intentos`);
     return null;
   } catch (e) {
     console.log(`[Evolution API] ❌ Error en tryGetQRFromConnect:`, e.message);
@@ -317,18 +383,18 @@ async function tryGetQRFromConnect(businessId) {
 async function tryGetQRFromQRCode(businessId) {
   try {
     console.log(`[Evolution API] 📲 Intentando /instance/qrcode/${businessId}...`);
-    
+
     let attempts = 0;
     const maxAttempts = 15;
-    
+
     while (attempts < maxAttempts) {
       attempts++;
       console.log(`[Evolution API] 📲 Qrcode intento ${attempts}/${maxAttempts}...`);
-      
+
       try {
         const response = await api.get(`/instance/qrcode/${businessId}`);
         console.log(`[Evolution API] 📲 Qrcode respuesta:`, JSON.stringify(response.data, null, 2).substring(0, 300));
-        
+
         let qr = null;
         if (response.data?.code) {
           qr = response.data.code;
@@ -340,9 +406,9 @@ async function tryGetQRFromQRCode(businessId) {
           qr = response.data.qrcode.base64;
           console.log(`[Evolution API] ✅ QR encontrado en qrcode.qrcode.base64`);
         }
-        
+
         if (qr) return qr;
-        
+
         console.log(`[Evolution API] ⏳ Qrcode esperando...`);
         await new Promise(resolve => setTimeout(resolve, 4000));
       } catch (e) {
@@ -350,7 +416,7 @@ async function tryGetQRFromQRCode(businessId) {
         await new Promise(resolve => setTimeout(resolve, 4000));
       }
     }
-    
+
     return null;
   } catch (e) {
     console.log(`[Evolution API] ❌ Error en tryGetQRFromQRCode:`, e.message);
@@ -369,43 +435,28 @@ async function stopInstance(businessId) {
       console.log(`[Evolution API] ℹ️ No se pudo obtener estado, asumiendo que no existe`);
     }
 
-    // PASO 1: Desconectar la instancia primero si está conectada
-    if (state === 'open' || state === 'connected') {
-      console.log(`[Evolution API] 🔌 Desconectando instancia ${businessId} (estado: ${state})...`);
+    // PASO 1: Intentar desconectar/logout siempre que la instancia exista (incluyendo 'connecting')
+    if (state && state !== 'unknown') {
+      console.log(`[Evolution API] 🔌 Forzando desconexión de instancia ${businessId} (estado: ${state})...`);
+
+      // Intentar ambos métodos de desconexión para asegurar
       try {
         await api.delete(`/instance/logout/${businessId}`);
-        console.log(`[Evolution API] ✅ Logout exitoso`);
-      } catch (logoutErr) {
-        console.log(`[Evolution API] ⚠️ Logout falló:`, logoutErr.response?.status || logoutErr.message);
-      }
-      
-      // Esperar a que se complete la desconexión (más tiempo)
-      console.log(`[Evolution API] ⏳ Esperando desconexión...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      // Verificar si se desconectó
+      } catch (e) { }
+
       try {
-        const newState = await getConnectionState(businessId);
-        if (newState === 'open' || newState === 'connected') {
-          console.log(`[Evolution API] ⚠️ Instancia aún conectada, intentando método alternativo...`);
-          // Intentar con endpoint de disconnect si existe
-          try {
-            await api.post(`/instance/disconnect/${businessId}`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          } catch (disconnectErr) {
-            console.log(`[Evolution API] ℹ️ Disconnect alternativo falló:`, disconnectErr.response?.status || disconnectErr.message);
-          }
-        }
-      } catch (e) {
-        // Si falla al obtener estado, probablemente ya se eliminó
-      }
+        await api.post(`/instance/disconnect/${businessId}`);
+      } catch (e) { }
+
+      // Esperar un momento corto para que la API procese la desconexión
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     // PASO 2: Eliminar la instancia con reintentos
     console.log(`[Evolution API] 🗑️ Eliminando instancia ${businessId}...`);
     let deleteAttempts = 0;
     const maxDeleteAttempts = 3;
-    
+
     while (deleteAttempts < maxDeleteAttempts) {
       deleteAttempts++;
       try {
@@ -414,7 +465,7 @@ async function stopInstance(businessId) {
         break;
       } catch (deleteErr) {
         console.log(`[Evolution API] ⚠️ Intento ${deleteAttempts}/${maxDeleteAttempts} falló:`, deleteErr.response?.status || deleteErr.message);
-        
+
         if (deleteAttempts < maxDeleteAttempts) {
           // Si dice que necesita estar desconectada, esperar más
           const errorMsg = JSON.stringify(deleteErr.response?.data || '');
@@ -430,14 +481,14 @@ async function stopInstance(businessId) {
         }
       }
     }
-    
+
     deleteInstance(businessId);
     deleteQR(businessId);
     console.log(`[Evolution API] ⏸️ Instancia detenida: ${businessId}`);
-    
+
     // Esperar más tiempo para asegurar que Evolution API procese la eliminación
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
+
     return true;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error deteniendo instancia:`, err.response?.data || err.message);
@@ -447,11 +498,11 @@ async function stopInstance(businessId) {
 
 async function forceReconnect(businessId) {
   console.log(`[Evolution API] 🔄 Forzando reconexión para ${businessId}...`);
-  
+
   try {
     await stopInstance(businessId);
     await createInstance(businessId, true);
-    
+
     console.log(`[Evolution API] ✅ Reconexión completada para ${businessId}`);
   } catch (err) {
     console.error(`[Evolution API] ❌ Error en reconexión:`, err.message);
@@ -461,10 +512,10 @@ async function forceReconnect(businessId) {
 
 async function forceDisconnectAllInstances(reason = 'manual') {
   console.log(`[Evolution API] 🚨 Desconectando todas las instancias. Razón: ${reason}`);
-  
+
   const { getActiveBusinessIds } = require('./state');
   let disconnectedCount = 0;
-  
+
   for (const businessId of getActiveBusinessIds()) {
     try {
       await stopInstance(businessId);
@@ -473,7 +524,7 @@ async function forceDisconnectAllInstances(reason = 'manual') {
       console.error(`[Evolution API] ❌ Error desconectando ${businessId}:`, e.message);
     }
   }
-  
+
   console.log(`[Evolution API] ✅ ${disconnectedCount} instancias desconectadas`);
   return disconnectedCount;
 }
@@ -484,15 +535,15 @@ async function forceDisconnectAllInstances(reason = 'manual') {
  * Orden importa: los más largos primero para evitar falsos positivos.
  */
 const KNOWN_COUNTRY_CODES = [
-  { code: '57',  length: 10, startsWith: '3'  },  // Colombia: 10 dígitos, empieza en 3
-  { code: '58',  length: 10, startsWith: '4'  },  // Venezuela: 10 dígitos después de quitar el 0 inicial (04XX → 58 4XX)
-  { code: '51',  length: 9,  startsWith: null },   // Perú: 9 dígitos
-  { code: '52',  length: 10, startsWith: null },   // México: 10 dígitos
-  { code: '54',  length: 10, startsWith: null },   // Argentina: 10 dígitos
-  { code: '55',  length: 11, startsWith: null },   // Brasil: 11 dígitos
-  { code: '593', length: 9,  startsWith: null },   // Ecuador: 9 dígitos
-  { code: '506', length: 8,  startsWith: null },   // Costa Rica: 8 dígitos
-  { code: '1',   length: 10, startsWith: null },   // EEUU/Canadá: 10 dígitos
+  { code: '57', length: 10, startsWith: '3' },  // Colombia: 10 dígitos, empieza en 3
+  { code: '58', length: 10, startsWith: '4' },  // Venezuela: 10 dígitos después de quitar el 0 inicial (04XX → 58 4XX)
+  { code: '51', length: 9, startsWith: null },   // Perú: 9 dígitos
+  { code: '52', length: 10, startsWith: null },   // México: 10 dígitos
+  { code: '54', length: 10, startsWith: null },   // Argentina: 10 dígitos
+  { code: '55', length: 11, startsWith: null },   // Brasil: 11 dígitos
+  { code: '593', length: 9, startsWith: null },   // Ecuador: 9 dígitos
+  { code: '506', length: 8, startsWith: null },   // Costa Rica: 8 dígitos
+  { code: '1', length: 10, startsWith: null },   // EEUU/Canadá: 10 dígitos
 ];
 
 function formatPhoneForEvolution(phone) {
@@ -565,12 +616,42 @@ async function sendMessageDirect(businessId, phone, text) {
 
     console.log(`[Evolution API] 📤 Enviando a ${formattedPhone} (original: ${phone})`);
 
+    // Calcular delay dinámico según longitud del texto (mín 1.5s, máx 5s) para simular escritura humana
+    const dynamicDelay = Math.min(Math.max(text.length * 20, 1500), 5000);
+
+    // PASO 1: Activar indicador "Escribiendo..." ANTES de enviar el mensaje
+    // Esto es la forma correcta: llamar /chat/updatePresence con 'composing' primero
+    try {
+      await api.post(`/chat/updatePresence/${businessId}`, {
+        number: `${formattedPhone}@s.whatsapp.net`,
+        options: { presence: 'composing' }
+      });
+      console.log(`[Evolution API] ✍️ Indicador "Escribiendo..." activado para ${formattedPhone}`);
+    } catch (presenceErr) {
+      // No bloquear el envío si falla el typing indicator
+      console.warn(`[Evolution API] ⚠️ No se pudo activar typing indicator (no crítico):`, presenceErr.response?.status || presenceErr.message);
+    }
+
+    // PASO 2: Esperar el tiempo de "escritura" (simula que el bot escribe)
+    await new Promise(resolve => setTimeout(resolve, dynamicDelay));
+
+    // PASO 3: Enviar el mensaje
     const response = await api.post(`/message/sendText/${businessId}`, {
       number: formattedPhone,
       text: text,
-      delay: 1200
+      options: {
+        delay: 500 // Pequeño delay adicional para que Evolution procese bien
+      }
     });
-    
+
+    // PASO 4: Marcar presencia como 'paused' después de enviar
+    try {
+      await api.post(`/chat/updatePresence/${businessId}`, {
+        number: `${formattedPhone}@s.whatsapp.net`,
+        options: { presence: 'paused' }
+      });
+    } catch (_) { /* ignorar */ }
+
     console.log(`[Evolution API] 📨 Mensaje enviado a ${formattedPhone}`);
     return response.data;
   } catch (err) {
@@ -592,12 +673,12 @@ async function hasValidSession(businessId) {
     // PASO 1: Verificar que la instancia existe en Evolution API
     const allInstances = await fetchAllInstances();
     const exists = allInstances.find(inst => inst.name === businessId);
-    
+
     if (!exists) {
       console.log(`[Evolution API] ⚠️ Instancia ${businessId} no existe en Evolution API`);
       return false;
     }
-    
+
     // PASO 2: Verificar el estado de conexión real
     const realState = await getConnectionState(businessId);
     return realState === 'open' || realState === 'connected';

@@ -261,46 +261,10 @@ async function update(req, res) {
  */
 async function extendTime(req, res) {
   try {
-    const { additionalMinutes } = req.body;
-    console.log('[extendTime] Request:', { id: req.params.id, additionalMinutes, user: req.user?.id });
-    
-    if (!additionalMinutes || additionalMinutes < 1) {
-      return res.status(400).json({ error: 'Minutos adicionales inválidos' });
-    }
-
-    const appointment = await getAppointmentById(req.params.id);
-    if (!appointment) {
-      console.log('[extendTime] Appointment not found:', req.params.id);
-      return res.status(404).json({ error: 'Cita no encontrada' });
-    }
-    
-    console.log('[extendTime] Appointment found:', { id: appointment.id, status: appointment.status, endTime: appointment.endTime });
-
-    // Solo permitir extender citas en atención
-    if (appointment.status !== 'attention') {
-      console.log('[extendTime] Invalid status:', appointment.status);
-      return res.status(400).json({ error: 'Solo se pueden extender citas en estado "En Atención"' });
-    }
-
-    const currentEnd = new Date(appointment.endTime);
-    const newEnd = new Date(currentEnd.getTime() + additionalMinutes * 60000);
-
-    // Calcular nuevo valor de extendedDuration
-    const currentExtended = appointment.extendedDuration || 0;
-    const newExtendedDuration = currentExtended + parseInt(additionalMinutes);
-
-    await appointment.update({ 
-      endTime: newEnd,
-      extendedDuration: newExtendedDuration
-    });
-
-    // Emitir actualización en tiempo real
-    const updatedAppointment = await getAppointmentById(req.params.id);
-    emitAppointmentUpdate(updatedAppointment.toJSON());
-
+    const updated = await actions.extendTime(req.params.id, req.body, req.user);
     res.json({
       success: true,
-      appointment: updatedAppointment
+      appointment: updated
     });
   } catch (e) {
     console.error('[extendTime] Error:', e);
@@ -605,6 +569,22 @@ async function updateEmployeeStatus(req, res) {
   }
 }
 
+/**
+ * GET /appointments/stats
+ */
+async function getStats(req, res) {
+  try {
+    const businessId = req.query.businessId || req.params.businessId;
+    if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+
+    const stats = await queries.getAppointmentStats(businessId);
+    res.json(stats);
+  } catch (e) {
+    console.error('[getStats] Error:', e);
+    res.status(500).json({ error: e.message });
+  }
+}
+
 module.exports = {
   getByBusiness,
   getConsolidated,
@@ -620,5 +600,6 @@ module.exports = {
   deleteNote,
   confirmAttendance,
   cancelFromEmail,
-  updateEmployeeStatus
+  updateEmployeeStatus,
+  getStats
 };

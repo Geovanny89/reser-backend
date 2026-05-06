@@ -74,7 +74,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win24HEnd, [Op.gte]: win24HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder24hSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -101,7 +101,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win12HEnd, [Op.gte]: win12HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder12hSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -128,7 +128,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win2HEnd, [Op.gte]: win2HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder2hSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -191,7 +191,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win1HEnd, [Op.gte]: win1HStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminderSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -239,7 +239,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: winRefEnd, [Op.gte]: winRefStart },
         status: { [Op.in]: ['confirmed'] }, // Solo citas confirmadas
         referenceMessageSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -265,7 +265,7 @@ async function sendReminders() {
         startTime: { [Op.lte]: win30MEnd, [Op.gte]: win30MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         reminder30mSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -596,7 +596,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win60MEnd, [Op.gte]: win60MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert60mSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -621,7 +621,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win30MTechEnd, [Op.gte]: win30MTechStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlert30mSent: false,
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },
@@ -646,7 +646,7 @@ async function sendTechnicianFieldReminders(now, processingAppts) {
         startTime: { [Op.lte]: win15MEnd, [Op.gte]: win15MStart },
         status: { [Op.in]: ['pending', 'confirmed'] },
         pendingAlertSent: false, // Usamos el campo existente para 15min
-        createdAt: { [Op.lt]: new Date(now - 3 * 60 * 1000) } // Ignorar citas creadas hace < 3 min
+        createdAt: { [Op.lt]: new Date(now - 30 * 60 * 1000) } // Ignorar citas creadas hace < 30 min
       },
       include: [
         { model: Service },

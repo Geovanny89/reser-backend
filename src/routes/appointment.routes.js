@@ -40,6 +40,7 @@ const role   = require('../middleware/role');
  *               $ref: '#/components/schemas/Appointment'
  */
 router.post('/', ctrl.create);
+router.get('/stats', auth, ctrl.getStats);
 
 /**
  * @swagger

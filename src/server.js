@@ -1,4 +1,12 @@
 require('dotenv').config();
+
+// ─── Silenciar console.log en producción ───────────────────────────────────
+// Se conservan console.warn y console.error para detectar problemas reales.
+if (process.env.NODE_ENV === 'production') {
+  console.log = () => {};
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 const http = require('http');
 const app = require('./app');
 const { sequelize, BusinessType, User, Business } = require('./models');

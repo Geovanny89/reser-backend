@@ -20,8 +20,8 @@ const api = axios.create({
 const { getInstance, setInstance, getActiveBusinessIds } = require('./state');
 
 // Configuración
-const HEARTBEAT_INTERVAL = 4 * 60 * 1000; // 4 minutos (antes de los 5 min de timeout)
-const PING_INTERVAL = 2 * 60 * 1000; // 2 minutos para pings activos
+const HEARTBEAT_INTERVAL = 2 * 60 * 1000; // 2 minutos (más frecuente)
+const PING_INTERVAL = 1 * 60 * 1000; // 1 minuto para pings activos
 
 // Estado del heartbeat
 let heartbeatInterval = null;
@@ -59,15 +59,12 @@ async function checkInstanceStatus(businessId) {
  */
 async function pingInstance(businessId) {
   try {
-    // Opción 1: Verificar estado (esto mantiene la conexión activa)
+    // Intentar obtener el perfil propio o el estado de conexión
+    // Esto obliga a Evolution API a interactuar con el socket de WhatsApp
     await api.get(`/instance/connectionState/${businessId}`);
     
-    // Opción 2: Enviar un mensaje de prueba a sí mismo (más agresivo)
-    // await api.post(`/message/sendText/${businessId}`, {
-    //   number: businessId, // Usar el número del negocio
-    //   text: '🔔 Keep-alive ping',
-    //   delay: 100
-    // });
+    // Opcional: Hacer un fetch de la configuración para asegurar que el proxy responda
+    await api.get(`/instance/fetchInstances`);
     
     console.log(`[Heartbeat] 💓 Ping enviado a ${businessId}`);
     return true;
@@ -135,7 +132,10 @@ async function heartbeatCheck() {
     }
     
     if (!state || !validStates.includes(state)) {
-      console.log(`[Heartbeat] ⚠️ Instancia ${businessId} desconectada (${state}). Intentando reconectar...`);
+      console.log(`[Heartbeat] ⚠️ Instancia ${businessId} desconectada (${state}). Intentando recuperación suave...`);
+      
+      // Intentar reconectar usando el mismo proxy que ya tiene asignado
+      // La función createInstance en instanceManager ya se encarga de reusar el proxy de la DB
       await attemptReconnect(businessId);
     }
   }));

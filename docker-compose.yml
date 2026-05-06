@@ -18,7 +18,7 @@ services:
       retries: 5
  
   evolution_api: 
-    image: atendai/evolution-api:v2.1.2
+    image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution_api 
     restart: always 
     ports: 
@@ -29,7 +29,7 @@ services:
     volumes:
       - evolution_data:/evolution/instances
     environment: 
-      - SERVER_URL=http://localhost:8080
+      - SERVER_URL=http://72.62.165.89:8080
       - DATABASE_ENABLED=true 
       - DATABASE_PROVIDER=postgresql 
       - DATABASE_URL=postgresql://postgres:1234@postgres:5432/evolution?schema=public
@@ -44,15 +44,16 @@ services:
       - WEBHOOK_EVENTS_QRCODE_UPDATED=true
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
-      - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/evolution/webhook
+      - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/notifications/evolution/webhook
       - CACHE_REDIS_ENABLED=false
       - CACHE_LOCAL_ENABLED=true
       - DATABASE_SAVE_DATA_CHATS=false
       - DATABASE_SAVE_DATA_CONTACTS=false
       - DATABASE_SAVE_DATA_HISTORIC=false
       - DATABASE_SAVE_DATA_LABELS=false
-      - CONFIG_SESSION_PHONE_VERSION=2.3000.1033773198
-      - LOG_LEVEL=info
+      - CONFIG_SESSION_PHONE_CLIENT=Windows
+      - CONFIG_SESSION_PHONE_BROWSER=Google Chrome
+      - LOG_LEVEL=debug
       - LANGUAGE=es
  
 volumes: 

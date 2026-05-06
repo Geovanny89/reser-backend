@@ -19,19 +19,13 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
       return res.json({ status: 'connected' });
     }
 
-    // Si ya tenemos un QR en memoria, enviarlo de inmediato
-    if (whatsappService.currentQRs.has(businessId)) {
-      console.log(`[WhatsApp Route] 🔄 Entregando QR desde memoria para ${businessId}`);
-      return res.json({ qr: whatsappService.currentQRs.get(businessId), status: 'connecting' });
-    }
-
     // Intentar inicializar o recuperar instancia
-    // Quitamos forceFresh por defecto para no borrar sesiones existentes por error
-    await whatsappService.createInstance(businessId, false);
+    // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre/proxy
+    await whatsappService.createInstance(businessId, true);
 
     // Esperar un poco a que se genere el QR (el evento 'qr' en whatsappService lo guardará en currentQRs)
     let attempts = 0;
-    const maxAttempts = 90; // Aumentar a 90 segundos para dar tiempo suficiente a Evolution API
+    const maxAttempts = 120; // Aumentar a 120 segundos para dar tiempo suficiente a Evolution API v2.3.7
     
     const waitForQR = setInterval(() => {
       attempts++;
@@ -119,8 +113,8 @@ router.get('/whatsapp/status', auth, async (req, res) => {
       }
     }
     
-    // Si está en connecting y hay QR en memoria, mantener como connecting
-    if (realState === 'connecting' && whatsappService.currentQRs && whatsappService.currentQRs.has && whatsappService.currentQRs.has(businessId)) {
+    // Si está en connecting, asegurar que el estado reportado sea connecting
+    if (realState === 'connecting') {
       dbStatus = 'connecting';
     }
 
@@ -291,20 +285,36 @@ router.post('/evolution/webhook', async (req, res) => {
     console.log('[Evolution Webhook] 📨 Webhook recibido:', rawBody.substring(0, 1000));
     console.log('[Evolution Webhook] 🔍 Headers:', JSON.stringify(req.headers));
     
-    const { event, data, instance, eventType } = req.body;
+    const businessId = req.body.instance || req.body.instanceName;
+    const actualEvent = req.body.event || req.body.type;
+    const data = req.body.data;
+
+    console.log(`[Evolution Webhook] 📨 Webhook recibido: ${actualEvent} para ID: '${businessId}' (Long: ${businessId?.length})`);
     
-    // Evolution API puede enviar el evento en diferentes campos
-    const actualEvent = event || eventType || req.body?.event;
-    const actualInstance = instance || data?.instanceId || req.body?.instanceId;
-    
-    console.log(`[Evolution Webhook] 🔍 Evento detectado: ${actualEvent}, Instancia: ${actualInstance}`);
+    const actualInstance = businessId;
     
     if (!actualInstance) {
       console.log('[Evolution Webhook] ⚠️ Webhook sin instancia identificable, ignorando');
       return res.status(200).json({ message: 'OK' });
     }
-    
-    const businessId = actualInstance;
+
+    // Validar si el businessId es un UUID válido antes de proceder con DB
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const isUUID = uuidRegex.test(actualInstance);
+
+    if (!isUUID) {
+      console.log(`[Evolution Webhook] ℹ️ Instancia '${actualInstance}' no es un UUID válido. Procesando solo en memoria.`);
+      
+      // Si es qrcode.update, guardar en memoria de todos modos
+      if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED') {
+        const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
+        if (qrBase64) {
+          whatsappService.currentQRs.set(actualInstance, qrBase64);
+          console.log(`[Evolution Webhook] 📲 QR capturado en memoria para instancia de prueba: ${actualInstance}`);
+        }
+      }
+      return res.status(200).json({ message: 'OK (Non-UUID instance processed in memory)' });
+    }
     
     // Manejar evento de conexión
     if (actualEvent === 'connection.update' || actualEvent === 'connection_update' || actualEvent === 'CONNECTION_UPDATE') {
@@ -363,8 +373,10 @@ router.post('/evolution/webhook', async (req, res) => {
     
     // Manejar evento de QR actualizado
     if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED') {
-      if (data?.base64) {
-        whatsappService.currentQRs.set(businessId, data.base64);
+      const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
+      if (qrBase64) {
+        console.log(`[Evolution Webhook] 📲 QR capturado para ${businessId}`);
+        whatsappService.currentQRs.set(businessId, qrBase64);
       }
     }
     

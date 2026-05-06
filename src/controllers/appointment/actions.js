@@ -1128,11 +1128,56 @@ async function sendRatingEmail(appointment) {
   }
 }
 
+/**
+ * Extiende el tiempo de una cita en curso
+ */
+async function extendTimeAction(appointmentId, data, user) {
+  const { additionalMinutes } = data;
+  const { getAppointmentById } = require('./queries');
+  const { emitAppointmentUpdate } = require('../../services/socketService');
+
+  if (!additionalMinutes || additionalMinutes < 1) {
+    throw new Error('Minutos adicionales inválidos');
+  }
+
+  const appointment = await getAppointmentById(appointmentId);
+  if (!appointment) throw new Error('Cita no encontrada');
+
+  if (appointment.status !== 'attention') {
+    throw new Error('Solo se pueden extender citas en estado "En Atención"');
+  }
+
+  const currentEnd = new Date(appointment.endTime);
+  const newEnd = new Date(currentEnd.getTime() + additionalMinutes * 60000);
+  const newExtendedDuration = (appointment.extendedDuration || 0) + parseInt(additionalMinutes);
+
+  await appointment.update({ 
+    endTime: newEnd,
+    extendedDuration: newExtendedDuration
+  });
+
+  const updatedAppointment = await getAppointmentById(appointmentId);
+  emitAppointmentUpdate(updatedAppointment.toJSON());
+
+  return updatedAppointment;
+}
+
 module.exports = {
   createAppointment,
   updateAppointmentStatus,
-  cancelAppointment,
-  updateAppointment,
+  cancelAppointment: async (id) => {
+    const { Appointment } = require('../../models');
+    const appt = await Appointment.findByPk(id);
+    if (appt) await appt.update({ status: 'cancelled' });
+    return appt;
+  },
+  updateAppointment: async (id, data) => {
+    const { Appointment } = require('../../models');
+    const appt = await Appointment.findByPk(id);
+    if (appt) await appt.update(data);
+    return appt;
+  },
+  extendTime: extendTimeAction,
   generateReferenceCode,
   sendPaymentReceipt,
   sendRatingEmail

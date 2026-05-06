@@ -7,6 +7,7 @@ module.exports = (sequelize) => {
     sessionData: { type: DataTypes.TEXT, comment: 'Datos de la sesión de Baileys serializados' },
     status: { type: DataTypes.ENUM('disconnected', 'connecting', 'connected', 'session_saved'), defaultValue: 'disconnected' },
     phoneNumber: { type: DataTypes.STRING },
+    proxyConfig: { type: DataTypes.TEXT, comment: 'Configuración del proxy asignado (JSON string)' },
     lastActivity: { type: DataTypes.DATE, comment: 'Última actividad de la sesión' },
   });
 };

@@ -2,7 +2,7 @@
  * Consultas y queries de citas
  */
 
-const { Appointment, Service, Employee, User, Business, AppointmentEmployee, Op } = require('../../models');
+const { Appointment, Service, Employee, User, Business, AppointmentEmployee, Op, sequelize } = require('../../models');
 const { colombiaDateFromString } = require('./utils');
 
 /**
@@ -164,10 +164,93 @@ async function getAppointmentById(id, includeAll = true) {
   return await Appointment.findByPk(id, { include });
 }
 
+/**
+ * Obtiene estadísticas resumidas de citas para un negocio
+ */
+async function getAppointmentStats(businessId) {
+  const currentMonth = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  
+  const [stats, techStats, financeStats] = await Promise.all([
+    Appointment.findAll({
+      where: { businessId },
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['status'],
+      raw: true
+    }),
+    Appointment.findAll({
+      where: { 
+        businessId,
+        technicianStatus: { [Op.ne]: null }
+      },
+      attributes: [
+        'technicianStatus',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      group: ['technicianStatus'],
+      raw: true
+    }),
+    // Ingresos del mes por método de pago
+    Appointment.findAll({
+      where: {
+        businessId,
+        status: 'done',
+        startTime: {
+          [Op.gte]: new Date(`${currentMonth}-01T00:00:00-05:00`)
+        }
+      },
+      attributes: [
+        'paymentMethod',
+        [sequelize.fn('SUM', sequelize.literal('CAST(COALESCE("Service"."price", 0) AS DECIMAL) + CAST(COALESCE("additionalAmount", 0) AS DECIMAL)')), 'total']
+      ],
+      include: [{ model: Service, attributes: [] }],
+      group: ['paymentMethod'],
+      raw: true
+    })
+  ]);
+
+  const result = {
+    total: 0,
+    pending: 0,
+    confirmed: 0,
+    attention: 0,
+    done: 0,
+    cancelled: 0,
+    onTheWay: 0,
+    arrived: 0,
+    finance: {
+      cash: 0,
+      transfer: 0
+    }
+  };
+
+  stats.forEach(s => {
+    const count = parseInt(s.count);
+    result[s.status] = count;
+    result.total += count;
+  });
+
+  techStats.forEach(s => {
+    if (s.technicianStatus === 'on_the_way') result.onTheWay = parseInt(s.count);
+    if (s.technicianStatus === 'arrived') result.arrived = parseInt(s.count);
+  });
+
+  financeStats.forEach(f => {
+    const total = parseFloat(f.total || 0);
+    if (f.paymentMethod === 'cash') result.finance.cash = total;
+    if (f.paymentMethod === 'transfer') result.finance.transfer = total;
+  });
+
+  return result;
+}
+
 module.exports = {
   getAppointmentsByBusiness,
   getConsolidatedAppointments,
   getEmployeeAppointments,
   getClientAppointments,
-  getAppointmentById
+  getAppointmentById,
+  getAppointmentStats
 };

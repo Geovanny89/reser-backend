@@ -151,7 +151,13 @@ exports.remove = async (req, res) => {
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
 
     // Eliminar en orden por dependencias
-    // Primero obtener IDs de citas para eliminar sus notas
+    const { 
+      BusinessReview, PlatformReview, ClientProfile, CashMovement, CashRegisterShift, 
+      Expense, Deposit, ScheduledMessage, SpecialSchedule, EmployeeVacation, 
+      Promotion, ServiceGroup, ClientTag, ActivityLog, BirthdayTemplate 
+    } = require('../../models');
+
+    // Primero obtener IDs de citas para eliminar sus notas y dependencias
     const appointments = await Appointment.findAll({
       where: { businessId: biz.id },
       attributes: ['id']
@@ -159,7 +165,26 @@ exports.remove = async (req, res) => {
     const appointmentIds = appointments.map(a => a.id);
     if (appointmentIds.length > 0) {
       await AppointmentNote.destroy({ where: { appointmentId: appointmentIds } });
+      await ScheduledMessage.destroy({ where: { appointmentId: appointmentIds } });
     }
+
+    // Limpiar dependencias secundarias
+    await BusinessReview.destroy({ where: { businessId: biz.id } });
+    if (PlatformReview) await PlatformReview.destroy({ where: { businessId: biz.id } });
+    if (ClientProfile) await ClientProfile.destroy({ where: { businessId: biz.id } });
+    if (CashMovement) await CashMovement.destroy({ where: { businessId: biz.id } });
+    if (CashRegisterShift) await CashRegisterShift.destroy({ where: { businessId: biz.id } });
+    if (Expense) await Expense.destroy({ where: { businessId: biz.id } });
+    if (Deposit) await Deposit.destroy({ where: { businessId: biz.id } });
+    if (SpecialSchedule) await SpecialSchedule.destroy({ where: { businessId: biz.id } });
+    if (EmployeeVacation) await EmployeeVacation.destroy({ where: { businessId: biz.id } });
+    if (Promotion) await Promotion.destroy({ where: { businessId: biz.id } });
+    if (ServiceGroup) await ServiceGroup.destroy({ where: { businessId: biz.id } });
+    if (ClientTag) await ClientTag.destroy({ where: { businessId: biz.id } });
+    if (ActivityLog) await ActivityLog.destroy({ where: { businessId: biz.id } });
+    if (BirthdayTemplate) await BirthdayTemplate.destroy({ where: { businessId: biz.id } });
+
+    // Limpiar dependencias principales
     await Appointment.destroy({ where: { businessId: biz.id } });
     await Schedule.destroy({ where: { businessId: biz.id } });
     await Employee.destroy({ where: { businessId: biz.id } });

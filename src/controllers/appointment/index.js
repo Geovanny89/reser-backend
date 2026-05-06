@@ -38,6 +38,7 @@ module.exports = {
   addNote: handlers.addNote,
   deleteNote: handlers.deleteNote,
   updateEmployeeStatus: handlers.updateEmployeeStatus,
+  getStats: handlers.getStats,
   
   // Handlers de clientes y etiquetas
   getClientsByBusiness: async (req, res) => {

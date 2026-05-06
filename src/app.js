@@ -39,11 +39,12 @@ app.use(cors({
   credentials: true
 }));
 
-// 3. Rate Limiting (Aplica a las rutas de la API)
-app.set('trust proxy', 1); // Necesario para que express-rate-limit funcione detrás de NGINX
+// 3. Rate Limiting (Aplica a las rutas de la API, excepto webhooks de Evolution)
+app.set('trust proxy', 1); 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 500, // Limitar a 500 peticiones por IP cada 15 minutos
+  windowMs: 15 * 60 * 1000, 
+  max: 500, 
+  skip: (req) => req.path.includes('/evolution/webhook'), // Skip rate limit for webhooks
   message: { error: 'Demasiadas peticiones desde esta IP, por favor intenta de nuevo después de 15 minutos.' }
 });
 app.use('/api/', limiter);
