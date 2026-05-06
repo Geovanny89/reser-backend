@@ -19,9 +19,11 @@ services:
  
   evolution_api: 
     image: evoapicloud/evolution-api:v2.3.7
-    container_name: evolution_api 
-    restart: always 
-    ports: 
+    container_name: evolution_api
+    env_file:
+      - .env
+    restart: always
+    ports:
       - "8080:8080" 
     depends_on: 
       postgres:

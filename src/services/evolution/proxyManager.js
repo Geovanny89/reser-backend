@@ -10,18 +10,55 @@ const sequelize = require('../../config/database');
 const PROXIES_FILE = path.join(__dirname, '../../config/proxies.json');
 
 /**
- * Carga la lista de proxies desde el archivo de configuración
+ * Carga la lista de proxies desde el archivo de configuración o variables de entorno
  */
 function loadProxies() {
+  // 1. Intentar cargar desde una variable de entorno que contenga el JSON completo (Ideal para Producción/Docker)
+  const envProxiesJson = process.env.EVO_PROXIES_JSON;
+  if (envProxiesJson) {
+    try {
+      const parsed = JSON.parse(envProxiesJson);
+      if (Array.isArray(parsed)) {
+        console.log(`[Proxy Manager] ℹ️ ${parsed.length} proxies cargados desde EVO_PROXIES_JSON`);
+        return parsed;
+      }
+    } catch (err) {
+      console.error(`[Proxy Manager] ❌ Error parseando EVO_PROXIES_JSON:`, err.message);
+    }
+  }
+
+  // 2. Retrocompatibilidad: Verificar si existen variables de entorno para un proxy único
+  const envHost = process.env.PROXY_HOST;
+  if (envHost) {
+    const envPort = process.env.PROXY_PORT ? parseInt(process.env.PROXY_PORT) : undefined;
+    const envProtocol = process.env.PROXY_PROTOCOL || 'http';
+    const envUser = process.env.PROXY_USERNAME || undefined;
+    const envPass = process.env.PROXY_PASSWORD || undefined;
+    const envMax = process.env.PROXY_MAX_INSTANCES ? parseInt(process.env.PROXY_MAX_INSTANCES) : undefined;
+    
+    const proxyFromEnv = {
+      proxyHost: envHost,
+      proxyPort: envPort,
+      proxyProtocol: envProtocol,
+      proxyUsername: envUser,
+      proxyPassword: envPass,
+      maxInstances: envMax
+    };
+    console.log('[Proxy Manager] ℹ️ Proxy único cargado desde variables de entorno');
+    return [proxyFromEnv];
+  }
+
+  // 3. Cargar desde el archivo de configuración (ignorado por Git)
   try {
     if (!fs.existsSync(PROXIES_FILE)) {
       console.warn(`[Proxy Manager] ⚠️ Archivo de proxies no encontrado: ${PROXIES_FILE}`);
       return [];
     }
     const data = fs.readFileSync(PROXIES_FILE, 'utf8');
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [parsed];
   } catch (err) {
-    console.error(`[Proxy Manager] ❌ Error cargando proxies:`, err.message);
+    console.error(`[Proxy Manager] ❌ Error cargando proxies desde archivo:`, err.message);
     return [];
   }
 }

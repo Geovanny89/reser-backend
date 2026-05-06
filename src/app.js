@@ -80,6 +80,7 @@ app.get('/api/docs.json', (req, res) => res.json(swaggerSpec));
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/businesses', require('./routes/business.routes'));
 app.use('/api/business-types', require('./routes/businessType.routes'));
+app.use('/api/kady', require('./routes/kady.routes'));
 
 const checkBusinessStatus = require('./middleware/checkBusinessStatus');
 app.use('/api/services', checkBusinessStatus, require('./routes/service.routes'));

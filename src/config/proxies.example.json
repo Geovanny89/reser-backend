@@ -1,0 +1,10 @@
+[
+  {
+    "proxyHost": "1.2.3.4",
+    "proxyPort": 1234,
+    "proxyProtocol": "http",
+    "proxyUsername": "tu_usuario",
+    "proxyPassword": "tu_password",
+    "maxInstances": 4
+  }
+]

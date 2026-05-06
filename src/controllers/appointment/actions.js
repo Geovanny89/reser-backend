@@ -365,7 +365,8 @@ async function createAppointment(data, user) {
     discountApplied,
     finalPrice,
     promotionId,
-    extraServices: extraServices || []
+    extraServices: extraServices || [],
+    source: data.source || 'web'
   };
 
   const appointment = await Appointment.create(appointmentData);
@@ -534,7 +535,10 @@ async function createAppointment(data, user) {
       // Solo si tiene teléfono, no es negocio de técnicos de campo, y NO es cita express (walk-in)
       const isExpressAppointment = fullAppt.status === 'attention';
       if (fullAppt.clientPhone && !fullAppt.Business?.hasFieldTechnicians && !isExpressAppointment) {
-        console.log('[Create Appointment] Programando mensaje de WhatsApp 1 min después...');
+        // Delay adaptativo: 5 minutos para chatbot (para parecer más humano/procesamiento), 1 minuto para otros
+        const delayMinutes = fullAppt.source === 'kady_chatbot' ? 5 : 1;
+        console.log(`[Create Appointment] Programando mensaje de WhatsApp ${delayMinutes} min después... (Source: ${fullAppt.source || 'default'})`);
+        
         try {
           const messageText = generateAppointmentCreatedMessage(fullAppt);
           await scheduleMessage({
@@ -543,9 +547,9 @@ async function createAppointment(data, user) {
             phone: fullAppt.clientPhone,
             message: messageText,
             type: 'custom',
-            scheduledAt: new Date(Date.now() + 1 * 60 * 1000) // 1 minuto después (simula escritura humana)
+            scheduledAt: new Date(Date.now() + delayMinutes * 60 * 1000)
           });
-          console.log('[Create Appointment] ✅ Mensaje de cita creada programado para 1 minuto después');
+          console.log(`[Create Appointment] ✅ Mensaje de cita creada programado para ${delayMinutes} minutos después`);
         } catch (waErr) {
           console.error('[Create Appointment] Error programando mensaje WhatsApp:', waErr.message);
         }

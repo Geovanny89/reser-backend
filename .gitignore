@@ -3,6 +3,7 @@ node_modules
 .env
 .env.example
 src/config/firebase-service-account.json
+src/config/proxies.json
 
 # WhatsApp / Puppeteer sessions
 sessions/
