@@ -3,7 +3,7 @@
  */
 
 const { Appointment, Service, Employee, Business, Schedule, SpecialSchedule, EmployeeVacation, Promotion, Op, sequelize } = require('../../models');
-const { colombiaDateFromString, getDayOfWeekColombia, COLOMBIA_OFFSET_MS } = require('./utils');
+const { colombiaDateFromString, getDayOfWeekColombia, COLOMBIA_OFFSET_MS, getNowColombia, getTodayStringColombia } = require('./utils');
 
 /**
  * Obtiene disponibilidad de horarios para una fecha, empleado y servicio
