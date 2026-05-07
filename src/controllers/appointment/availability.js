@@ -8,7 +8,7 @@ const { colombiaDateFromString, getDayOfWeekColombia, COLOMBIA_OFFSET_MS } = req
 /**
  * Obtiene disponibilidad de horarios para una fecha, empleado y servicio
  */
-async function getAvailability(date, employeeId, serviceId, businessId, allowPast = false) {
+async function getAvailability(date, employeeId, serviceId, businessId, allowPast = false, excludeId = null) {
   // Validar parámetros
   if (!date || !employeeId || !serviceId || !businessId) {
     throw new Error('Fecha, empleado, servicio y negocio son requeridos');
@@ -152,14 +152,20 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   const startOfDay = new Date(`${date}T00:00:00-05:00`);
   const endOfDay = new Date(`${date}T23:59:59.999-05:00`);
 
+  const whereCondition = {
+    employeeId,
+    businessId,
+    status: { [Op.notIn]: ['cancelled'] },
+    startTime: { [Op.lt]: endOfDay },
+    endTime: { [Op.gt]: startOfDay }
+  };
+
+  if (excludeId) {
+    whereCondition.id = { [Op.ne]: excludeId };
+  }
+
   const existingAppointments = await Appointment.findAll({
-    where: {
-      employeeId,
-      businessId,
-      status: { [Op.notIn]: ['cancelled'] },
-      startTime: { [Op.lt]: endOfDay },
-      endTime: { [Op.gt]: startOfDay }
-    }
+    where: whereCondition
   });
 
   console.log(`[Availability] Citas existentes (no canceladas): ${existingAppointments.length}`, 

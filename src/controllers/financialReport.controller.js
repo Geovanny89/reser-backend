@@ -40,6 +40,12 @@ exports.getFinancialReport = async (req, res) => {
       businessId,
       createdAt: { [Op.between]: [startDate, endDate] }
     };
+    
+    // Si es para un empleado específico, podemos filtrar movimientos por cita
+    if (employeeId && employeeId !== 'all' && employeeId !== '') {
+      // Sequelize no permite filtrar directamente por include en el count/sum de forma simple aquí
+      // pero el loop de abajo ya lo maneja.
+    }
 
     const movements = await CashMovement.findAll({
       where: movementsWhere,
@@ -47,7 +53,7 @@ exports.getFinancialReport = async (req, res) => {
         { model: CashMovement, as: 'ReversedMovement' },
         { 
           model: Appointment, 
-          attributes: ['id', 'employeeId', 'finalPrice', 'basePrice', 'discountApplied'],
+          attributes: ['id', 'employeeId', 'startTime', 'finalPrice', 'basePrice', 'discountApplied'],
           include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
         }
       ]
@@ -73,6 +79,15 @@ exports.getFinancialReport = async (req, res) => {
       }
 
       if (isIncome) {
+        // CORRECCIÓN: Verificar que la cita asociada al movimiento esté dentro del rango de fecha
+        // Esto evita que citas de otros días (pero cobradas hoy) alteren el reporte diario
+        if (m.Appointment) {
+          const apptTime = new Date(m.Appointment.startTime);
+          if (apptTime < startDate || apptTime > endDate) {
+            return; // Omitir si la cita no es del periodo solicitado
+          }
+        }
+
         // Si hay filtro de empleado, verificar que el movimiento esté asociado a una cita de ese empleado
         if (employeeId && employeeId !== 'all' && employeeId !== '') {
           if (!m.Appointment || String(m.Appointment.employeeId) !== employeeId) {

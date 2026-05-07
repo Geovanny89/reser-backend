@@ -246,9 +246,11 @@ async function createAppointment(data, user) {
   console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString(), originalStartTime: startTime });
 
   // Validar que la hora no sea en el pasado (con margen de 5 minutos)
-  // Las citas express (status='attention') están exentas de esta validación
+  // Las citas express (status='attention') o creadas por ADMIN están exentas
   const isExpress = status === 'attention';
-  if (!isExpress) {
+  const isAdmin = user && (['admin', 'admin_suc', 'superadmin'].includes(user.role));
+  
+  if (!isExpress && !isAdmin) {
     const now = new Date();
     const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de margen
     if (start.getTime() < (now.getTime() - MARGIN_MS)) {
@@ -623,8 +625,8 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
       if (additionalAmount !== undefined) updateData.additionalAmount = parseFloat(additionalAmount);
       if (additionalNote !== undefined) updateData.additionalNote = additionalNote;
 
-      // Calcular precio final si no viene explícitamente y no está guardado
-      if (updateData.finalPrice === undefined && !appointment.finalPrice) {
+      // Calcular precio final si no viene explícitamente (siempre recalcular al completar para incluir cambios de último momento)
+      if (updateData.finalPrice === undefined) {
         const basePrice = parseFloat(appointment.basePrice || appointment.Service?.price || 0);
         
         // Sumar servicios extra guardados en la cita
@@ -1139,6 +1141,7 @@ async function extendTimeAction(appointmentId, data, user) {
   const { additionalMinutes } = data;
   const { getAppointmentById } = require('./queries');
   const { emitAppointmentUpdate } = require('../../services/socketService');
+  const { Appointment, Op } = require('../../models');
 
   if (!additionalMinutes || additionalMinutes < 1) {
     throw new Error('Minutos adicionales inválidos');
@@ -1147,12 +1150,36 @@ async function extendTimeAction(appointmentId, data, user) {
   const appointment = await getAppointmentById(appointmentId);
   if (!appointment) throw new Error('Cita no encontrada');
 
-  if (appointment.status !== 'attention') {
-    throw new Error('Solo se pueden extender citas en estado "En Atención"');
+  // Permitir extender tanto en 'attention' como en 'in_progress' (técnicos)
+  const allowedStatuses = ['attention', 'in_progress'];
+  if (!allowedStatuses.includes(appointment.status)) {
+    throw new Error(`Solo se pueden extender citas en atención. Estado actual: ${appointment.status}`);
   }
 
   const currentEnd = new Date(appointment.endTime);
   const newEnd = new Date(currentEnd.getTime() + additionalMinutes * 60000);
+
+  // VALIDACIÓN: Verificar si la extensión choca con la siguiente cita
+  const nextAppointment = await Appointment.findOne({
+    where: {
+      employeeId: appointment.employeeId,
+      businessId: appointment.businessId,
+      status: { [Op.notIn]: ['cancelled'] },
+      id: { [Op.ne]: appointment.id },
+      // Check for overlap: another appointment starting before our newEnd and ending after our currentEnd
+      startTime: { [Op.lt]: newEnd },
+      endTime: { [Op.gt]: currentEnd }
+    },
+    order: [['startTime', 'ASC']]
+  });
+
+  if (nextAppointment) {
+    const startTimeStr = new Date(nextAppointment.startTime).toLocaleTimeString('es-CO', { 
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Bogota' 
+    });
+    throw new Error(`No se puede extender: El empleado tiene otra cita a las ${startTimeStr}`);
+  }
+
   const newExtendedDuration = (appointment.extendedDuration || 0) + parseInt(additionalMinutes);
 
   await appointment.update({ 
