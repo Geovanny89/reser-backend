@@ -211,9 +211,9 @@ async function configureWebhook(businessId) {
         url: webhookUrl,
         webhookByEvents: false,
         events: [
-          "messages.upsert",
-          "connection.update",
-          "qrcode.update"
+          "MESSAGES_UPSERT",
+          "CONNECTION_UPDATE",
+          "QRCODE_UPDATED"
         ]
       }
     };
