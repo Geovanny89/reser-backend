@@ -218,7 +218,7 @@ async function configureWebhook(businessId) {
 
     console.log(`[Evolution API] 📦 Payload V2:`, JSON.stringify(payload, null, 2));
 
-    await api.post(`/instance/updateWebhook/${businessId}`, payload);
+    await api.post(`/webhook/set/${businessId}`, payload);
 
     console.log(`[Evolution API] ✅ Webhook configurado para ${businessId}`);
   } catch (err) {
