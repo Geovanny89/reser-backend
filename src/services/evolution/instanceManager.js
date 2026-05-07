@@ -206,21 +206,19 @@ async function configureWebhook(businessId) {
     console.log(`[Evolution API] 🔗 Configurando webhook para ${businessId}: ${webhookUrl}`);
 
     const payload = {
-      webhook: {
-        enabled: true,
-        url: webhookUrl,
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: [
-          "MESSAGES_UPSERT",
-          "CONNECTION_UPDATE"
-        ]
-      }
+      enabled: true,
+      url: webhookUrl,
+      webhookByEvents: false,
+      events: [
+        "messages.upsert",
+        "connection.update",
+        "qrcode.update"
+      ]
     };
 
-    console.log(`[Evolution API] 📦 Payload:`, JSON.stringify(payload, null, 2));
+    console.log(`[Evolution API] 📦 Payload V2:`, JSON.stringify(payload, null, 2));
 
-    await api.post(`/webhook/set/${businessId}`, payload);
+    await api.post(`/instance/updateWebhook/${businessId}`, payload);
 
     console.log(`[Evolution API] ✅ Webhook configurado para ${businessId}`);
   } catch (err) {
@@ -464,6 +462,14 @@ async function stopInstance(businessId) {
         console.log(`[Evolution API] ⚠️ Intento ${deleteAttempts}/${maxDeleteAttempts} falló:`, deleteErr.response?.status || deleteErr.message);
 
         if (deleteAttempts < maxDeleteAttempts) {
+          // Si falla con 400 o 422, intentar desconectar de nuevo agresivamente
+          if (deleteErr.response?.status === 400 || deleteErr.response?.status === 422) {
+             console.log(`[Evolution API] 🔄 Re-intentando desconexión forzada antes de borrar...`);
+             try { await api.delete(`/instance/logout/${businessId}`); } catch (e) { }
+             try { await api.post(`/instance/disconnect/${businessId}`); } catch (e) { }
+             await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+
           // Si dice que necesita estar desconectada, esperar más
           const errorMsg = JSON.stringify(deleteErr.response?.data || '');
           if (errorMsg.includes('disconnected') || errorMsg.includes('needs to be')) {
