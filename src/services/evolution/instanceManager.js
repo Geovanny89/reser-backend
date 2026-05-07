@@ -206,17 +206,19 @@ async function configureWebhook(businessId) {
     console.log(`[Evolution API] 🔗 Configurando webhook para ${businessId}: ${webhookUrl}`);
 
     const payload = {
-      enabled: true,
-      url: webhookUrl,
-      webhookByEvents: false,
-      events: [
-        "messages.upsert",
-        "connection.update",
-        "qrcode.update"
-      ]
+      webhook: {
+        enabled: true,
+        url: webhookUrl,
+        webhookByEvents: false,
+        events: [
+          "messages.upsert",
+          "connection.update",
+          "qrcode.update"
+        ]
+      }
     };
 
-    console.log(`[Evolution API] 📦 Payload V2:`, JSON.stringify(payload, null, 2));
+    console.log(`[Evolution API] 📦 Payload V2 (Wrapped):`, JSON.stringify(payload, null, 2));
 
     await api.post(`/webhook/set/${businessId}`, payload);
 
