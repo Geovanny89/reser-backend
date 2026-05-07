@@ -121,7 +121,14 @@ async function createInstance(businessId, forceFresh = false) {
 
     if (proxy) {
       console.log(`[Evolution API] 🛡️ Usando proxy para ${businessId}: ${proxy.host}`);
-      createPayload.proxy = proxy;
+      // Evolution API v2 acepta proxy directamente en el payload de creación
+      createPayload.proxy = {
+        host: proxy.host,
+        port: String(proxy.port),  // Evolution API v2 requiere port como string
+        protocol: proxy.protocol || 'http',
+        username: proxy.username || undefined,
+        password: proxy.password || undefined
+      };
     } else {
       console.log(`[Evolution API] 🌐 No hay proxy disponible para ${businessId}, usando IP del VPS`);
     }
@@ -139,6 +146,33 @@ async function createInstance(businessId, forceFresh = false) {
       console.log(`[Evolution API] ✅ Nombre de navegador forzado a Windows - Google Chrome`);
     } catch (e) {
       console.warn(`[Evolution API] ⚠️ No se pudo forzar el nombre en settings (Ignorar si ya está conectando):`, e.message);
+    }
+
+    // APLICAR PROXY VÍA ENDPOINT DEDICADO (paso 2/2 requerido en Evolution API v2)
+    // El proxy en el payload de /instance/create solo lo registra, pero para que
+    // Baileys realmente lo use, hay que llamar también a /proxy/set/
+    if (proxy) {
+      try {
+        const proxySetPayload = {
+          enabled: true,
+          host: proxy.host,
+          port: String(proxy.port),  // Evolution API v2 requiere port como string
+          protocol: proxy.protocol || 'http',
+          username: proxy.username || '',
+          password: proxy.password || ''
+        };
+        await api.post(`/proxy/set/${businessId}`, proxySetPayload);
+        console.log(`[Evolution API] ✅ Proxy activado vía /proxy/set/ para ${businessId}: ${proxy.host}:${proxy.port}`);
+        // Verificar que quedó guardado
+        const proxyVerify = await api.get(`/proxy/find/${businessId}`).catch(() => ({ data: null }));
+        if (proxyVerify.data?.enabled) {
+          console.log(`[Evolution API] 🛡️ Proxy verificado en Evolution API: ${proxyVerify.data.host}:${proxyVerify.data.port}`);
+        } else {
+          console.warn(`[Evolution API] ⚠️ No se pudo verificar el proxy guardado`);
+        }
+      } catch (proxyErr) {
+        console.warn(`[Evolution API] ⚠️ Error aplicando proxy vía /proxy/set/ (no crítico):`, proxyErr.response?.data || proxyErr.message);
+      }
     }
 
     const instanceData = response.data.instance;
@@ -625,11 +659,14 @@ async function sendMessageDirect(businessId, phone, text) {
     const dynamicDelay = Math.min(Math.max(text.length * 20, 1500), 5000);
 
     // PASO 1: Activar indicador "Escribiendo..." ANTES de enviar el mensaje
-    // Esto es la forma correcta: llamar /chat/updatePresence con 'composing' primero
+    // Endpoint correcto de Evolution API: /chat/sendPresence
     try {
-      await api.post(`/chat/updatePresence/${businessId}`, {
-        number: `${formattedPhone}@s.whatsapp.net`,
-        options: { presence: 'composing' }
+      await api.post(`/chat/sendPresence/${businessId}`, {
+        number: formattedPhone,
+        options: {
+          delay: dynamicDelay,
+          presence: 'composing'
+        }
       });
       console.log(`[Evolution API] ✍️ Indicador "Escribiendo..." activado para ${formattedPhone}`);
     } catch (presenceErr) {
@@ -651,9 +688,12 @@ async function sendMessageDirect(businessId, phone, text) {
 
     // PASO 4: Marcar presencia como 'paused' después de enviar
     try {
-      await api.post(`/chat/updatePresence/${businessId}`, {
-        number: `${formattedPhone}@s.whatsapp.net`,
-        options: { presence: 'paused' }
+      await api.post(`/chat/sendPresence/${businessId}`, {
+        number: formattedPhone,
+        options: {
+          delay: 0,
+          presence: 'paused'
+        }
       });
     } catch (_) { /* ignorar */ }
 
