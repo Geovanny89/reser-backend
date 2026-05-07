@@ -4,14 +4,34 @@
 
 const { Appointment, Service, Employee, Business, Schedule, SpecialSchedule, EmployeeVacation, Promotion, Op, sequelize } = require('../../models');
 const { colombiaDateFromString, getDayOfWeekColombia, COLOMBIA_OFFSET_MS, getNowColombia, getTodayStringColombia } = require('./utils');
+const fs = require('fs');
+const path = require('path');
+
+const debugLog = (msg) => {
+  const logFile = 'c:\\Users\\Gecaro\\Downloads\\kdice-final-v5\\availability_debug.log';
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(logFile, `[${timestamp}] ${msg}\n`);
+};
+
+exports.getAvailability = async (req, res) => {
+  try {
+    const { date, employeeId, serviceId, businessId, allowPast } = req.query;
+    debugLog(`[Availability Handler] Incoming: date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}`);
+    const result = await getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true');
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
 
 /**
  * Obtiene disponibilidad de horarios para una fecha, empleado y servicio
  */
 async function getAvailability(date, employeeId, serviceId, businessId, allowPast = false, excludeId = null) {
-  // Validar parámetros
+  debugLog(`[getAvailability Core] date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}`);
   if (!date || !employeeId || !serviceId || !businessId) {
-    throw new Error('Fecha, empleado, servicio y negocio son requeridos');
+    debugLog(`[getAvailability Core] MISSING PARAMETERS: date=${!!date}, emp=${!!employeeId}, svc=${!!serviceId}, bus=${!!businessId}`);
+    return { availableSlots: [] };
   }
 
   const service = await Service.findByPk(serviceId);
@@ -140,11 +160,11 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
     blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
     
-    console.log(`[Availability] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
+    debugLog(`[Availability] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
   }
 
   if (workSchedules.length === 0) {
-    console.log(`[Availability] No se encontraron horarios de trabajo para ${date}.`);
+    debugLog(`[Availability] No se encontraron horarios de trabajo para ${date}.`);
     return { availableSlots: [] };
   }
 
@@ -176,17 +196,30 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   const duration = service.durationMin || service.duration || 30;
   console.log(`[Availability] Duración servicio: ${duration}min, allowPast: ${allowPast}`);
   
+  debugLog(`[Availability Debug] Starting for date: ${date}, emp: ${employeeId}, svc: ${serviceId}`);
+
   const slots = generateAvailableSlots(
     workSchedules,
     lunchRanges,
     blockedRanges,
     existingAppointments,
     duration,
-    dateObj,
+    date,
     allowPast
   );
 
-  console.log(`[Availability] Slots generados: ${slots.length}`, slots.length > 0 ? `Primero: ${slots[0].time}, Último: ${slots[slots.length-1].time}` : 'NINGUNO');
+  debugLog(`[Availability Debug] Generated ${slots.length} slots for ${date}`);
+  if (slots.length === 0) {
+    debugLog(`[Availability Debug] REASONS FOR ZERO SLOTS:
+      workSchedules: ${workSchedules.length}
+      lunchRanges: ${lunchRanges.length}
+      blockedRanges: ${blockedRanges.length}
+      existingAppointments: ${existingAppointments.length}
+      duration: ${duration}
+      allowPast: ${allowPast}
+      currentNowColombia: ${getNowColombia().toISOString()}
+    `);
+  }
 
   // Verificar promociones
   const today = getTodayStringColombia();
@@ -220,7 +253,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
 /**
  * Genera slots disponibles considerando citas existentes, almuerzo y bloqueos
  */
-function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, existingAppointments, duration, dateObj, allowPast) {
+function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, existingAppointments, duration, date, allowPast) {
   if (!workSchedules || workSchedules.length === 0) return [];
 
   const slots = [];
@@ -280,7 +313,10 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
 
       if (!allowPast) {
         const MARGIN_MS = 5 * 60 * 1000;
-        if (slotTime.getTime() <= (Date.now() - MARGIN_MS)) {
+        const nowMs = Date.now();
+        const slotMs = slotTime.getTime();
+        if (slotMs <= (nowMs - MARGIN_MS)) {
+          // console.log(`[Availability Debug] Slot ${timeStr} skipped because past. Slot: ${new Date(slotMs).toISOString()}, Now: ${new Date(nowMs).toISOString()}`);
           current += SLOT_INTERVAL;
           continue;
         }
