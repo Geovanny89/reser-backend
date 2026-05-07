@@ -98,7 +98,11 @@ async function getBestProxy(businessId) {
 
     if (existingSession && existingSession.proxyConfig) {
       try {
-        const savedProxy = JSON.parse(existingSession.proxyConfig);
+        // En JSONB con raw queries, el driver ya nos da el objeto, no hace falta JSON.parse
+        const savedProxy = typeof existingSession.proxyConfig === 'string' 
+          ? JSON.parse(existingSession.proxyConfig) 
+          : existingSession.proxyConfig;
+          
         const host = savedProxy.host || savedProxy.proxyHost;
         
         // Verificar que el proxy aún exista en nuestra lista

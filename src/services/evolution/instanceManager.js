@@ -34,16 +34,13 @@ async function createInstance(businessId, forceFresh = false) {
   console.log(`[Evolution API] ⚙️ Gestionando instancia para ${businessId}...`);
 
   try {
-    // 1. Obtener nombre del negocio SIEMPRE al inicio
-    let businessName = 'Chrome (Linux)';
-    try {
-      const biz = await Business.findByPk(businessId);
-      if (biz && biz.name) {
-        businessName = biz.name;
-      }
-    } catch (e) {
-      console.error(`[Evolution API] ⚠️ Error obteniendo nombre de negocio:`, e.message);
+    // 1. Validar que el negocio exista (Imprescindible para la integridad de la DB)
+    const biz = await Business.findByPk(businessId);
+    if (!biz) {
+      console.error(`[Evolution API] ❌ Error: El negocio ${businessId} no existe. Abortando creación.`);
+      throw new Error(`El negocio con ID ${businessId} no existe.`);
     }
+    const businessName = biz.name || 'Chrome (Linux)';
 
     const allInstances = await fetchAllInstances();
     const existingInstance = allInstances.find(inst => inst.name === businessId);
