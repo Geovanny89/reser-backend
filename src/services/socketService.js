@@ -182,10 +182,19 @@ async function emitNewAppointment(appointment, options = {}) {
 
   // Emitir a admins del negocio
   if (notifyAdmin) {
-    const targetRooms = [`business:${appointment.businessId}`, `admin:${appointment.businessId}`];
+    const bizRoom = `business:${appointment.businessId}`;
+    const adminRoom = `admin:${appointment.businessId}`;
+    const targetRooms = [bizRoom, adminRoom];
+    
+    // Loguear cuántos clientes hay en cada sala para depuración
+    const bizSize = io.sockets.adapter.rooms.get(bizRoom)?.size || 0;
+    const adminSize = io.sockets.adapter.rooms.get(adminRoom)?.size || 0;
+    
     console.log(`📢 [Socket] Emitiendo appointment:created a salas:`, targetRooms);
-    io.to(`business:${appointment.businessId}`)
-      .to(`admin:${appointment.businessId}`)
+    console.log(`📢 [Socket] Clientes conectados en ${bizRoom}: ${bizSize}, en ${adminRoom}: ${adminSize}`);
+    
+    io.to(bizRoom)
+      .to(adminRoom)
       .emit('appointment:created', apptData);
   }
 

@@ -1169,18 +1169,8 @@ async function extendTimeAction(appointmentId, data, user) {
 module.exports = {
   createAppointment,
   updateAppointmentStatus,
-  cancelAppointment: async (id) => {
-    const { Appointment } = require('../../models');
-    const appt = await Appointment.findByPk(id);
-    if (appt) await appt.update({ status: 'cancelled' });
-    return appt;
-  },
-  updateAppointment: async (id, data) => {
-    const { Appointment } = require('../../models');
-    const appt = await Appointment.findByPk(id);
-    if (appt) await appt.update(data);
-    return appt;
-  },
+  cancelAppointment,
+  updateAppointment,
   extendTime: extendTimeAction,
   generateReferenceCode,
   sendPaymentReceipt,

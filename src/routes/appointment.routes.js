@@ -198,7 +198,7 @@ router.use(auth);
  */
 router.get('/', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 router.get('/consolidated', role('admin', 'admin_suc'), ctrl.getConsolidated);
-router.get('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientsByBusiness);
+router.get('/clients', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getClientsByBusiness);
 router.put('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClient);
 router.get('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientTags);
 router.post('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.createClientTag);

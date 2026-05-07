@@ -156,14 +156,20 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     where: {
       employeeId,
       businessId,
-      status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] },
+      status: { [Op.notIn]: ['cancelled'] },
       startTime: { [Op.lt]: endOfDay },
       endTime: { [Op.gt]: startOfDay }
     }
   });
 
+  console.log(`[Availability] Citas existentes (no canceladas): ${existingAppointments.length}`, 
+    existingAppointments.map(a => ({ id: a.id, status: a.status, start: a.startTime, end: a.endTime }))
+  );
+
   // Generar slots disponibles
   const duration = service.durationMin || service.duration || 30;
+  console.log(`[Availability] Duración servicio: ${duration}min, allowPast: ${allowPast}`);
+  
   const slots = generateAvailableSlots(
     workSchedules,
     lunchRanges,
@@ -173,6 +179,8 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     dateObj,
     allowPast
   );
+
+  console.log(`[Availability] Slots generados: ${slots.length}`, slots.length > 0 ? `Primero: ${slots[0].time}, Último: ${slots[slots.length-1].time}` : 'NINGUNO');
 
   // Verificar promociones
   const today = new Date().toISOString().split('T')[0];
@@ -536,7 +544,7 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     where: {
       employeeId,
       businessId,
-      status: { [Op.or]: [{ [Op.notIn]: ['cancelled'] }, { [Op.is]: null }] },
+      status: { [Op.notIn]: ['cancelled'] },
       startTime: { [Op.lt]: endOfDay },
       endTime: { [Op.gt]: startOfDay }
     }

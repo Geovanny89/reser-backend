@@ -74,8 +74,8 @@ class KadyService {
 
       const { date, startTime } = appointmentData;
       
-      // Combinar fecha y hora en formato ISO para que actions.createAppointment lo procese
-      const startTimeISO = `${date}T${startTime}:00`;
+      // Combinar fecha y hora en formato ISO para que actions.createAppointment lo procese (con zona horaria Colombia)
+      const startTimeISO = `${date}T${startTime}:00-05:00`;
 
       // Usar el action centralizado para disparar todas las notificaciones (Sockets, Push, Email, WhatsApp)
       const newAppointment = await actions.createAppointment({
