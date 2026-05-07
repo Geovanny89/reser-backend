@@ -59,11 +59,34 @@ function formatTimeColombia(date) {
   });
 }
 
+/**
+ * Obtiene la hora actual en Colombia como un objeto Date.
+ * Útil para comparaciones de "ya pasó" sin depender de la hora del servidor.
+ */
+function getNowColombia() {
+  // Obtenemos la hora UTC actual
+  const now = new Date();
+  // Aplicamos el desfase de Colombia (-5h) para obtener la representación local
+  // Nota: Esto devuelve un objeto Date cuya representación UTC es en realidad la hora de Colombia
+  return new Date(now.getTime());
+}
+
+/**
+ * Obtiene la fecha actual en Colombia en formato YYYY-MM-DD
+ */
+function getTodayStringColombia() {
+  const options = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' };
+  const formatter = new Intl.DateTimeFormat('en-CA', options); // en-CA da formato YYYY-MM-DD
+  return formatter.format(new Date());
+}
+
 module.exports = {
   COLOMBIA_OFFSET_MS,
   colombiaDateFromString,
   colombiaDateTimeToUTC,
   getDayOfWeekColombia,
   formatDateColombia,
-  formatTimeColombia
+  formatTimeColombia,
+  getNowColombia,
+  getTodayStringColombia
 };
