@@ -663,10 +663,8 @@ async function sendMessageDirect(businessId, phone, text) {
     try {
       await api.post(`/chat/sendPresence/${businessId}`, {
         number: formattedPhone,
-        options: {
-          delay: dynamicDelay,
-          presence: 'composing'
-        }
+        delay: dynamicDelay,
+        presence: 'composing'
       });
       console.log(`[Evolution API] ✍️ Indicador "Escribiendo..." activado para ${formattedPhone}`);
     } catch (presenceErr) {
@@ -690,10 +688,8 @@ async function sendMessageDirect(businessId, phone, text) {
     try {
       await api.post(`/chat/sendPresence/${businessId}`, {
         number: formattedPhone,
-        options: {
-          delay: 0,
-          presence: 'paused'
-        }
+        delay: 0,
+        presence: 'paused'
       });
     } catch (_) { /* ignorar */ }
 
