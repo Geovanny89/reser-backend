@@ -762,7 +762,8 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
                     const serviceDate = new Date(freshAppt.startTime).toLocaleDateString('es-CO', {
                       weekday: 'long',
                       day: 'numeric',
-                      month: 'long'
+                      month: 'long',
+                      timeZone: 'America/Bogota'
                     });
                     const ratingText = `¡Hola *${freshAppt.clientName}*! 👋\n\nGracias por tu visita el *${serviceDate}* a *${businessName}*.\n\n${ratingTemplate}\n\n💇 Servicio con: *${employeeName}*\n\nResponde con un número del *1 al 5* ⭐`;
                     console.log(`[Done Action] Programando calificación para cita ${freshAppt.id} (${serviceDate} - ${employeeName})`);

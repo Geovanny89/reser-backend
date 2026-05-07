@@ -138,8 +138,11 @@ async function analyzeBusinessHistoricalPattern(businessId) {
   const dailyCounts = {};
 
   for (const appt of appointments) {
-    const hour = new Date(appt.startTime).getHours();
-    const dayKey = new Date(appt.startTime).toISOString().split('T')[0];
+    // Obtener hora y fecha en zona horaria de Colombia
+    const dateObj = new Date(appt.startTime);
+    const hourStr = dateObj.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', timeZone: 'America/Bogota' });
+    const hour = parseInt(hourStr);
+    const dayKey = dateObj.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }); // YYYY-MM-DD
 
     hourlyDistribution[hour] = (hourlyDistribution[hour] || 0) + 1;
     dailyCounts[dayKey] = (dailyCounts[dayKey] || 0) + 1;
