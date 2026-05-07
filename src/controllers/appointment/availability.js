@@ -176,7 +176,6 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   const duration = service.durationMin || service.duration || 30;
   console.log(`[Availability] Duración servicio: ${duration}min, allowPast: ${allowPast}`);
   
-  const nowColombia = getNowColombia();
   const slots = generateAvailableSlots(
     workSchedules,
     lunchRanges,
@@ -184,8 +183,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     existingAppointments,
     duration,
     dateObj,
-    allowPast,
-    nowColombia
+    allowPast
   );
 
   console.log(`[Availability] Slots generados: ${slots.length}`, slots.length > 0 ? `Primero: ${slots[0].time}, Último: ${slots[slots.length-1].time}` : 'NINGUNO');
@@ -222,7 +220,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
 /**
  * Genera slots disponibles considerando citas existentes, almuerzo y bloqueos
  */
-function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, existingAppointments, duration, dateObj, allowPast, nowColombia) {
+function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, existingAppointments, duration, dateObj, allowPast) {
   if (!workSchedules || workSchedules.length === 0) return [];
 
   const slots = [];
@@ -274,14 +272,15 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
       const mm = String(current % 60).padStart(2, '0');
       const timeStr = `${hh}:${mm}`;
 
-      const slotTime = new Date(`${dateObj.toISOString().split('T')[0]}T${timeStr}:00-05:00`);
+      const datePart = date.split('T')[0];
+      const slotTime = new Date(`${datePart}T${timeStr}:00-05:00`);
       const slotEndTime = new Date(slotTime.getTime() + safeDuration * 60000);
 
       // ==================== 1. VALIDAR PASADO ====================
 
       if (!allowPast) {
         const MARGIN_MS = 5 * 60 * 1000;
-        if (slotTime.getTime() <= (nowColombia.getTime() - MARGIN_MS)) {
+        if (slotTime.getTime() <= (Date.now() - MARGIN_MS)) {
           current += SLOT_INTERVAL;
           continue;
         }
