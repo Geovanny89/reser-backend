@@ -77,7 +77,7 @@ services:
 
       # Webhooks Globales
       - WEBHOOK_GLOBAL_ENABLED=true
-      - WEBHOOK_GLOBAL_URL=http://72.62.165.89:4000/api/notifications/evolution/webhook
+      - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/notifications/evolution/webhook
       - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
       - WEBHOOK_EVENTS_QRCODE_UPDATED=true
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
