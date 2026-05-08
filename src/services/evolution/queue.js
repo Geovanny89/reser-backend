@@ -100,11 +100,13 @@ async function processQueue() {
 
   // Verificar si la instancia está lista
   const { hasValidSession } = require('./instanceManager');
-  const isReady = hasValidSession(businessId);
+  const isReady = await hasValidSession(businessId);
 
   if (isReady) {
+    console.log(`[Evolution API] 🔄 Procesando mensaje ${messageId.slice(0,8)} para ${to}...`);
     await sendQueuedMessage(businessId, to, text, messageId);
   } else {
+    console.warn(`[Evolution API] ⏸️ Instancia ${businessId} no lista para enviar mensaje ${messageId.slice(0,8)}`);
     await handleClientNotReady(message);
   }
 

@@ -371,16 +371,18 @@ async function processBusinessMessagesInternal(businessId, messages) {
         }
 
         // Enviar mensaje directamente (sin pasar por la cola antigua)
+        console.log(`[Scheduler] 📤 Enviando mensaje ${msg.id} via Evolution API...`);
         await whatsappService.sendMessageDirect(businessId, msg.phone, msg.message);
 
         // Marcar como enviado
         await msg.update({
           status: 'sent',
-          sentAt: new Date()
+          sentAt: new Date(),
+          errorMessage: null // Limpiar errores previos si los había
         });
 
         sentCount++;
-        console.log(`[Scheduler] ✅ Mensaje enviado: ${msg.id}`);
+        console.log(`[Scheduler] ✅ Mensaje enviado: ${msg.id} a ${msg.phone}`);
 
       } catch (sendError) {
         console.error(`[Scheduler] ❌ Error enviando mensaje ${msg.id}:`, sendError.message);

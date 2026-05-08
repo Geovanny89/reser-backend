@@ -13,7 +13,8 @@ console.log(`[Evolution API] 🔍 Configuración - URL: ${EVOLUTION_URL}, API_KE
 const api = axios.create({
   baseURL: EVOLUTION_URL,
   headers: { 'apikey': API_KEY },
-  timeout: 60000 // Aumentado a 60 segundos para dar más tiempo a Evolution API
+  timeout: 60000, // Aumentado a 60 segundos para dar más tiempo a Evolution API
+  proxy: false // Desactivar proxy global para peticiones internas a Evolution API
 });
 
 const {
@@ -123,9 +124,8 @@ async function createInstance(businessId, forceFresh = false) {
       console.log(`[Evolution API] 🛡️ Usando proxy para ${businessId}: ${proxy.host}`);
       // Evolution API v2 acepta proxy directamente en el payload de creación
       createPayload.proxy = {
-        enabled: true,
         host: proxy.host,
-        port: String(proxy.port), 
+        port: proxy.port, 
         protocol: proxy.protocol || 'http',
         username: proxy.username || undefined,
         password: proxy.password || undefined
@@ -157,7 +157,7 @@ async function createInstance(businessId, forceFresh = false) {
         const proxySetPayload = {
           enabled: true,
           host: proxy.host,
-          port: String(proxy.port), 
+          port: proxy.port, 
           protocol: proxy.protocol || 'http',
           username: proxy.username || '',
           password: proxy.password || ''
@@ -649,52 +649,50 @@ async function sendMessageDirect(businessId, phone, text) {
     }
 
     // Verificar estado de conexión ANTES de intentar enviar (evita timeout de 60s)
-    const connectionState = await getConnectionState(businessId);
+    let connectionState = await getConnectionState(businessId);
+    
+    // Si es null, intentar una vez más después de un pequeño delay
+    if (connectionState === null) {
+      console.log(`[Evolution API] ⏳ Estado de conexión null para ${businessId}, reintentando...`);
+      await new Promise(r => setTimeout(r, 2000));
+      connectionState = await getConnectionState(businessId);
+    }
+
     if (connectionState !== 'open' && connectionState !== 'connected') {
+      console.warn(`[Evolution API] ⚠️ Intento de envío fallido: WhatsApp no está conectado (estado: ${connectionState}) para ${businessId}`);
       throw new Error(`WhatsApp no está conectado (estado: ${connectionState}). No se puede enviar mensaje.`);
     }
 
-    console.log(`[Evolution API] 📤 Enviando a ${formattedPhone} (original: ${phone})`);
+    console.log(`[Evolution API] 📤 Preparando mensaje para ${formattedPhone} (ID: ${businessId})`);
 
     // Calcular delay dinámico según longitud del texto (mín 1.5s, máx 5s) para simular escritura humana
     const dynamicDelay = Math.min(Math.max(text.length * 20, 1500), 5000);
 
     // PASO 1: Activar indicador "Escribiendo..." ANTES de enviar el mensaje
-    // Endpoint correcto de Evolution API: /chat/sendPresence
     try {
       await api.post(`/chat/sendPresence/${businessId}`, {
         number: formattedPhone,
         delay: dynamicDelay,
         presence: 'composing'
       });
-      console.log(`[Evolution API] ✍️ Indicador "Escribiendo..." activado para ${formattedPhone}`);
     } catch (presenceErr) {
-      // No bloquear el envío si falla el typing indicator
-      console.warn(`[Evolution API] ⚠️ No se pudo activar typing indicator (no crítico):`, presenceErr.response?.status || presenceErr.message);
+      console.warn(`[Evolution API] ⚠️ No se pudo activar typing indicator:`, presenceErr.message);
     }
 
-    // PASO 2: Esperar el tiempo de "escritura" (simula que el bot escribe)
+    // PASO 2: Esperar el tiempo de "escritura"
     await new Promise(resolve => setTimeout(resolve, dynamicDelay));
 
     // PASO 3: Enviar el mensaje
+    console.log(`[Evolution API] 🚀 Ejecutando /message/sendText/${businessId} para ${formattedPhone}`);
     const response = await api.post(`/message/sendText/${businessId}`, {
       number: formattedPhone,
       text: text,
       options: {
-        delay: 500 // Pequeño delay adicional para que Evolution procese bien
+        delay: 500
       }
     });
 
-    // PASO 4: Marcar presencia como 'paused' después de enviar
-    try {
-      await api.post(`/chat/sendPresence/${businessId}`, {
-        number: formattedPhone,
-        delay: 0,
-        presence: 'paused'
-      });
-    } catch (_) { /* ignorar */ }
-
-    console.log(`[Evolution API] 📨 Mensaje enviado a ${formattedPhone}`);
+    console.log(`[Evolution API] ✅ Mensaje enviado exitosamente a ${formattedPhone}`);
     return response.data;
   } catch (err) {
     const errorDetail = err.response?.data

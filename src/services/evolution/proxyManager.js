@@ -68,12 +68,20 @@ function loadProxies() {
  */
 function formatProxyForEvolution(proxy) {
   if (!proxy) return null;
+  const host = proxy.proxyHost || proxy.host;
+  const port = parseInt(proxy.proxyPort || proxy.port);
+  
+  if (!host || isNaN(port)) {
+    console.warn('[Proxy Manager] ⚠️ Proxy inválido detectado:', proxy);
+    return null;
+  }
+
   return {
-    host: proxy.proxyHost || proxy.host,
-    port: parseInt(proxy.proxyPort || proxy.port),
-    protocol: proxy.proxyProtocol || proxy.protocol || 'http',
-    username: proxy.proxyUsername || proxy.username,
-    password: proxy.proxyPassword || proxy.password
+    host,
+    port,
+    protocol: (proxy.proxyProtocol || proxy.protocol || 'http').toLowerCase(),
+    username: proxy.proxyUsername || proxy.username || '',
+    password: proxy.proxyPassword || proxy.password || ''
   };
 }
 
