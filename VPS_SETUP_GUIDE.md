@@ -6,7 +6,9 @@ El código tenía `localhost:8080` hardcoded en `constants.js`, lo que funcionab
 
 ## Pasos para Configurar en VPS
 
-### 1. Configurar variables de entorno en el backend
+### 1. Configurar variables de entorno en el backend (CRÍTICO)
+
+**ESTE ES EL PASO MÁS IMPORTANTE**: El error `connect ECONNREFUSED 127.0.0.1:8080` ocurre porque el backend no tiene la variable `EVOLUTION_API_URL` configurada.
 
 En el archivo `.env` del backend (en la VPS), agrega o modifica estas variables:
 
@@ -15,9 +17,15 @@ En el archivo `.env` del backend (en la VPS), agrega o modifica estas variables:
 USE_EVOLUTION_API=true
 EVOLUTION_API_URL=http://72.62.165.89:8080
 EVOLUTION_API_KEY=1234
+BACKEND_URL=http://72.62.165.89:4000
 ```
 
-**IMPORTANTE**: Reemplaza `72.62.165.89` con la IP pública de tu VPS si es diferente.
+**IMPORTANTE**: 
+- Reemplaza `72.62.165.89` con la IP pública de tu VPS si es diferente
+- `BACKEND_URL` es necesaria para que los webhooks funcionen correctamente
+- Sin estas variables, el backend usará `localhost:8080` por defecto y fallará
+
+**Referencia**: Usa el archivo `.env.vps.example` como plantilla.
 
 ### 2. Verificar docker-compose.yml
 
@@ -52,7 +60,7 @@ sudo firewall-cmd --permanent --add-port=4000/tcp
 sudo firewall-cmd --reload
 ```
 
-### 4. Reiniciar servicios
+### 4. Reiniciar servicios (CRÍTICO - Despues de modificar .env)
 
 ```bash
 # Detener containers existentes
@@ -65,7 +73,7 @@ docker-compose up -d
 # Verificar que Evolution API esté corriendo
 docker logs evolution_api
 
-# Reiniciar backend (si usas PM2)
+# Reiniciar backend (IMPORTANTE: para cargar las nuevas variables de entorno)
 pm2 restart backend
 # o si usas docker para el backend también
 docker restart backend_container
@@ -126,4 +134,5 @@ Busca estos mensajes:
 ## Archivos Modificados
 
 - ✅ `backend/src/services/evolution/constants.js` - Ahora usa `process.env.EVOLUTION_API_URL` en lugar de localhost hardcoded
-- ✅ `backend/docker-compose.yml` - Ya configurado con IP pública (verificar que sea la correcta)
+- ✅ `backend/docker-compose.yml` - Puerto cambiado a `0.0.0.0:8080:8080` para acceso desde IP pública
+- ✅ `backend/.env.vps.example` - Plantilla de configuración para VPS
