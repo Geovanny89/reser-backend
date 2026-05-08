@@ -22,10 +22,11 @@ async function stopInstance(businessId, shouldLogout = true) {
     let deleted = false;
     for (let i = 1; i <= 3; i++) {
       try {
-        const res = await api.delete(`/instance/delete/${businessId}`);
+        // Añadimos ?force=true para forzar el borrado aunque la sesión esté pegada
+        const res = await api.delete(`/instance/delete/${businessId}?force=true`);
         if (res.status === 200 || res.status === 201) {
           deleted = true;
-          console.log(`[Evolution API] ✅ Instancia ${businessId} borrada físicamente`);
+          console.log(`[Evolution API] ✅ Instancia ${businessId} borrada físicamente (force)`);
           break;
         }
       } catch (err) {
@@ -33,7 +34,6 @@ async function stopInstance(businessId, shouldLogout = true) {
           deleted = true;
           break;
         }
-        // LOG DETALLADO DEL ERROR 400
         console.error(`[Evolution API] ❌ Error ${err.response?.status} al borrar:`, JSON.stringify(err.response?.data || {}));
         
         await new Promise(r => setTimeout(r, 2000));
