@@ -10,26 +10,42 @@ const { extractPhoneFromInstance } = require('./instance.utils');
 
 async function stopInstance(businessId, shouldLogout = true) {
   try {
-    console.log(`[Evolution API] 🛑 Deteniendo instancia ${businessId}...`);
+    console.log(`[Evolution API] 🛑 Solicitando detención de ${businessId}...`);
+    
+    // PASO 1: Intentar desconectar/logout (silencioso)
     try {
       if (shouldLogout) await api.delete(`/instance/logout/${businessId}`).catch(() => {});
       await api.post(`/instance/disconnect/${businessId}`).catch(() => {});
     } catch (e) { }
 
+    // PASO 2: Intentar borrar con reintentos
     let deleted = false;
     for (let i = 1; i <= 3; i++) {
       try {
-        await api.delete(`/instance/delete/${businessId}`);
-        deleted = true;
-        break;
+        const res = await api.delete(`/instance/delete/${businessId}`);
+        if (res.status === 200 || res.status === 201) {
+          deleted = true;
+          console.log(`[Evolution API] ✅ Instancia ${businessId} borrada físicamente`);
+          break;
+        }
       } catch (err) {
-        if (err.response?.status === 404) { deleted = true; break; }
+        if (err.response?.status === 404) {
+          deleted = true;
+          break;
+        }
+        console.warn(`[Evolution API] ⚠️ Intento ${i}/3 de borrado falló: ${err.response?.status}`);
         await new Promise(r => setTimeout(r, 2000));
       }
     }
+
+    // PASO 3: Limpiar memoria local siempre
     state.deleteInstance(businessId);
+    state.deleteQR(businessId);
+    
     return deleted;
   } catch (err) {
+    console.error(`[Evolution API] ❌ Error en stopInstance:`, err.message);
+    state.deleteInstance(businessId);
     return false;
   }
 }

@@ -4,9 +4,9 @@
  */
 
 // ==================== CONFIGURACIÓN DE API ====================
-const BASE_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+const BASE_URL = 'http://localhost:8080';
 const API_KEY = process.env.EVOLUTION_API_KEY || '1234';
-const DEFAULT_TOKEN = process.env.EVOLUTION_API_TOKEN || '1234';
+const DEFAULT_TOKEN = '1234';
 
 // ==================== CONFIGURACIÓN DE LÍMITES ====================
 
