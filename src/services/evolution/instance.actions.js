@@ -76,12 +76,12 @@ async function createInstance(businessId, forceFresh = false) {
 
     // 1. Verificar si ya existe para no causar conflictos (y evitar el 403)
     const instances = await fetchAllInstances();
+    console.log(`[Evolution API] 📊 fetchInstances devolvió ${instances.length} instancias`);
     const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
 
+    // Si NO es forceFresh y existe una abierta, la usamos
     if (existing && !forceFresh) {
       console.log(`[Evolution API] ℹ️ Instancia ${businessId} ya existe. Estado: ${existing.connectionStatus || existing.status}`);
-      
-      // Si está abierta, simplemente la registramos en el estado local y salimos
       if (existing.connectionStatus === 'open' || existing.status === 'open') {
         state.setInstance(businessId, { 
           status: 'open', 
@@ -89,14 +89,13 @@ async function createInstance(businessId, forceFresh = false) {
         });
         return { success: true, status: 'open', existing: true };
       }
-      
-      // Si no está abierta pero existe, la borramos para recrearla limpiamente (solo si forceFresh)
-      if (forceFresh) {
-        await stopInstance(businessId);
-      } else {
-        // Intentar obtener QR de la existente
-        return { success: true, status: 'connecting', instance: existing };
-      }
+    }
+
+    // Si es forceFresh, SIEMPRE intentamos borrar la vieja primero
+    if (forceFresh) {
+      console.log(`[Evolution API] 🔄 ForceFresh: Intentando limpiar instancia previa...`);
+      await stopInstance(businessId).catch(() => {});
+      // No retornamos aquí, seguimos para crear la nueva con nombre dinámico
     }
 
     // 2. Crear nueva instancia
