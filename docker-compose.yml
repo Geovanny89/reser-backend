@@ -17,6 +17,15 @@ services:
       timeout: 5s
       retries: 5
  
+  redis:
+    image: redis:7-alpine
+    container_name: evolution_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - evolution_redis_data:/data
+
   evolution_api: 
     image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution_api
@@ -28,17 +37,23 @@ services:
     depends_on: 
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
-      - evolution_data:/evolution/instances
+      - ./evolution_instances:/evolution/instances
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment: 
       - SERVER_URL=http://72.62.165.89:8080
       - DATABASE_ENABLED=true 
       - DATABASE_PROVIDER=postgresql 
-      - DATABASE_URL=postgresql://postgres:1234@postgres:5432/evolution?schema=public
       - DATABASE_CONNECTION_URL=postgresql://postgres:1234@postgres:5432/evolution?schema=public
-      - DATABASE_CONNECTION_URI=postgresql://postgres:1234@postgres:5432/evolution?schema=public
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_IS_NEW=true
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_HOST=redis
+      - CACHE_REDIS_PORT=6379
+      - CACHE_LOCAL_ENABLED=false
       - AUTHENTICATION_TYPE=apikey 
       - AUTHENTICATION_API_KEY=1234 
       - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
@@ -47,17 +62,12 @@ services:
       - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
       - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
       - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/notifications/evolution/webhook
-      - CACHE_REDIS_ENABLED=false
-      - CACHE_LOCAL_ENABLED=true
-      - DATABASE_SAVE_DATA_CHATS=false
-      - DATABASE_SAVE_DATA_CONTACTS=false
-      - DATABASE_SAVE_DATA_HISTORIC=false
-      - DATABASE_SAVE_DATA_LABELS=false
       - CONFIG_SESSION_PHONE_CLIENT=Windows
       - CONFIG_SESSION_PHONE_BROWSER=Google Chrome
-      - LOG_LEVEL=debug
+      - LOG_LEVEL=error
       - LANGUAGE=es
  
 volumes: 
   evolution_pgdata:
-  evolution_data:
+  evolution_redis_data:
+
