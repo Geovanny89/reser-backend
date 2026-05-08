@@ -53,7 +53,12 @@ async function sendMessageDirect(businessId, phone, text) {
     console.log(`[Evolution API] ✅ Mensaje enviado a ${formattedPhone}`);
     return response.data;
   } catch (err) {
-    console.error(`[Evolution API] ❌ Error enviando mensaje:`, err.message);
+    console.error(`[Evolution API] ❌ Error enviando mensaje a ${phone}:`, err.response?.data || err.message);
+    
+    // Si es error 500, podría ser el proxy. Intentamos avisar al log.
+    if (err.response?.status === 500) {
+      console.warn(`[Evolution API] ⚠️ Error 500 detectado. Posible problema de sesión o proxy.`);
+    }
     throw err;
   }
 }
