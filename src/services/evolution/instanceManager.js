@@ -50,7 +50,7 @@ async function createInstance(businessId, forceFresh = false) {
 
       // MEJORA: Si la instancia existe pero NO está abierta (incluyendo 'connecting'), 
       // la recreamos para asegurar que se apliquen las nuevas configuraciones.
-      if (status !== 'open' && status !== 'connected') {
+      if (status !== 'open' && status !== 'connected' && status !== 'connecting') {
         console.log(`[Evolution API] 🔄 Instancia '${businessId}' existe en estado '${status}'. Forzando recreación para aplicar cambios...`);
         forceFresh = true;
       } else {
