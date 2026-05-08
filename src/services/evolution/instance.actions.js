@@ -98,40 +98,47 @@ async function createInstance(businessId, forceFresh = false) {
 
     // 2. Crear nueva instancia
     console.log(`[Evolution API] 🚀 Creando nueva instancia para ${businessId}...`);
+    
+    // Si forceFresh es true, intentamos usar un nombre ligeramente distinto si el original falla
+    let instanceNameToUse = businessId;
+    if (forceFresh) {
+      instanceNameToUse = `${businessId}_${Date.now().toString().slice(-4)}`;
+      console.log(`[Evolution API] 🔄 Usando nombre fresco: ${instanceNameToUse}`);
+    }
+
     const createPayload = {
-      instanceName: businessId,
+      instanceName: instanceNameToUse,
       token: constants.DEFAULT_TOKEN,
       qrcode: true
     };
 
-    const response = await api.post('/instance/create', createPayload);
-    const data = response.data;
+    try {
+      const response = await api.post('/instance/create', createPayload);
+      const data = response.data;
 
-    // Registrar en estado
-    state.setInstance(businessId, { 
-      status: 'connecting',
-      token: data.hash?.token || constants.DEFAULT_TOKEN
-    });
+      state.setInstance(businessId, { 
+        status: 'connecting',
+        instanceName: instanceNameToUse, // Guardamos el nombre real usado
+        token: data.hash?.token || constants.DEFAULT_TOKEN
+      });
 
-    return {
-      success: true,
-      status: 'connecting',
-      qrcode: data.qrcode,
-      instance: data.instance
-    };
-  } catch (err) {
-    console.error(`[Evolution API] ❌ Error en createInstance para ${businessId}:`, err.response?.data || err.message);
-    
-    // Si el error es 403 o 400 (ya existe), intentar recuperar la instancia
-    if (err.response?.status === 403 || err.response?.status === 400) {
-      console.log(`[Evolution API] 🔄 Intentando recuperar instancia existente tras error...`);
-      const instances = await fetchAllInstances().catch(() => []);
-      const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
-      if (existing) {
-        return { success: true, status: existing.connectionStatus || 'connecting', instance: existing };
+      return {
+        success: true,
+        status: 'connecting',
+        qrcode: data.qrcode,
+        instance: data.instance
+      };
+    } catch (err) {
+      if (err.response?.status === 403 || err.response?.status === 400) {
+        // Si el nombre con sufijo también falla, intentamos recuperar lo que haya
+        const all = await fetchAllInstances().catch(() => []);
+        const existing = all.find(i => i.name === businessId || i.instanceName === businessId);
+        if (existing) return { success: true, status: 'open', instance: existing };
       }
+      throw err;
     }
-    
+  } catch (err) {
+    console.error(`[Evolution API] ❌ Error crítico en createInstance para ${businessId}:`, err.response?.data || err.message);
     throw err;
   }
 }
