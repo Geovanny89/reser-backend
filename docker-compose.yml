@@ -61,6 +61,7 @@ services:
       - DATABASE_CONNECTION_URI=postgresql://postgres:1234@postgres:5432/evolution?schema=public
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_DATA_AUTH=true
       - DATABASE_SAVE_MESSAGE_INSTANCE=true
       - DATABASE_SAVE_IS_NEW=false
 
@@ -68,7 +69,7 @@ services:
       - CACHE_REDIS_ENABLED=true
       - CACHE_REDIS_HOST=redis
       - CACHE_REDIS_PORT=6379
-      - CACHE_LOCAL_ENABLED=true
+      - CACHE_LOCAL_ENABLED=false
 
       # Proxy Configuration
       - PROXY_ENABLED=true
