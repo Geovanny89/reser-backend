@@ -13,42 +13,49 @@ async function stopInstance(businessId, shouldLogout = true) {
   try {
     console.log(`[Evolution API] 🛑 Solicitando detención de ${businessId}...`);
     
-    // 1. Obtener ID interno si existe (algunas versiones lo requieren para borrar)
+    // 1. Obtener todas las instancias que coincidan (exacto o con sufijo)
     const all = await fetchAllInstances().catch(() => []);
-    const existing = all.find(i => i.name === businessId || i.instanceName === businessId || i.id === businessId);
-    const targetId = existing?.id || businessId;
+    const matching = all.filter(i => {
+      const name = i.name || i.instanceName;
+      return name === businessId || (name && name.startsWith(businessId + '_'));
+    });
 
-    // 2. Intentar desconectar y CERRAR (silencioso)
-    try {
-      console.log(`[Evolution API] ⏳ Desconectando y esperando liberación de archivos...`);
-      if (shouldLogout) await api.delete(`/instance/logout/${targetId}`).catch(() => {});
-      await api.post(`/instance/disconnect/${targetId}`).catch(() => {});
-      
-      // ESPERA CRÍTICA: Darle tiempo a la API para cerrar los archivos de WhatsApp
-      await new Promise(r => setTimeout(r, 3000));
-    } catch (e) { }
+    if (matching.length === 0) {
+      console.log(`[Evolution API] ℹ️ No se encontraron instancias para ${businessId}`);
+    }
 
-    // 3. Intentar borrar físicamente
-    let deleted = false;
-    const idsToTry = [...new Set([targetId, businessId])].filter(Boolean);
-    
-    for (const idToTry of idsToTry) {
-      if (deleted) break;
+    for (const inst of matching) {
+      const targetName = inst.name || inst.instanceName;
+      const targetId = inst.id || targetName;
+
+      console.log(`[Evolution API] ⏳ Procesando detención de: ${targetName} (${targetId})`);
+
+      // 2. Intentar desconectar y CERRAR (silencioso)
       try {
-        await api.delete(`/instance/delete/${idToTry}?force=true`, {
-          data: { instanceName: idToTry },
-          timeout: 4000
-        });
-        deleted = true;
-      } catch (err) {
-        if (err.response?.status === 404) deleted = true;
-      }
+        if (shouldLogout) {
+          await api.delete(`/instance/logout/${targetId}`).catch(() => {});
+        }
+        await api.post(`/instance/disconnect/${targetId}`).catch(() => {});
+      } catch (e) { }
+
+      // 3. Intentar borrar físicamente
+      try {
+        await api.delete(`/instance/delete/${targetId}?force=true`, {
+          data: { instanceName: targetName },
+          timeout: 5000
+        }).catch(() => {});
+      } catch (err) {}
+    }
+
+    // ESPERA CRÍTICA: Darle tiempo a la API para liberar archivos si hubo varias
+    if (matching.length > 0) {
+      await new Promise(r => setTimeout(r, 2000));
     }
 
     state.deleteInstance(businessId);
     state.deleteQR(businessId);
     
-    return deleted;
+    return true;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error fatal en stopInstance:`, err.message);
     state.deleteInstance(businessId);
@@ -86,11 +93,15 @@ async function createInstance(businessId, forceFresh = false) {
       instanceNameToUse = `${businessId}_${Math.floor(1000 + Math.random() * 9000)}`;
       console.log(`[Evolution API] 🚀 Forzando instancia nueva: ${instanceNameToUse}`);
       
-      // Intentamos cerrar la vieja en segundo plano (sin esperar)
-      if (existing) {
-        console.log(`[Evolution API] 🔄 Solicitando logout de sesión previa en background...`);
-        api.delete(`/instance/logout/${businessId}`).catch(() => {});
+      // Limpieza profunda de instancias previas (incluyendo sufijos)
+      try {
+        await stopInstance(businessId, true);
+      } catch (err) {
+        console.warn(`[Evolution API] ⚠️ Error en limpieza previa de ${businessId}:`, err.message);
       }
+      
+      // Breve espera para que la API procese las eliminaciones antes de crear la nueva
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     const createPayload = {

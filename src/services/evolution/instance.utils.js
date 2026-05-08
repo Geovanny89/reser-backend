@@ -52,7 +52,20 @@ function extractPhoneFromInstance(instance) {
   return cleaned || null;
 }
 
+function getBaseBusinessId(instanceName) {
+  if (!instanceName || typeof instanceName !== 'string') return instanceName;
+  if (!instanceName.includes('_')) return instanceName;
+  
+  const parts = instanceName.split('_');
+  // Si la última parte son solo números (nuestro sufijo dinámico), la removemos
+  if (/^\d+$/.test(parts[parts.length - 1])) {
+    return parts.slice(0, -1).join('_');
+  }
+  return instanceName;
+}
+
 module.exports = {
   formatPhoneForEvolution,
-  extractPhoneFromInstance
+  extractPhoneFromInstance,
+  getBaseBusinessId
 };

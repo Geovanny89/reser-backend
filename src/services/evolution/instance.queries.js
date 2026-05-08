@@ -13,15 +13,18 @@ async function fetchAllInstances() {
     
     // Sincronizar memoria y BD
     const { WhatsAppSession } = require('../../models');
+    const { getBaseBusinessId } = require('./instance.utils');
+    
     for (const inst of instances) {
-      const name = inst.name || inst.instanceName;
-      if (!name) continue;
+      const fullName = inst.name || inst.instanceName;
+      if (!fullName) continue;
 
+      const businessId = getBaseBusinessId(fullName);
       const phone = extractPhoneFromInstance(inst);
       const status = inst.connectionStatus || inst.state || 'unknown';
 
-      state.setInstance(name, {
-        instanceName: name,
+      state.setInstance(businessId, {
+        instanceName: fullName,
         status: status,
         createdAt: inst.createdAt || new Date()
       });
@@ -30,7 +33,7 @@ async function fetchAllInstances() {
         try {
           await WhatsAppSession.update(
             { phoneNumber: phone },
-            { where: { businessId: name } }
+            { where: { businessId: businessId } }
           ).catch(() => {});
         } catch (e) {}
       }
@@ -82,16 +85,32 @@ async function hasValidSession(businessId) {
     const allInstances = await fetchAllInstances();
     console.log(`[Evolution API] 🔍 Validando sesión para ${businessId}. Total instancias en API: ${allInstances.length}`);
     
-    // 1. Buscar por nombre (exacto o con sufijo)
+    // 1. Priorizar la instancia que tenemos registrada en memoria
+    const current = state.getInstance(businessId);
+    if (current?.instanceName) {
+      const activeInst = allInstances.find(i => (i.name || i.instanceName) === current.instanceName);
+      if (activeInst) {
+        const s = activeInst.connectionStatus || activeInst.status || activeInst.state;
+        if (s === 'open' || s === 'connected') {
+          console.log(`[Evolution API] ✅ Instancia actual ${current.instanceName} está conectada.`);
+          return true;
+        }
+      }
+    }
+
+    // 2. Si no hay una "actual" conectada, buscar por nombre (incluyendo sufijos)
+    // Pero solo si no estamos en medio de una creación (si hay un lock, no deberíamos confiar en sesiones viejas)
     const matching = allInstances.filter(inst => {
       const name = inst.name || inst.instanceName;
       return name === businessId || (name && name.startsWith(businessId + '_'));
     });
 
     for (const inst of matching) {
-      const state = inst.connectionStatus || inst.status || inst.state;
-      console.log(`[Evolution API] 💓 Instancia ${inst.name || inst.instanceName} está en estado: ${state}`);
-      if (state === 'open' || state === 'connected') {
+      const s = inst.connectionStatus || inst.status || inst.state;
+      console.log(`[Evolution API] 💓 Instancia encontrada ${inst.name || inst.instanceName} está en estado: ${s}`);
+      if (s === 'open' || s === 'connected') {
+        // Si encontramos una abierta que NO es la que tenemos en memoria, 
+        // probablemente es una sesión antigua que sobrevivió.
         return true;
       }
     }
