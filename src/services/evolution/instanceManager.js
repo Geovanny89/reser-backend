@@ -124,7 +124,7 @@ async function createInstance(businessId, forceFresh = false) {
       // Evolution API v2 acepta proxy directamente en el payload de creación
       createPayload.proxy = {
         host: proxy.host,
-        port: Number(proxy.port), 
+        port: String(proxy.port), 
         protocol: proxy.protocol || 'http',
         username: proxy.username || undefined,
         password: proxy.password || undefined
@@ -156,7 +156,7 @@ async function createInstance(businessId, forceFresh = false) {
         const proxySetPayload = {
           enabled: true,
           host: proxy.host,
-          port: Number(proxy.port), 
+          port: String(proxy.port), 
           protocol: proxy.protocol || 'http',
           username: proxy.username || '',
           password: proxy.password || ''
