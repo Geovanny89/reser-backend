@@ -80,16 +80,28 @@ async function getInstanceInfo(businessId) {
 async function hasValidSession(businessId) {
   try {
     const allInstances = await fetchAllInstances();
-    // Búsqueda inteligente: que el nombre sea exacto o que empiece por el businessId (para sufijos dinámicos)
-    let exists = allInstances.find(inst => 
-      inst.name === businessId || 
-      inst.instanceName === businessId ||
-      (inst.name && inst.name.startsWith(businessId + '_'))
-    );
+    console.log(`[Evolution API] 🔍 Validando sesión para ${businessId}. Total instancias en API: ${allInstances.length}`);
+    
+    // Buscar cualquier instancia que nos pertenezca
+    const matching = allInstances.filter(inst => {
+      const name = inst.name || inst.instanceName;
+      return name === businessId || (name && name.startsWith(businessId + '_'));
+    });
 
-    // Búsqueda inteligente por teléfono si falla por ID
-    if (!exists) {
-      const { Business } = require('../../models');
+    if (matching.length > 0) {
+      console.log(`[Evolution API] 🎯 Encontradas ${matching.length} instancias candidatas para ${businessId}`);
+      for (const inst of matching) {
+        const state = inst.connectionStatus || inst.status || inst.state;
+        console.log(`[Evolution API] 💓 Instancia ${inst.name || inst.instanceName} está en estado: ${state}`);
+        if (state === 'open' || state === 'connected') {
+          return true;
+        }
+      }
+    }
+
+    // Búsqueda por teléfono si lo anterior falla
+    console.log(`[Evolution API] ⚠️ No se encontró sesión por ID para ${businessId}, intentando por teléfono...`);
+    const { Business } = require('../../models');
       const biz = await Business.findByPk(businessId);
       if (biz && biz.phone) {
         const cleanPhone = biz.phone.replace(/\D/g, '');
