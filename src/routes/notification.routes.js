@@ -147,8 +147,15 @@ router.post('/whatsapp/reset', auth, async (req, res) => {
       console.log(`[WhatsApp Route] ℹ️ No se pudo detener instancia (puede que no exista):`, stopErr.message);
     }
     
-    // PASO 2: Limpiar estado en base de datos
-    await models.WhatsAppSession.update({ status: 'disconnected' }, { where: { businessId } });
+    // PASO 2: Limpiar estado completo en base de datos para forzar nueva vinculación
+    await models.WhatsAppSession.update(
+      { 
+        status: 'disconnected', 
+        phoneNumber: null,
+        sessionData: null 
+      }, 
+      { where: { businessId } }
+    );
     
     // PASO 3: Crear nueva instancia
     await whatsappService.createInstance(businessId, true); // forceFresh = true
@@ -324,12 +331,21 @@ router.post('/evolution/webhook', async (req, res) => {
       console.log(`[Evolution Webhook] 🔌 Estado de conexión para ${businessId}: ${connectionState}`);
       
       if (connectionState === 'open' || connectionState === 'connected') {
-        console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada, guardando sesión...`);
+        const incomingInstance = req.body.instance || req.body.instanceName;
+        const { getInstance, setInstance } = require('../services/evolution/state');
+        const current = getInstance(businessId);
+
+        // VALIDACIÓN: Solo procesar si es la instancia que esperamos o si no tenemos ninguna activa
+        if (current && current.instanceName && incomingInstance !== current.instanceName) {
+          console.log(`[Evolution Webhook] ℹ️ Conexión ignorada para ${businessId} (instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
+          return res.status(200).json({ message: 'Connection ignored (stale instance)' });
+        }
+
+        console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada (${incomingInstance}), guardando sesión...`);
         
         // IMPORTANTE: Actualizar estado en memoria con el nombre REAL (con sufijo) para que las consultas funcionen
-        const { setInstance } = require('../services/evolution/state');
         setInstance(businessId, {
-          instanceName: req.body.instance || req.body.instanceName || businessId,
+          instanceName: incomingInstance,
           status: 'connected',
           createdAt: new Date()
         });
@@ -398,6 +414,16 @@ router.post('/evolution/webhook', async (req, res) => {
     if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED' || actualEvent === 'qrcode.updated') {
       const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
       if (qrBase64) {
+        // VALIDACIÓN CRÍTICA: Solo aceptar QR de la instancia que consideramos activa en memoria
+        const { getInstance } = require('../services/evolution/state');
+        const current = getInstance(businessId);
+        const incomingInstance = req.body.instance || req.body.instanceName;
+        
+        if (current && current.instanceName && incomingInstance !== current.instanceName) {
+          console.log(`[Evolution Webhook] ℹ️ QR ignorado para ${businessId} (proviene de instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
+          return res.status(200).json({ message: 'QR ignored (stale instance)' });
+        }
+
         console.log(`[Evolution Webhook] 📲 QR capturado para ${businessId}`);
         whatsappService.currentQRs.set(businessId, qrBase64);
       }
