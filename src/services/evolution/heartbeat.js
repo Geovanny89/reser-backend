@@ -137,6 +137,18 @@ async function heartbeatCheck() {
       // Intentar reconectar usando el mismo proxy que ya tiene asignado
       // Logout: false para no perder la sesión si el error es temporal (ej: proxy caído)
       await attemptReconnect(businessId, false);
+    } else if (state === 'open' || state === 'connected') {
+      // MEJORA: Si está conectada, asegurar que tenga el proxy aplicado
+      try {
+        const { getBestProxy } = require('./proxyManager');
+        const { ensureProxyConfig } = require('./instanceManager');
+        const proxy = await getBestProxy(businessId);
+        if (proxy) {
+          await ensureProxyConfig(businessId, proxy);
+        }
+      } catch (proxyErr) {
+        // Error no crítico en el heartbeat
+      }
     }
   }));
 }
