@@ -29,8 +29,8 @@ services:
   evolution_api: 
     image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution_api
-    # env_file:
-    #   - .env
+    env_file:
+      - .env
     restart: always
     ports:
       - "8080:8080" 
@@ -76,7 +76,7 @@ services:
       - WEBHOOK_GLOBAL_URL=http://host.docker.internal:4000/api/notifications/evolution/webhook
       - CONFIG_SESSION_PHONE_CLIENT=Windows
       - CONFIG_SESSION_PHONE_BROWSER=Google Chrome
-      - LOG_LEVEL=error
+      - LOG_LEVEL=info
       - LANGUAGE=es
  
 volumes: 
