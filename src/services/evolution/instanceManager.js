@@ -456,7 +456,7 @@ async function tryGetQRFromQRCode(businessId) {
   }
 }
 
-async function stopInstance(businessId) {
+async function stopInstance(businessId, shouldLogout = true) {
   try {
     // PASO 0: Verificar estado real de la instancia
     let state = null;
@@ -467,17 +467,23 @@ async function stopInstance(businessId) {
       console.log(`[Evolution API] ℹ️ No se pudo obtener estado, asumiendo que no existe`);
     }
 
-    // PASO 1: Intentar desconectar/logout siempre que la instancia exista (incluyendo 'connecting')
+    // PASO 1: Intentar desconectar siempre que la instancia exista
     if (state && state !== 'unknown') {
-      console.log(`[Evolution API] 🔌 Forzando desconexión de instancia ${businessId} (estado: ${state})...`);
+      console.log(`[Evolution API] 🔌 Forzando desconexión de instancia ${businessId} (estado: ${state}, logout: ${shouldLogout})...`);
 
-      // Intentar ambos métodos de desconexión para asegurar
-      try {
-        await api.delete(`/instance/logout/${businessId}`);
-      } catch (e) { }
+      // Solo hacer logout si se solicita explícitamente
+      if (shouldLogout) {
+        try {
+          await api.delete(`/instance/logout/${businessId}`);
+          console.log(`[Evolution API] 🚪 Logout ejecutado para ${businessId}`);
+        } catch (e) { 
+          console.log(`[Evolution API] ℹ️ Error en logout (posiblemente ya desconectado):`, e.message);
+        }
+      }
 
       try {
         await api.post(`/instance/disconnect/${businessId}`);
+        console.log(`[Evolution API] 🔌 Disconnect ejecutado para ${businessId}`);
       } catch (e) { }
 
       // Esperar un momento corto para que la API procese la desconexión
@@ -485,7 +491,7 @@ async function stopInstance(businessId) {
     }
 
     // PASO 2: Eliminar la instancia con reintentos
-    console.log(`[Evolution API] 🗑️ Eliminando instancia ${businessId}...`);
+    console.log(`[Evolution API] 🗑️ Eliminando instancia ${businessId} de Evolution API...`);
     let deleteAttempts = 0;
     const maxDeleteAttempts = 3;
 
@@ -502,7 +508,7 @@ async function stopInstance(businessId) {
           // Si falla con 400 o 422, intentar desconectar de nuevo agresivamente
           if (deleteErr.response?.status === 400 || deleteErr.response?.status === 422) {
              console.log(`[Evolution API] 🔄 Re-intentando desconexión forzada antes de borrar...`);
-             try { await api.delete(`/instance/logout/${businessId}`); } catch (e) { }
+             if (shouldLogout) try { await api.delete(`/instance/logout/${businessId}`); } catch (e) { }
              try { await api.post(`/instance/disconnect/${businessId}`); } catch (e) { }
              await new Promise(resolve => setTimeout(resolve, 3000));
           }
@@ -524,7 +530,7 @@ async function stopInstance(businessId) {
 
     deleteInstance(businessId);
     deleteQR(businessId);
-    console.log(`[Evolution API] ⏸️ Instancia detenida: ${businessId}`);
+    console.log(`[Evolution API] ⏸️ Instancia detenida localmente: ${businessId}`);
 
     // Esperar más tiempo para asegurar que Evolution API procese la eliminación
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -536,11 +542,26 @@ async function stopInstance(businessId) {
   }
 }
 
-async function forceReconnect(businessId) {
-  console.log(`[Evolution API] 🔄 Forzando reconexión para ${businessId}...`);
+async function forceReconnect(businessId, shouldLogout = false) {
+  console.log(`[Evolution API] 🔄 Forzando reconexión para ${businessId} (Logout: ${shouldLogout})...`);
 
   try {
-    await stopInstance(businessId);
+    // Si la instancia está 'open', primero intentar un simple disconnect/connect antes de borrar
+    const currentState = await getConnectionState(businessId);
+    if (currentState === 'open' || currentState === 'connected') {
+      console.log(`[Evolution API] 🔄 Instancia está 'open', intentando reinicio suave...`);
+      try {
+        await api.post(`/instance/disconnect/${businessId}`);
+        await new Promise(r => setTimeout(r, 2000));
+        await api.get(`/instance/connect/${businessId}`);
+        console.log(`[Evolution API] ✅ Reinicio suave completado para ${businessId}`);
+        return true;
+      } catch (e) {
+        console.log(`[Evolution API] ⚠️ Reinicio suave falló, procediendo con recreación:`, e.message);
+      }
+    }
+
+    await stopInstance(businessId, shouldLogout);
     await createInstance(businessId, true);
 
     console.log(`[Evolution API] ✅ Reconexión completada para ${businessId}`);

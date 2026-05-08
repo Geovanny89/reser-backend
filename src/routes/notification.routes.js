@@ -356,20 +356,41 @@ router.post('/evolution/webhook', async (req, res) => {
           console.error('[Evolution Webhook] ❌ Error obteniendo info de instancia:', err.message);
         }
       } else if (connectionState === 'close' || connectionState === 'disconnected') {
-        console.log(`[Evolution Webhook] ⚠️ Instancia ${businessId} desconectada`);
+        const statusReason = data?.statusReason || data?.reason;
+        console.log(`[Evolution Webhook] ⚠️ Instancia ${businessId} desconectada. Razón: ${statusReason}`);
         
-        // Actualizar memoria también
+        // Determinar estado final
+        let finalStatus = 'disconnected';
+        if (statusReason === 401) {
+          console.log(`[Evolution Webhook] 🔴 ERROR DE AUTENTICACIÓN (401) para ${businessId}. Sesión invalidada.`);
+          finalStatus = 'auth_error';
+        }
+        
+        // Actualizar memoria
         const { setInstance } = require('../services/evolution/state');
         setInstance(businessId, {
           instanceName: businessId,
-          status: 'disconnected',
-          createdAt: new Date()
+          status: finalStatus,
+          statusReason: statusReason,
+          updatedAt: new Date()
         });
         
         await models.WhatsAppSession.update(
-          { status: 'disconnected', lastActivity: new Date() },
+          { 
+            status: finalStatus, 
+            lastActivity: new Date(),
+            // Guardar razón en un campo de log si existiera, por ahora en status
+          },
           { where: { businessId } }
         );
+
+        // Si es 401, podríamos emitir un socket para avisar al frontend
+        if (global.io) {
+          global.io.to(`business:${businessId}`).emit('whatsapp_status', { 
+            status: finalStatus,
+            reason: 'auth_failure'
+          });
+        }
       }
     }
     

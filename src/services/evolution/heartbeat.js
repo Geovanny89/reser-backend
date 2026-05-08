@@ -14,7 +14,8 @@ const API_KEY = process.env.EVOLUTION_API_KEY;
 const api = axios.create({
   baseURL: EVOLUTION_URL,
   headers: { 'apikey': API_KEY },
-  timeout: 10000
+  timeout: 10000,
+  proxy: false // Desactivar proxy global para peticiones internas
 });
 
 const { getInstance, setInstance, getActiveBusinessIds } = require('./state');
@@ -103,26 +104,26 @@ async function heartbeatCheck() {
     const isRecent = instance?.createdAt && 
       (new Date() - new Date(instance.createdAt)) < 5 * 60 * 1000;
     
-    // Si está en "connecting" por más de 2 minutos, verificar si hay QR pendiente
-    // (esto maneja casos donde la conexión se queda atascada)
+    // Si está en "connecting" por más de 10 minutos, verificar si hay QR pendiente
     const isStuckInConnecting = state === 'connecting' && instance?.createdAt &&
-      (new Date() - new Date(instance.createdAt)) > 2 * 60 * 1000;
+      (new Date() - new Date(instance.createdAt)) > 10 * 60 * 1000;
     
     if (isStuckInConnecting) {
       // NO forzar reconexión si hay un QR pendiente - el usuario necesita tiempo para escanearlo
       const { currentQRs } = require('./state');
       if (currentQRs && currentQRs.has && currentQRs.has(businessId)) {
         console.log(`[Heartbeat] ℹ️ Instancia ${businessId} en connecting con QR pendiente, esperando escaneo... (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s)`);
-        // Solo forzar reconexión si ha pasado MUCHO tiempo (30 min) con QR pendiente
-        const veryLongWait = (new Date() - new Date(instance.createdAt)) > 30 * 60 * 1000;
+        // Solo forzar reconexión si ha pasado MUCHO tiempo (1 hora) con QR pendiente
+        const veryLongWait = (new Date() - new Date(instance.createdAt)) > 60 * 60 * 1000;
         if (!veryLongWait) {
           return; // Esperar más tiempo para que escaneen el QR
         }
-        console.log(`[Heartbeat] ⚠️ QR pendiente por más de 30 min, forzando reconexión...`);
+        console.log(`[Heartbeat] ⚠️ QR pendiente por más de 1 hora, forzando reconexión suave...`);
       } else {
-        console.log(`[Heartbeat] ⚠️ Instancia ${businessId} atascada en connecting (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s), forzando reconexión...`);
+        console.log(`[Heartbeat] ⚠️ Instancia ${businessId} atascada en connecting (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s), forzando reconexión suave...`);
       }
-      await attemptReconnect(businessId);
+      // RECONEXIÓN SUAVE: No cerrar sesión (logout: false)
+      await attemptReconnect(businessId, false);
       return;
     }
     
@@ -135,8 +136,8 @@ async function heartbeatCheck() {
       console.log(`[Heartbeat] ⚠️ Instancia ${businessId} desconectada (${state}). Intentando recuperación suave...`);
       
       // Intentar reconectar usando el mismo proxy que ya tiene asignado
-      // La función createInstance en instanceManager ya se encarga de reusar el proxy de la DB
-      await attemptReconnect(businessId);
+      // Logout: false para no perder la sesión si el error es temporal (ej: proxy caído)
+      await attemptReconnect(businessId, false);
     }
   }));
 }
@@ -162,14 +163,14 @@ async function pingAllInstances() {
 /**
  * Intenta reconectar una instancia
  */
-async function attemptReconnect(businessId) {
+async function attemptReconnect(businessId, shouldLogout = false) {
   try {
     const { forceReconnect } = require('./instanceManager');
     
-    console.log(`[Heartbeat] 🔄 Reconectando ${businessId}...`);
-    await forceReconnect(businessId);
+    console.log(`[Heartbeat] 🔄 Reconectando ${businessId} (Logout: ${shouldLogout})...`);
+    await forceReconnect(businessId, shouldLogout);
     
-    console.log(`[Heartbeat] ✅ Reconexión exitosa para ${businessId}`);
+    console.log(`[Heartbeat] ✅ Reconexión solicitada para ${businessId}`);
   } catch (err) {
     console.error(`[Heartbeat] ❌ Error reconectando ${businessId}:`, err.message);
   }
