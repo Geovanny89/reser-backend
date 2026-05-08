@@ -29,8 +29,8 @@ services:
   evolution_api: 
     image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution_api
-    env_file:
-      - .env
+    # env_file:
+    #   - .env
     restart: always
     ports:
       - "8080:8080" 
