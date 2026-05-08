@@ -354,8 +354,8 @@ async function start() {
     httpServer.listen(PORT, '0.0.0.0', async () => {
       // Notificar a PM2 que estamos listos (para wait_ready: true)
       if (process.send) process.send('ready');
-      console.log(`🚀  Backend corriendo en http://0.0.0.0:${PORT}`);
-      console.log(`📚  Documentación Swagger: http://tu-ip-vps:${PORT}/api/docs`);
+      console.log(`🚀  Backend corriendo en http://localhost:${PORT}`);
+      console.log(`📚  Documentación Swagger: http://localhost:${PORT}/api/docs`);
       if (DISABLE_BACKGROUND_JOBS) {
         console.log('🧯 Background jobs DESHABILITADOS (DISABLE_BACKGROUND_JOBS=true)');
         return;
@@ -400,4 +400,4 @@ async function start() {
     process.exit(1);
   }
 }
-start();
+start(); 

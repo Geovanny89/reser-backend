@@ -235,11 +235,13 @@ router.post('/whatsapp/logout', auth, async (req, res) => {
     const { businessId } = req.query;
     if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
     
-    const client = whatsappService.instances.get(businessId);
-    if (client) {
-      try { await client.logout(); } catch (e) {}
-      try { await client.destroy(); } catch (e) {}
-      whatsappService.instances.delete(businessId);
+    // Llamar al método real de Evolution API para desvincular y borrar
+    try {
+      if (whatsappService.stopInstance) {
+        await whatsappService.stopInstance(businessId, true);
+      }
+    } catch (e) {
+      console.error('[WhatsApp Logout] Error deteniendo instancia en API:', e.message);
     }
     whatsappService.currentQRs.delete(businessId);
     await models.WhatsAppSession.destroy({ where: { businessId } });

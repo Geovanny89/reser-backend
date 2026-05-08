@@ -4,7 +4,7 @@ services:
     container_name: evolution_postgres
     restart: always
     environment:
-      - POSTGRES_DB=evolution_db
+      - POSTGRES_DB=evolution
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=1234
     ports:
@@ -42,9 +42,17 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - SERVER_URL=http://72.62.165.89:8080
+      - SERVER_URL=http://localhost:8080
       - LANGUAGE=es
       - LOG_LEVEL=info
+
+      # Proxy Configuration
+      - PROXY_ENABLED=true
+      - PROXY_HOST=${PROXY_HOST}
+      - PROXY_PORT=${PROXY_PORT}
+      - PROXY_PROTOCOL=${PROXY_PROTOCOL}
+      - PROXY_USERNAME=${PROXY_USERNAME}
+      - PROXY_PASSWORD=${PROXY_PASSWORD}
 
       # Identidad de Sesión
       - CONFIG_SESSION_PHONE_CLIENT=Windows
@@ -58,9 +66,9 @@ services:
       # Base de Datos
       - DATABASE_ENABLED=true
       - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URL=postgresql://postgres:1234@postgres:5432/evolution_db?sslmode=disable&schema=evolution_api
-      - DATABASE_CONNECTION_URI=postgresql://postgres:1234@postgres:5432/evolution_db?sslmode=disable&schema=evolution_api
-      - DATABASE_URL=postgresql://postgres:1234@postgres:5432/evolution_db?sslmode=disable&schema=evolution_api
+      - DATABASE_CONNECTION_URL=postgresql://postgres:1234@postgres:5432/evolution?sslmode=disable&schema=public
+      - DATABASE_CONNECTION_URI=postgresql://postgres:1234@postgres:5432/evolution?sslmode=disable&schema=public
+      - DATABASE_URL=postgresql://postgres:1234@postgres:5432/evolution?sslmode=disable&schema=public
       - DATABASE_SAVE_DATA_INSTANCE=true
       - DATABASE_SAVE_DATA_NEW_MESSAGE=true
       - DATABASE_SAVE_DATA_AUTH=true
@@ -69,11 +77,9 @@ services:
       - DATABASE_SAVE_DATA_CONTACTS=true
       - DATABASE_SAVE_IS_NEW=false
 
-      # Cache & Redis
-      - CACHE_REDIS_ENABLED=true
-      - CACHE_REDIS_HOST=redis
-      - CACHE_REDIS_PORT=6379
-      - CACHE_LOCAL_ENABLED=false
+      # Cache
+      - CACHE_REDIS_ENABLED=false
+      - CACHE_LOCAL_ENABLED=true
 
       # Webhooks Globales
       - WEBHOOK_GLOBAL_ENABLED=true
