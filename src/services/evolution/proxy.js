@@ -5,9 +5,12 @@
 const api = require('./api');
 
 async function getBestProxy() {
-  const host = process.env.PROXY_HOST || '201.219.206.231';
-  const port = process.env.PROXY_PORT || '12323';
-  return { host, port };
+  return {
+    host: process.env.PROXY_HOST || '201.219.206.231',
+    port: process.env.PROXY_PORT || '12323',
+    username: process.env.PROXY_USERNAME,
+    password: process.env.PROXY_PASSWORD
+  };
 }
 
 async function ensureProxyConfig(businessId) {
