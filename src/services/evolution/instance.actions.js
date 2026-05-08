@@ -54,28 +54,35 @@ async function createInstance(businessId, forceFresh = false) {
   try {
     const { Business } = require('../../models');
     const biz = await Business.findByPk(businessId);
-    if (!biz) throw new Error('Negocio no encontrado');
+    if (!biz) throw new Error('Business not found');
 
-    const all = await fetchAllInstances();
-    let existing = all.find(inst => inst.name === businessId);
-
-    // Mapeo por teléfono si no existe por ID
-    if (!existing && biz.phone) {
-      const cleanPhone = biz.phone.replace(/\D/g, '');
-      existing = all.find(inst => {
-        const iph = extractPhoneFromInstance(inst);
-        return iph === cleanPhone || iph === '57' + cleanPhone;
-      });
-      if (existing) businessId = existing.name;
-    }
+    // 1. Verificar si ya existe para no causar conflictos (y evitar el 403)
+    const instances = await fetchAllInstances();
+    const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
 
     if (existing && !forceFresh) {
-      const status = existing.connectionStatus || existing.state || 'unknown';
-      if (status === 'open' || status === 'connected') return { instance: existing, status };
+      console.log(`[Evolution API] ℹ️ Instancia ${businessId} ya existe. Estado: ${existing.connectionStatus || existing.status}`);
+      
+      // Si está abierta, simplemente la registramos en el estado local y salimos
+      if (existing.connectionStatus === 'open' || existing.status === 'open') {
+        state.setInstance(businessId, { 
+          status: 'open', 
+          phone: extractPhoneFromInstance(existing)
+        });
+        return { success: true, status: 'open', existing: true };
+      }
+      
+      // Si no está abierta pero existe, la borramos para recrearla limpiamente (solo si forceFresh)
+      if (forceFresh) {
+        await stopInstance(businessId);
+      } else {
+        // Intentar obtener QR de la existente
+        return { success: true, status: 'connecting', instance: existing };
+      }
     }
 
-    if (forceFresh) await stopInstance(businessId);
-
+    // 2. Crear nueva instancia
+    console.log(`[Evolution API] 🚀 Creando nueva instancia para ${businessId}...`);
     const createPayload = {
       instanceName: businessId,
       token: constants.DEFAULT_TOKEN,
@@ -83,10 +90,33 @@ async function createInstance(businessId, forceFresh = false) {
     };
 
     const response = await api.post('/instance/create', createPayload);
-    await configureWebhook(businessId);
-    
-    return response.data;
+    const data = response.data;
+
+    // Registrar en estado
+    state.setInstance(businessId, { 
+      status: 'connecting',
+      token: data.hash?.token || constants.DEFAULT_TOKEN
+    });
+
+    return {
+      success: true,
+      status: 'connecting',
+      qrcode: data.qrcode,
+      instance: data.instance
+    };
   } catch (err) {
+    console.error(`[Evolution API] ❌ Error en createInstance para ${businessId}:`, err.response?.data || err.message);
+    
+    // Si el error es 403 o 400 (ya existe), intentar recuperar la instancia
+    if (err.response?.status === 403 || err.response?.status === 400) {
+      console.log(`[Evolution API] 🔄 Intentando recuperar instancia existente tras error...`);
+      const instances = await fetchAllInstances().catch(() => []);
+      const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
+      if (existing) {
+        return { success: true, status: existing.connectionStatus || 'connecting', instance: existing };
+      }
+    }
+    
     throw err;
   }
 }

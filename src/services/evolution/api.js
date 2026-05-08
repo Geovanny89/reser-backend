@@ -9,6 +9,7 @@ const api = axios.create({
   baseURL: constants.BASE_URL,
   headers: {
     'apikey': constants.API_KEY,
+    'Authorization': `Bearer ${constants.API_KEY}`,
     'Content-Type': 'application/json'
   },
   timeout: 60000 
