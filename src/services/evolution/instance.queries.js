@@ -44,7 +44,8 @@ async function fetchAllInstances() {
 
 async function getConnectionState(businessId) {
   try {
-    const response = await api.get(`/instance/connectionState/${businessId}`);
+    const realName = state.getRealInstanceName(businessId);
+    const response = await api.get(`/instance/connectionState/${realName}`);
     const status = response.data?.instance?.state || response.data?.state || null;
     
     if (status) {

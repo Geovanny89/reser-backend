@@ -37,7 +37,10 @@ async function stopInstance(businessId, shouldLogout = true) {
       
       for (let i = 1; i <= 3; i++) {
         try {
-          const res = await api.delete(`/instance/delete/${idToTry}?force=true`);
+          // Intentamos borrar enviando el nombre tanto en la URL como en el cuerpo (algunas versiones lo exigen así)
+          const res = await api.delete(`/instance/delete/${idToTry}?force=true`, {
+            data: { instanceName: idToTry } 
+          });
           if (res.status === 200 || res.status === 201) {
             deleted = true;
             console.log(`[Evolution API] ✅ Instancia ${idToTry} eliminada.`);

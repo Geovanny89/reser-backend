@@ -3,17 +3,17 @@
  * Archivo: evolution/instance.messaging.js
  */
 const api = require('./api');
-const { formatPhoneForEvolution } = require('./instance.utils');
+const state = require('./state');
+const { formatPhoneForEvolution, extractPhoneFromInstance } = require('./instance.utils');
 const { fetchAllInstances, getConnectionState } = require('./instance.queries');
-const { extractPhoneFromInstance } = require('./instance.utils');
 
 async function sendMessageDirect(businessId, phone, text) {
   try {
     const formattedPhone = formatPhoneForEvolution(phone);
     if (!formattedPhone) throw new Error(`Número inválido: ${phone}`);
 
-    // Resolver ID real si el proporcionado no existe
-    let actualId = businessId;
+    // Resolver ID real desde el estado (soporta nombres dinámicos)
+    let actualId = state.getRealInstanceName(businessId);
     const all = await fetchAllInstances();
     if (!all.find(inst => inst.name === businessId)) {
       const { Business } = require('../../models');

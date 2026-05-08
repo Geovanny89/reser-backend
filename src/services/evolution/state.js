@@ -20,6 +20,14 @@ function getInstance(businessId) {
   return entry;
 }
 
+/**
+ * Devuelve el nombre real de la instancia en la API (pude ser el businessId o un nombre con sufijo)
+ */
+function getRealInstanceName(businessId) {
+  const entry = instances.get(businessId);
+  return entry?.instanceName || businessId;
+}
+
 function setInstance(businessId, instanceData) {
   const now = new Date();
   instances.set(businessId, {
@@ -134,6 +142,7 @@ function startAutoCleanup(intervalMs = 15 * 60 * 1000) {
 module.exports = {
   instances,
   getInstance,
+  getRealInstanceName,
   setInstance,
   deleteInstance,
   hasInstance,
