@@ -138,7 +138,8 @@ async function heartbeatCheck() {
       // Logout: false para no perder la sesión si el error es temporal (ej: proxy caído)
       await attemptReconnect(businessId, false);
     } else if (state === 'open' || state === 'connected') {
-      // MEJORA: Si está conectada, asegurar que tenga el proxy aplicado
+      // PROXY DESACTIVADO TEMPORALMENTE PARA DEBUG DE TIMEOUTS
+      /*
       try {
         const { getBestProxy } = require('./proxyManager');
         const { ensureProxyConfig } = require('./instanceManager');
@@ -149,6 +150,7 @@ async function heartbeatCheck() {
       } catch (proxyErr) {
         // Error no crítico en el heartbeat
       }
+      */
     }
   }));
 }
