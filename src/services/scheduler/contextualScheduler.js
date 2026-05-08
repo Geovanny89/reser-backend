@@ -74,8 +74,8 @@ const CONTEXTUAL_CONFIG = {
   GRACE_PERIOD_MS: 5 * 60 * 1000, // 5 minutos
 
   // Límites por negocio para simular capacidad humana
-  MAX_MESSAGES_PER_HOUR_PER_BUSINESS: 5,
-  MAX_MESSAGES_PER_DAY_PER_BUSINESS: 100,
+  MAX_MESSAGES_PER_HOUR_PER_BUSINESS: 50,
+  MAX_MESSAGES_PER_DAY_PER_BUSINESS: 500,
 
   // Fallback para recordatorios críticos: si delay > 30 min, enviar versión reducida o saltar
   CRITICAL_REMINDER_MAX_DELAY_MS: 30 * 60 * 1000, // 30 minutos
@@ -713,6 +713,26 @@ async function runContextualScheduler() {
                     schedulerMetrics.duplicateAvoided++;
                     schedulerMetrics.dbUniqueViolations++;
                     console.log(`[ContextualScheduler] 🔒 Duplicado evitado por DB UNIQUE constraint para cita ${freshAppointment.id}, tipo ${reminder.type}`);
+                    
+                    // MEJORA: Si ya existe un evento 'sent' en la DB pero la cita no tiene el timestamp,
+                    // sincronizar para evitar bucles de procesamiento inútiles.
+                    try {
+                      const existingSentEvent = await AppointmentReminderEvent.findOne({
+                        where: {
+                          appointmentId: freshAppointment.id,
+                          reminderType: reminder.type,
+                          status: 'sent'
+                        }
+                      });
+                      
+                      if (existingSentEvent) {
+                        console.log(`[ContextualScheduler] ♻️ Sincronizando timestamp en Appointment para cita ${freshAppointment.id}, tipo ${reminder.type}`);
+                        await freshAppointment.update({ [reminder.timestampField]: existingSentEvent.sentAt || new Date() });
+                      }
+                    } catch (syncErr) {
+                      console.warn(`[ContextualScheduler] ⚠️ Error en sincronización de duplicado:`, syncErr.message);
+                    }
+                    
                     break;
                   }
                   throw error;

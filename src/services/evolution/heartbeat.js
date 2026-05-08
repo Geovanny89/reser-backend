@@ -126,7 +126,7 @@ async function heartbeatCheck() {
       return;
     }
     
-    if (isRecent) {
+    if (isRecent && state !== null) {
       console.log(`[Heartbeat] ℹ️ Instancia ${businessId} es reciente (${Math.round((new Date() - new Date(instance.createdAt)) / 1000)}s), omitiendo reconexión automática`);
       return;
     }

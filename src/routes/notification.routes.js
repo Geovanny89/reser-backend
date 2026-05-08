@@ -308,7 +308,7 @@ router.post('/evolution/webhook', async (req, res) => {
       console.log(`[Evolution Webhook] ℹ️ Instancia '${actualInstance}' no es un UUID válido. Procesando solo en memoria.`);
       
       // Si es qrcode.update, guardar en memoria de todos modos
-      if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED') {
+      if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED' || actualEvent === 'qrcode.updated') {
         const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
         if (qrBase64) {
           whatsappService.currentQRs.set(actualInstance, qrBase64);
@@ -374,7 +374,7 @@ router.post('/evolution/webhook', async (req, res) => {
     }
     
     // Manejar evento de QR actualizado
-    if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED') {
+    if (actualEvent === 'qrcode.update' || actualEvent === 'qrcode_updated' || actualEvent === 'QRCODE_UPDATED' || actualEvent === 'qrcode.updated') {
       const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
       if (qrBase64) {
         console.log(`[Evolution Webhook] 📲 QR capturado para ${businessId}`);
