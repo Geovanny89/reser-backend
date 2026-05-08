@@ -3,12 +3,12 @@
  * Archivo: evolution/instance.messaging.js
  */
 const api = require('./api');
-const state = require('./state');
 const { formatPhoneForEvolution, extractPhoneFromInstance } = require('./instance.utils');
 const { fetchAllInstances, getConnectionState } = require('./instance.queries');
 
 async function sendMessageDirect(businessId, phone, text) {
   try {
+    const state = require('./state');
     const formattedPhone = formatPhoneForEvolution(phone);
     if (!formattedPhone) throw new Error(`Número inválido: ${phone}`);
 
