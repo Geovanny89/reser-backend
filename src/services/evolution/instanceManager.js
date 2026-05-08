@@ -236,14 +236,18 @@ async function ensureProxyConfig(businessId, proxy) {
     
     if (!proxyVerify.data?.enabled || proxyVerify.data.host !== proxy.host) {
       console.log(`[Evolution API] 🛡️ Aplicando proxy para ${businessId}: ${proxy.host}`);
+      
       const proxySetPayload = {
         enabled: true,
         host: proxy.host,
         port: Number(proxy.port), 
-        protocol: proxy.protocol || 'http',
-        username: proxy.username || '',
-        password: proxy.password || ''
+        protocol: (proxy.protocol || 'http').toLowerCase()
       };
+
+      // Solo agregar credenciales si existen para evitar error 400
+      if (proxy.username) proxySetPayload.username = proxy.username;
+      if (proxy.password) proxySetPayload.password = proxy.password;
+
       await api.post(`/proxy/set/${businessId}`, proxySetPayload);
       console.log(`[Evolution API] ✅ Proxy configurado exitosamente para ${businessId}`);
     } else {
