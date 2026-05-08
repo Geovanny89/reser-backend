@@ -468,7 +468,6 @@ async function tryGetQRFromQRCode(businessId) {
         }
 
         if (qr) return qr;
-
         console.log(`[Evolution API] ⏳ Qrcode esperando...`);
         await new Promise(resolve => setTimeout(resolve, 4000));
       } catch (e) {
@@ -486,86 +485,41 @@ async function tryGetQRFromQRCode(businessId) {
 
 async function stopInstance(businessId, shouldLogout = true) {
   try {
-    // PASO 0: Verificar estado real de la instancia
-    let state = null;
+    console.log(`[Evolution API] 🛑 Deteniendo instancia ${businessId}...`);
+    
+    // PASO 1: Intentar desconectar si existe
     try {
-      state = await getConnectionState(businessId);
-      console.log(`[Evolution API] 📡 Estado actual de ${businessId}: ${state}`);
-    } catch (e) {
-      console.log(`[Evolution API] ℹ️ No se pudo obtener estado, asumiendo que no existe`);
-    }
-
-    // PASO 1: Intentar desconectar siempre que la instancia exista
-    if (state && state !== 'unknown') {
-      console.log(`[Evolution API] 🔌 Forzando desconexión de instancia ${businessId} (estado: ${state}, logout: ${shouldLogout})...`);
-
-      // Solo hacer logout si se solicita explícitamente
       if (shouldLogout) {
-        try {
-          await api.delete(`/instance/logout/${businessId}`);
-          console.log(`[Evolution API] 🚪 Logout ejecutado para ${businessId}`);
-        } catch (e) { 
-          console.log(`[Evolution API] ℹ️ Error en logout (posiblemente ya desconectado):`, e.message);
-        }
+        await api.delete(`/instance/logout/${businessId}`).catch(() => {});
       }
+      await api.post(`/instance/disconnect/${businessId}`).catch(() => {});
+    } catch (e) { }
 
-      try {
-        await api.post(`/instance/disconnect/${businessId}`);
-        console.log(`[Evolution API] 🔌 Disconnect ejecutado para ${businessId}`);
-      } catch (e) { }
-
-      // Esperar un momento corto para que la API procese la desconexión
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-
-    // PASO 2: Eliminar la instancia con reintentos
-    console.log(`[Evolution API] 🗑️ Eliminando instancia ${businessId} de Evolution API...`);
-    let deleteAttempts = 0;
-    const maxDeleteAttempts = 3;
-
-    while (deleteAttempts < maxDeleteAttempts) {
-      deleteAttempts++;
+    // PASO 2: Intentar borrar con reintentos
+    let deleted = false;
+    for (let i = 1; i <= 3; i++) {
       try {
         await api.delete(`/instance/delete/${businessId}`);
-        console.log(`[Evolution API] ✅ Instancia eliminada en intento ${deleteAttempts}`);
+        deleted = true;
+        console.log(`[Evolution API] ✅ Instancia ${businessId} borrada de la API`);
         break;
-      } catch (deleteErr) {
-        console.log(`[Evolution API] ⚠️ Intento ${deleteAttempts}/${maxDeleteAttempts} falló:`, deleteErr.response?.status || deleteErr.message);
-
-        if (deleteAttempts < maxDeleteAttempts) {
-          // Si falla con 400 o 422, intentar desconectar de nuevo agresivamente
-          if (deleteErr.response?.status === 400 || deleteErr.response?.status === 422) {
-             console.log(`[Evolution API] 🔄 Re-intentando desconexión forzada antes de borrar...`);
-             if (shouldLogout) try { await api.delete(`/instance/logout/${businessId}`); } catch (e) { }
-             try { await api.post(`/instance/disconnect/${businessId}`); } catch (e) { }
-             await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-
-          // Si dice que necesita estar desconectada, esperar más
-          const errorMsg = JSON.stringify(deleteErr.response?.data || '');
-          if (errorMsg.includes('disconnected') || errorMsg.includes('needs to be')) {
-            console.log(`[Evolution API] ⏳ Esperando más tiempo para desconexión...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-        } else {
-          console.error(`[Evolution API] ❌ No se pudo eliminar después de ${maxDeleteAttempts} intentos`);
-          return false;
+      } catch (err) {
+        if (err.response?.status === 404) {
+          deleted = true;
+          break;
         }
+        console.warn(`[Evolution API] ⚠️ Intento ${i}/3 de borrado falló: ${err.response?.status}`);
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
-    deleteInstance(businessId);
-    deleteQR(businessId);
-    console.log(`[Evolution API] ⏸️ Instancia detenida localmente: ${businessId}`);
-
-    // Esperar más tiempo para asegurar que Evolution API procese la eliminación
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    return true;
+    // PASO 3: Limpiar localmente
+    const { removeInstance } = require('./state');
+    removeInstance(businessId);
+    
+    return deleted;
   } catch (err) {
-    console.error(`[Evolution API] ❌ Error deteniendo instancia:`, err.response?.data || err.message);
+    console.error(`[Evolution API] ❌ Error general deteniendo instancia:`, err.message);
     return false;
   }
 }
