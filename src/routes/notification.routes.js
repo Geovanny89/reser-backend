@@ -81,6 +81,8 @@ router.get('/whatsapp/status', auth, async (req, res) => {
           const rawState = await getConnectionState(businessId);
           if (rawState === 'connecting') {
             realState = 'connecting';
+          } else if (rawState === 'open' || rawState === 'connected') {
+            realState = 'connected';
           } else {
             realState = 'disconnected';
           }
