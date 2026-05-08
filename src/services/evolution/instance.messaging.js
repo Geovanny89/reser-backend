@@ -28,9 +28,9 @@ async function sendMessageDirect(businessId, phone, text) {
       }
     }
 
-    const state = await getConnectionState(actualId);
-    if (state !== 'open' && state !== 'connected') {
-      throw new Error(`WhatsApp no está conectado (estado: ${state})`);
+    const connState = await getConnectionState(actualId);
+    if (connState !== 'open' && connState !== 'connected') {
+      throw new Error(`WhatsApp no está conectado (estado: ${connState})`);
     }
 
     const delay = Math.min(Math.max(text.length * 20, 1500), 5000);
