@@ -9,7 +9,13 @@ const messaging = require('./instance.messaging');
 const proxy = require('./proxy');
 const utils = require('./instance.utils');
 
+const state = require('./state');
+
 module.exports = {
+  // Estado (para compatibilidad)
+  instances: state.instances,
+  currentQRs: state.currentQRs,
+
   // Acciones
   createInstance: actions.createInstance,
   stopInstance: actions.stopInstance,

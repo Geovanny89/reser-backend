@@ -117,17 +117,24 @@ async function createInstance(businessId, forceFresh = false) {
     try {
       const response = await api.post('/instance/create', createPayload);
       const data = response.data;
+      
+      const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
 
       state.setInstance(businessId, { 
         status: 'connecting',
-        instanceName: instanceNameToUse, // Guardamos el nombre real usado
+        instanceName: instanceNameToUse,
         token: data.hash?.token || constants.DEFAULT_TOKEN
       });
+      
+      if (qrData) {
+        state.setQR(businessId, qrData);
+        console.log(`[Evolution API] 📲 QR guardado en estado para ${businessId}`);
+      }
 
       return {
         success: true,
         status: 'connecting',
-        qrcode: data.qrcode,
+        qrcode: qrData,
         instance: data.instance
       };
     } catch (err) {
