@@ -93,8 +93,6 @@ async function hasValidSession(businessId) {
       for (const inst of matching) {
         const state = inst.connectionStatus || inst.status || inst.state;
         console.log(`[Evolution API] 💓 Instancia ${inst.name || inst.instanceName} está en estado: ${state}`);
-        if (state === 'open' || state === 'connected') {
-          return true;
         }
       }
     }
@@ -102,20 +100,23 @@ async function hasValidSession(businessId) {
     // Búsqueda por teléfono si lo anterior falla
     console.log(`[Evolution API] ⚠️ No se encontró sesión por ID para ${businessId}, intentando por teléfono...`);
     const { Business } = require('../../models');
-      const biz = await Business.findByPk(businessId);
-      if (biz && biz.phone) {
-        const cleanPhone = biz.phone.replace(/\D/g, '');
-        exists = allInstances.find(inst => {
-          const iph = extractPhoneFromInstance(inst);
-          return iph === cleanPhone || iph === '57' + cleanPhone;
-        });
+    const biz = await Business.findByPk(businessId);
+    if (biz && biz.phone) {
+      const cleanPhone = biz.phone.replace(/\D/g, '');
+      const exists = allInstances.find(inst => {
+        const iph = extractPhoneFromInstance(inst);
+        return iph === cleanPhone || iph === '57' + cleanPhone;
+      });
+
+      if (exists) {
+        const realState = await getConnectionState(exists.name);
+        return realState === 'open' || realState === 'connected';
       }
     }
 
-    if (!exists) return false;
-    const realState = await getConnectionState(exists.name);
-    return realState === 'open' || realState === 'connected';
+    return false;
   } catch (e) {
+    console.error(`[Evolution API] ❌ Error en hasValidSession para ${businessId}:`, e.message);
     return false;
   }
 }
