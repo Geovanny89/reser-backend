@@ -64,6 +64,11 @@ async function createInstance(businessId, forceFresh = false) {
 
         // Configurar webhook para instancia existente
         await configureWebhook(businessId);
+        
+        // Verificar y aplicar proxy si es necesario (incluso en instancias existentes)
+        if (proxy) {
+          await ensureProxyConfig(businessId, proxy);
+        }
 
         return existingInstance;
       }
@@ -143,31 +148,9 @@ async function createInstance(businessId, forceFresh = false) {
     // Evitamos llamar a /settings/set inmediatamente después de la creación
     // ya que esto provoca un reinicio innecesario del socket de Baileys.
 
-    // APLICAR PROXY VÍA ENDPOINT DEDICADO solo si no se pudo verificar en el paso anterior
-    // o si es una instancia pre-existente que necesita actualización.
+    // APLICAR PROXY (paso 2/2)
     if (proxy) {
-      try {
-        // En v2, el proxy en createPayload suele ser suficiente. 
-        // Solo llamamos a /proxy/set si es estrictamente necesario para asegurar persistencia.
-        const proxyVerify = await api.get(`/proxy/find/${businessId}`).catch(() => ({ data: null }));
-        
-        if (!proxyVerify.data?.enabled || proxyVerify.data.host !== proxy.host) {
-          const proxySetPayload = {
-            enabled: true,
-            host: proxy.host,
-            port: proxy.port, 
-            protocol: proxy.protocol || 'http',
-            username: proxy.username || '',
-            password: proxy.password || ''
-          };
-          await api.post(`/proxy/set/${businessId}`, proxySetPayload);
-          console.log(`[Evolution API] ✅ Proxy activado vía /proxy/set/ para ${businessId}: ${proxy.host}:${proxy.port}`);
-        } else {
-          console.log(`[Evolution API] 🛡️ Proxy ya configurado correctamente para ${businessId}`);
-        }
-      } catch (proxyErr) {
-        console.warn(`[Evolution API] ⚠️ Error gestionando proxy (no crítico):`, proxyErr.response?.data || proxyErr.message);
-      }
+      await ensureProxyConfig(businessId, proxy);
     }
 
     const instanceData = response.data.instance;
@@ -226,6 +209,34 @@ async function createInstance(businessId, forceFresh = false) {
 /**
  * Configura webhook para una instancia específica
  */
+/**
+ * Asegura que el proxy esté correctamente configurado en Evolution API
+ */
+async function ensureProxyConfig(businessId, proxy) {
+  try {
+    // Verificar si ya está configurado
+    const proxyVerify = await api.get(`/proxy/find/${businessId}`).catch(() => ({ data: null }));
+    
+    if (!proxyVerify.data?.enabled || proxyVerify.data.host !== proxy.host) {
+      console.log(`[Evolution API] 🛡️ Aplicando proxy para ${businessId}: ${proxy.host}`);
+      const proxySetPayload = {
+        enabled: true,
+        host: proxy.host,
+        port: proxy.port, 
+        protocol: proxy.protocol || 'http',
+        username: proxy.username || '',
+        password: proxy.password || ''
+      };
+      await api.post(`/proxy/set/${businessId}`, proxySetPayload);
+      console.log(`[Evolution API] ✅ Proxy configurado exitosamente para ${businessId}`);
+    } else {
+      console.log(`[Evolution API] 🛡️ Proxy ya está correctamente configurado para ${businessId}`);
+    }
+  } catch (err) {
+    console.warn(`[Evolution API] ⚠️ Error asegurando proxy para ${businessId}:`, err.message);
+  }
+}
+
 async function configureWebhook(businessId) {
   try {
     // Usar host.docker.internal para Docker Desktop en Windows, o la IP local si es red local
