@@ -334,10 +334,10 @@ router.post('/evolution/webhook', async (req, res) => {
       if (connectionState === 'open' || connectionState === 'connected') {
         console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada, guardando sesión...`);
         
-        // IMPORTANTE: Actualizar estado en memoria para que hasValidSession funcione
+        // IMPORTANTE: Actualizar estado en memoria con el nombre REAL (con sufijo) para que las consultas funcionen
         const { setInstance } = require('../services/evolution/state');
         setInstance(businessId, {
-          instanceName: businessId,
+          instanceName: req.body.instance || req.body.instanceName || businessId,
           status: 'connected',
           createdAt: new Date()
         });
