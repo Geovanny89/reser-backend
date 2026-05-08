@@ -15,11 +15,15 @@ async function fetchAllInstances() {
     const { WhatsAppSession } = require('../../models');
     const { getBaseBusinessId } = require('./instance.utils');
     
+    const foundBusinessIds = new Set();
+
     for (const inst of instances) {
       const fullName = inst.name || inst.instanceName;
       if (!fullName) continue;
 
       const businessId = getBaseBusinessId(fullName);
+      foundBusinessIds.add(businessId);
+
       const phone = extractPhoneFromInstance(inst);
       const status = inst.connectionStatus || inst.state || 'unknown';
 
@@ -38,6 +42,17 @@ async function fetchAllInstances() {
         } catch (e) {}
       }
     }
+
+    // Poda: Eliminar de memoria lo que ya no existe en la API
+    const currentInMemory = state.getActiveBusinessIds();
+    for (const id of currentInMemory) {
+      if (!foundBusinessIds.has(id)) {
+        console.log(`[Evolution API] 🧹 Podando instancia huérfana de memoria: ${id}`);
+        state.deleteInstance(id);
+        state.deleteQR(id);
+      }
+    }
+
     return instances;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error obteniendo instancias:`, err.message);

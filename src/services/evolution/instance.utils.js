@@ -54,14 +54,19 @@ function extractPhoneFromInstance(instance) {
 
 function getBaseBusinessId(instanceName) {
   if (!instanceName || typeof instanceName !== 'string') return instanceName;
-  if (!instanceName.includes('_')) return instanceName;
   
-  const parts = instanceName.split('_');
-  // Si la última parte son solo números (nuestro sufijo dinámico), la removemos
-  if (/^\d+$/.test(parts[parts.length - 1])) {
-    return parts.slice(0, -1).join('_');
+  let current = instanceName;
+  while (current.includes('_')) {
+    const parts = current.split('_');
+    const lastPart = parts[parts.length - 1];
+    // Si la última parte son solo números, la removemos y seguimos probando
+    if (/^\d+$/.test(lastPart)) {
+      current = parts.slice(0, -1).join('_');
+    } else {
+      break; // No es un sufijo numérico, parar
+    }
   }
-  return instanceName;
+  return current;
 }
 
 module.exports = {
