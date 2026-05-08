@@ -27,33 +27,20 @@ async function stopInstance(businessId, shouldLogout = true) {
       await new Promise(r => setTimeout(r, 3000));
     } catch (e) { }
 
-    // 3. Intentar borrar físicamente con reintentos agresivos
+    // 3. Intentar borrar físicamente
     let deleted = false;
-    const idsToTry = [...new Set([targetId, businessId, existing?.id])].filter(Boolean);
+    const idsToTry = [...new Set([targetId, businessId])].filter(Boolean);
     
     for (const idToTry of idsToTry) {
       if (deleted) break;
-      console.log(`[Evolution API] 🗑️ Intentando borrar instancia: ${idToTry}`);
-      
-      for (let i = 1; i <= 3; i++) {
-        try {
-          // Intentamos borrar enviando el nombre tanto en la URL como en el cuerpo (algunas versiones lo exigen así)
-          const res = await api.delete(`/instance/delete/${idToTry}?force=true`, {
-            data: { instanceName: idToTry } 
-          });
-          if (res.status === 200 || res.status === 201) {
-            deleted = true;
-            console.log(`[Evolution API] ✅ Instancia ${idToTry} eliminada.`);
-            break;
-          }
-        } catch (err) {
-          if (err.response?.status === 404) {
-            deleted = true;
-            break;
-          }
-          console.error(`[Evolution API] ❌ Intento ${i} falló para ${idToTry}:`, err.response?.data?.response?.message || err.message);
-          await new Promise(r => setTimeout(r, 2000));
-        }
+      try {
+        await api.delete(`/instance/delete/${idToTry}?force=true`, {
+          data: { instanceName: idToTry },
+          timeout: 4000
+        });
+        deleted = true;
+      } catch (err) {
+        if (err.response?.status === 404) deleted = true;
       }
     }
 
