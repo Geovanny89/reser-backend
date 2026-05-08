@@ -33,7 +33,9 @@ async function stopInstance(businessId, shouldLogout = true) {
           deleted = true;
           break;
         }
-        console.warn(`[Evolution API] ⚠️ Intento ${i}/3 de borrado falló: ${err.response?.status}`);
+        // LOG DETALLADO DEL ERROR 400
+        console.error(`[Evolution API] ❌ Error ${err.response?.status} al borrar:`, JSON.stringify(err.response?.data || {}));
+        
         await new Promise(r => setTimeout(r, 2000));
       }
     }
