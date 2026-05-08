@@ -68,6 +68,11 @@ services:
       - DATABASE_SAVE_DATA_AUTH=true
       - DATABASE_SAVE_MESSAGE_INSTANCE=true
       - DATABASE_SAVE_IS_NEW=false
+      
+      # Limpieza automática
+      - INSTANCE_CLEAN_UP_INTERVAL=1
+      - INSTANCE_CLEAN_UP_DAYS=1
+      - DEL_INSTANCE_FOLDER_ON_DELETE=true
 
       # Cache & Redis
       - CACHE_REDIS_ENABLED=true
