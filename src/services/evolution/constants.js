@@ -3,6 +3,11 @@
  * Archivo: evolution/constants.js
  */
 
+// ==================== CONFIGURACIÓN DE API ====================
+const BASE_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+const API_KEY = process.env.EVOLUTION_API_KEY || '1234';
+const DEFAULT_TOKEN = process.env.EVOLUTION_API_TOKEN || '071B3DEF-D4BF-4468-B191-8F1594B1F5D2';
+
 // ==================== CONFIGURACIÓN DE LÍMITES ====================
 
 /** Límite de mensajes por hora por negocio */
@@ -116,6 +121,9 @@ const THANK_YOU_TEMPLATES = (clientName) => [
 // ==================== EXPORTS ====================
 
 module.exports = {
+  BASE_URL,
+  API_KEY,
+  DEFAULT_TOKEN,
   MAX_MESSAGES_PER_HOUR,
   CONFIRMATION_TEMPLATES,
   REMINDER_TEMPLATES,
