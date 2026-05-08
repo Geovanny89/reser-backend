@@ -4,6 +4,7 @@
  */
 const api = require('./api');
 const state = require('./state');
+const creationLocks = new Set();
 const constants = require('./constants');
 const { fetchAllInstances, getConnectionState } = require('./instance.queries');
 const { extractPhoneFromInstance } = require('./instance.utils');
@@ -56,19 +57,20 @@ async function stopInstance(businessId, shouldLogout = true) {
 }
 
 async function createInstance(businessId, forceFresh = false) {
-  try {
-    const { Business } = require('../../models');
-    const biz = await Business.findByPk(businessId);
-    if (!biz) throw new Error('Business not found');
+  if (creationLocks.has(businessId)) {
+    console.log(`[Evolution API] ⏳ Creación en curso para ${businessId}, omitiendo duplicado...`);
+    return { success: false, status: 'busy' };
+  }
 
-    // 1. Verificar si ya existe para no causar conflictos (y evitar el 403)
-    const instances = await fetchAllInstances();
-    console.log(`[Evolution API] 📊 fetchInstances devolvió ${instances.length} instancias`);
+  try {
+    creationLocks.add(businessId);
+    
+    // 1. Verificar si ya existe para no causar conflictos
+    const instances = await fetchAllInstances().catch(() => []);
     const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
 
-    // Si NO es forceFresh y existe una abierta, la usamos
+    // Si NO es forceFresh y está conectada, la usamos directamente
     if (existing && !forceFresh) {
-      console.log(`[Evolution API] ℹ️ Instancia ${businessId} ya existe. Estado: ${existing.connectionStatus || existing.status}`);
       if (existing.connectionStatus === 'open' || existing.status === 'open') {
         state.setInstance(businessId, { 
           status: 'open', 
@@ -78,21 +80,17 @@ async function createInstance(businessId, forceFresh = false) {
       }
     }
 
-    // Si es forceFresh, SIEMPRE intentamos borrar la vieja primero
-    if (forceFresh) {
-      console.log(`[Evolution API] 🔄 ForceFresh: Intentando limpiar instancia previa...`);
-      await stopInstance(businessId).catch(() => {});
-      // No retornamos aquí, seguimos para crear la nueva con nombre dinámico
-    }
-
-    // 2. Crear nueva instancia
-    console.log(`[Evolution API] 🚀 Creando nueva instancia para ${businessId}...`);
-    
-    // Si forceFresh es true, intentamos usar un nombre ligeramente distinto si el original falla
+    // 2. Preparar nombre dinámico (SIEMPRE si es forceFresh para evitar 403)
     let instanceNameToUse = businessId;
     if (forceFresh) {
-      instanceNameToUse = `${businessId}_${Date.now().toString().slice(-4)}`;
-      console.log(`[Evolution API] 🔄 Usando nombre fresco: ${instanceNameToUse}`);
+      instanceNameToUse = `${businessId}_${Math.floor(1000 + Math.random() * 9000)}`;
+      console.log(`[Evolution API] 🚀 Forzando instancia nueva: ${instanceNameToUse}`);
+      
+      // Intentamos cerrar la vieja en segundo plano (sin esperar)
+      if (existing) {
+        console.log(`[Evolution API] 🔄 Solicitando logout de sesión previa en background...`);
+        api.delete(`/instance/logout/${businessId}`).catch(() => {});
+      }
     }
 
     const createPayload = {
@@ -101,41 +99,33 @@ async function createInstance(businessId, forceFresh = false) {
       qrcode: true
     };
 
-    try {
-      const response = await api.post('/instance/create', createPayload);
-      const data = response.data;
-      
-      const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
+    const response = await api.post('/instance/create', createPayload);
+    const data = response.data;
+    const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
 
-      state.setInstance(businessId, { 
-        status: 'connecting',
-        instanceName: instanceNameToUse,
-        token: data.hash?.token || constants.DEFAULT_TOKEN
-      });
-      
-      if (qrData) {
-        state.setQR(businessId, qrData);
-        console.log(`[Evolution API] 📲 QR guardado en estado para ${businessId}`);
-      }
-
-      return {
-        success: true,
-        status: 'connecting',
-        qrcode: qrData,
-        instance: data.instance
-      };
-    } catch (err) {
-      if (err.response?.status === 403 || err.response?.status === 400) {
-        // Si el nombre con sufijo también falla, intentamos recuperar lo que haya
-        const all = await fetchAllInstances().catch(() => []);
-        const existing = all.find(i => i.name === businessId || i.instanceName === businessId);
-        if (existing) return { success: true, status: 'open', instance: existing };
-      }
-      throw err;
+    state.setInstance(businessId, { 
+      status: 'connecting',
+      instanceName: instanceNameToUse,
+      token: data.hash?.token || constants.DEFAULT_TOKEN
+    });
+    
+    if (qrData) {
+      state.setQR(businessId, qrData);
+      console.log(`[Evolution API] 📲 QR generado y guardado para ${businessId}`);
     }
+
+    return {
+      success: true,
+      status: 'connecting',
+      qrcode: qrData,
+      instance: data.instance
+    };
+
   } catch (err) {
-    console.error(`[Evolution API] ❌ Error crítico en createInstance para ${businessId}:`, err.response?.data || err.message);
-    throw err;
+    console.error(`[Evolution API] ❌ Error en createInstance para ${businessId}:`, err.response?.data || err.message);
+    return { success: false, error: err.message };
+  } finally {
+    creationLocks.delete(businessId);
   }
 }
 
