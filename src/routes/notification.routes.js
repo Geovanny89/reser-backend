@@ -13,15 +13,17 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
 
     console.log(`[WhatsApp Route] 🚀 Solicitud de QR para BusinessID: ${businessId}`);
 
-    // Verificar si ya está conectado
+    // Comentamos esto para permitir generar un QR nuevo aunque la BD diga connected (útil para sesiones fantasma)
+    /*
     const session = await models.WhatsAppSession.findOne({ where: { businessId } });
     if (session?.status === 'connected') {
       return res.json({ status: 'connected' });
     }
+    */
 
     // Intentar inicializar o recuperar instancia
-    // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre/proxy
-    await whatsappService.createInstance(businessId, false);
+    // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre y nos dé un QR fresco
+    await whatsappService.createInstance(businessId, true);
 
     // Esperar un poco a que se genere el QR (el evento 'qr' en whatsappService lo guardará en currentQRs)
     let attempts = 0;
