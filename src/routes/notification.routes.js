@@ -287,11 +287,21 @@ router.post('/evolution/webhook', async (req, res) => {
     console.log('[Evolution Webhook] 📨 Webhook recibido:', rawBody.substring(0, 1000));
     console.log('[Evolution Webhook] 🔍 Headers:', JSON.stringify(req.headers));
     
-    const businessId = req.body.instance || req.body.instanceName;
+    let businessId = req.body.instance || req.body.instanceName;
+    
+    // Normalizar ID si tiene sufijo dinámico (ej: uuid_1234 -> uuid)
+    if (businessId && businessId.includes('_')) {
+      const parts = businessId.split('_');
+      // Si la última parte son solo números, es nuestro sufijo dinámico
+      if (/^\d+$/.test(parts[parts.length - 1])) {
+        businessId = parts.slice(0, -1).join('_');
+      }
+    }
+
     const actualEvent = req.body.event || req.body.type;
     const data = req.body.data;
 
-    console.log(`[Evolution Webhook] 📨 Webhook recibido: ${actualEvent} para ID: '${businessId}' (Long: ${businessId?.length})`);
+    console.log(`[Evolution Webhook] 📨 Webhook recibido: ${actualEvent} para ID: '${businessId}' (Original: ${req.body.instance || req.body.instanceName})`);
     
     const actualInstance = businessId;
     
