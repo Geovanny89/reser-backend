@@ -80,7 +80,12 @@ async function getInstanceInfo(businessId) {
 async function hasValidSession(businessId) {
   try {
     const allInstances = await fetchAllInstances();
-    let exists = allInstances.find(inst => inst.name === businessId);
+    // Búsqueda inteligente: que el nombre sea exacto o que empiece por el businessId (para sufijos dinámicos)
+    let exists = allInstances.find(inst => 
+      inst.name === businessId || 
+      inst.instanceName === businessId ||
+      (inst.name && inst.name.startsWith(businessId + '_'))
+    );
 
     // Búsqueda inteligente por teléfono si falla por ID
     if (!exists) {
