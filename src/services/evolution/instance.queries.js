@@ -82,34 +82,33 @@ async function hasValidSession(businessId) {
     const allInstances = await fetchAllInstances();
     console.log(`[Evolution API] 🔍 Validando sesión para ${businessId}. Total instancias en API: ${allInstances.length}`);
     
-    // Buscar cualquier instancia que nos pertenezca
+    // 1. Buscar por nombre (exacto o con sufijo)
     const matching = allInstances.filter(inst => {
       const name = inst.name || inst.instanceName;
       return name === businessId || (name && name.startsWith(businessId + '_'));
     });
 
-    if (matching.length > 0) {
-      console.log(`[Evolution API] 🎯 Encontradas ${matching.length} instancias candidatas para ${businessId}`);
-      for (const inst of matching) {
-        const state = inst.connectionStatus || inst.status || inst.state;
-        console.log(`[Evolution API] 💓 Instancia ${inst.name || inst.instanceName} está en estado: ${state}`);
-        }
+    for (const inst of matching) {
+      const state = inst.connectionStatus || inst.status || inst.state;
+      console.log(`[Evolution API] 💓 Instancia ${inst.name || inst.instanceName} está en estado: ${state}`);
+      if (state === 'open' || state === 'connected') {
+        return true;
       }
     }
 
-    // Búsqueda por teléfono si lo anterior falla
+    // 2. Buscar por teléfono si lo anterior falla
     console.log(`[Evolution API] ⚠️ No se encontró sesión por ID para ${businessId}, intentando por teléfono...`);
     const { Business } = require('../../models');
     const biz = await Business.findByPk(businessId);
     if (biz && biz.phone) {
       const cleanPhone = biz.phone.replace(/\D/g, '');
-      const exists = allInstances.find(inst => {
+      const existsByPhone = allInstances.find(inst => {
         const iph = extractPhoneFromInstance(inst);
         return iph === cleanPhone || iph === '57' + cleanPhone;
       });
 
-      if (exists) {
-        const realState = await getConnectionState(exists.name);
+      if (existsByPhone) {
+        const realState = await getConnectionState(existsByPhone.name || existsByPhone.instanceName);
         return realState === 'open' || realState === 'connected';
       }
     }
