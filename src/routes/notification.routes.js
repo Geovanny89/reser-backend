@@ -21,7 +21,7 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
 
     // Intentar inicializar o recuperar instancia
     // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre/proxy
-    await whatsappService.createInstance(businessId, true);
+    await whatsappService.createInstance(businessId, false);
 
     // Esperar un poco a que se genere el QR (el evento 'qr' en whatsappService lo guardará en currentQRs)
     let attempts = 0;
