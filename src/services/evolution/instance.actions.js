@@ -96,6 +96,7 @@ async function createInstance(businessId, forceFresh = false) {
     const createPayload = {
       instanceName: instanceNameToUse,
       token: constants.DEFAULT_TOKEN,
+      integration: 'WHATSAPP-BAILEYS',
       qrcode: true
     };
 
