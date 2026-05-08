@@ -123,6 +123,7 @@ async function createInstance(businessId, forceFresh = false) {
       console.log(`[Evolution API] 🛡️ Usando proxy para ${businessId}: ${proxy.host}`);
       // Evolution API v2 acepta proxy directamente en el payload de creación
       createPayload.proxy = {
+        enabled: true,
         host: proxy.host,
         port: String(proxy.port), 
         protocol: proxy.protocol || 'http',
