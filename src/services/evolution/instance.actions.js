@@ -145,6 +145,12 @@ async function createInstance(businessId, forceFresh = false) {
   }
 }
 
+async function configureProxy(businessId) {
+  // DESACTIVADO TEMPORALMENTE: Los proxies están causando 'Pre-key upload timeout'
+  console.log(`[Evolution API] ℹ️ Proxy omitido para ${businessId} (Modo Debug)`);
+  return true;
+}
+
 async function configureWebhook(businessId) {
   try {
     const webhookUrl = `${process.env.BACKEND_URL}/api/notifications/evolution/webhook`;
