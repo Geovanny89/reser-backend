@@ -363,7 +363,7 @@ router.post('/evolution/webhook', async (req, res) => {
         let finalStatus = 'disconnected';
         if (statusReason === 401) {
           console.log(`[Evolution Webhook] 🔴 ERROR DE AUTENTICACIÓN (401) para ${businessId}. Sesión invalidada.`);
-          finalStatus = 'auth_error';
+          finalStatus = 'disconnected';
         }
         
         // Actualizar memoria
