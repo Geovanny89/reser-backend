@@ -33,7 +33,9 @@ let pingInterval = null;
  */
 async function checkInstanceStatus(businessId) {
   try {
-    const response = await api.get(`/instance/connectionState/${businessId}`);
+    const { getRealInstanceName } = require('./state');
+    const realName = getRealInstanceName(businessId);
+    const response = await api.get(`/instance/connectionState/${realName}`);
     const state = response.data.state || response.data.instance?.state;
     
     console.log(`[Heartbeat] 💓 Estado de ${businessId}: ${state}`);
@@ -82,14 +84,15 @@ async function pingInstance(businessId) {
 async function heartbeatCheck() {
   console.log('[Heartbeat] 🔍 Verificando todas las instancias...');
   
-  const businessIds = getActiveBusinessIds();
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const businessIds = getActiveBusinessIds().filter(id => uuidRegex.test(id));
   
   if (businessIds.length === 0) {
-    console.log('[Heartbeat] ℹ️ No hay instancias activas para verificar');
+    console.log('[Heartbeat] ℹ️ No hay instancias activas (UUIDs) para verificar');
     return;
   }
   
-  console.log(`[Heartbeat] 🔍 Verificando ${businessIds.length} instancias en paralelo...`);
+  console.log(`[Heartbeat] 🔍 Verificando ${businessIds.length} instancias principales en paralelo...`);
 
   await Promise.allSettled(businessIds.map(async (businessId) => {
     const instance = getInstance(businessId);

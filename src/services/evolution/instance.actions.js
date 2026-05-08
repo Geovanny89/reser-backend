@@ -11,6 +11,9 @@ const { extractPhoneFromInstance } = require('./instance.utils');
 
 async function stopInstance(businessId, shouldLogout = true) {
   try {
+    const { getBaseBusinessId } = require('./instance.utils');
+    businessId = getBaseBusinessId(businessId);
+    
     console.log(`[Evolution API] 🛑 Solicitando detención de ${businessId}...`);
     
     // 1. Obtener todas las instancias que coincidan (exacto o con sufijo)
@@ -175,6 +178,9 @@ async function getQR(businessId) {
 }
 
 async function forceReconnect(businessId, shouldLogout = false) {
+  const { getBaseBusinessId } = require('./instance.utils');
+  businessId = getBaseBusinessId(businessId);
+  
   await stopInstance(businessId, shouldLogout);
   return createInstance(businessId, true);
 }
