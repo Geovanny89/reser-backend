@@ -75,19 +75,25 @@ async function createInstance(businessId, forceFresh = false) {
   try {
     creationLocks.add(businessId);
     
-    // 1. Verificar si ya existe para no causar conflictos
+    // 1. Verificar si ya existe alguna (incluyendo sufijos) para no causar conflictos
     const instances = await fetchAllInstances().catch(() => []);
-    const existing = instances.find(i => i.name === businessId || i.instanceName === businessId);
+    const matching = instances.filter(i => {
+      const name = i.name || i.instanceName;
+      return name === businessId || (name && name.startsWith(businessId + '_'));
+    });
 
-    // Si NO es forceFresh y está conectada, la usamos directamente
-    if (existing && !forceFresh) {
-      if (existing.connectionStatus === 'open' || existing.status === 'open') {
-        state.setInstance(businessId, { 
-          status: 'open', 
-          phone: extractPhoneFromInstance(existing)
-        });
-        return { success: true, status: 'open', existing: true };
-      }
+    const existingOpen = matching.find(i => i.connectionStatus === 'open' || i.status === 'open' || i.state === 'open');
+
+    // Si NO es forceFresh y hay una conectada, la usamos directamente
+    if (existingOpen && !forceFresh) {
+      const activeName = existingOpen.name || existingOpen.instanceName;
+      console.log(`[Evolution API] ✅ Reutilizando instancia abierta: ${activeName}`);
+      state.setInstance(businessId, { 
+        status: 'open',
+        instanceName: activeName,
+        phone: extractPhoneFromInstance(existingOpen)
+      });
+      return { success: true, status: 'open', existing: true, instanceName: activeName };
     }
 
     // 2. Preparar nombre dinámico (SIEMPRE si es forceFresh para evitar 403)

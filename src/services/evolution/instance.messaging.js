@@ -12,20 +12,14 @@ async function sendMessageDirect(businessId, phone, text) {
     const formattedPhone = formatPhoneForEvolution(phone);
     if (!formattedPhone) throw new Error(`Número inválido: ${phone}`);
 
-    // Resolver ID real desde el estado (soporta nombres dinámicos)
+    // Resolver ID real desde el estado (que ahora se sincroniza en hasValidSession)
     let actualId = state.getRealInstanceName(businessId);
-    const all = await fetchAllInstances();
-    if (!all.find(inst => inst.name === businessId)) {
-      const { Business } = require('../../models');
-      const biz = await Business.findByPk(businessId);
-      if (biz && biz.phone) {
-        const cleanPhone = biz.phone.replace(/\D/g, '');
-        const mapped = all.find(inst => {
-          const iph = extractPhoneFromInstance(inst);
-          return iph === cleanPhone || iph === '57' + cleanPhone;
-        });
-        if (mapped) actualId = mapped.name;
-      }
+    
+    // Si no tenemos nada en el estado, intentamos una última validación rápida
+    if (actualId === businessId) {
+      const { hasValidSession } = require('./instance.queries');
+      await hasValidSession(businessId); // Esto sincronizará el estado si hay una abierta
+      actualId = state.getRealInstanceName(businessId);
     }
 
     const connState = await getConnectionState(actualId);

@@ -122,10 +122,19 @@ async function hasValidSession(businessId) {
 
     for (const inst of matching) {
       const s = inst.connectionStatus || inst.status || inst.state;
-      console.log(`[Evolution API] 💓 Instancia encontrada ${inst.name || inst.instanceName} está en estado: ${s}`);
+      const name = inst.name || inst.instanceName;
+      console.log(`[Evolution API] 💓 Instancia encontrada ${name} está en estado: ${s}`);
       if (s === 'open' || s === 'connected') {
         // Si encontramos una abierta que NO es la que tenemos en memoria, 
-        // probablemente es una sesión antigua que sobrevivió.
+        // probablemente es una sesión antigua que sobrevivió. Sincronizar.
+        if (current?.instanceName !== name) {
+          console.log(`[Evolution API] 🔄 Sincronizando instancia activa encontrada: ${name}`);
+          state.setInstance(businessId, {
+            instanceName: name,
+            status: s,
+            phone: extractPhoneFromInstance(inst)
+          });
+        }
         return true;
       }
     }
