@@ -17,22 +17,30 @@ async function stopInstance(businessId, shouldLogout = true) {
     const existing = all.find(i => i.name === businessId || i.instanceName === businessId || i.id === businessId);
     const targetId = existing?.id || businessId;
 
-    // 2. Intentar desconectar (silencioso)
+    // 2. Intentar desconectar y CERRAR (silencioso)
     try {
+      console.log(`[Evolution API] ⏳ Desconectando y esperando liberación de archivos...`);
       if (shouldLogout) await api.delete(`/instance/logout/${targetId}`).catch(() => {});
       await api.post(`/instance/disconnect/${targetId}`).catch(() => {});
+      
+      // ESPERA CRÍTICA: Darle tiempo a la API para cerrar los archivos de WhatsApp
+      await new Promise(r => setTimeout(r, 3000));
     } catch (e) { }
 
-    // 3. Intentar borrar con reintentos usando ID y Nombre
+    // 3. Intentar borrar físicamente con reintentos agresivos
     let deleted = false;
-    for (const idToTry of [targetId, businessId]) {
+    const idsToTry = [...new Set([targetId, businessId, existing?.id])].filter(Boolean);
+    
+    for (const idToTry of idsToTry) {
       if (deleted) break;
-      for (let i = 1; i <= 2; i++) {
+      console.log(`[Evolution API] 🗑️ Intentando borrar instancia: ${idToTry}`);
+      
+      for (let i = 1; i <= 3; i++) {
         try {
           const res = await api.delete(`/instance/delete/${idToTry}?force=true`);
           if (res.status === 200 || res.status === 201) {
             deleted = true;
-            console.log(`[Evolution API] ✅ Instancia ${idToTry} borrada físicamente`);
+            console.log(`[Evolution API] ✅ Instancia ${idToTry} eliminada.`);
             break;
           }
         } catch (err) {
@@ -40,8 +48,8 @@ async function stopInstance(businessId, shouldLogout = true) {
             deleted = true;
             break;
           }
-          console.error(`[Evolution API] ❌ Error ${err.response?.status} al borrar ${idToTry}:`, JSON.stringify(err.response?.data || {}));
-          await new Promise(r => setTimeout(r, 1000));
+          console.error(`[Evolution API] ❌ Intento ${i} falló para ${idToTry}:`, err.response?.data?.response?.message || err.message);
+          await new Promise(r => setTimeout(r, 2000));
         }
       }
     }
