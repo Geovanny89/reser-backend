@@ -118,9 +118,12 @@ async function processBusinessMessages(businessId, messages) {
   } catch (error) {
     console.error(`[Scheduler] ❌ Timeout o error procesando negocio ${businessId}:`, error.message);
 
+    // No detener instancia en caso de error, dejar que el heartbeat lo maneje
+    /*
     try {
       await whatsappService.stopInstance(businessId);
     } catch (e) {}
+    */
 
     for (const msg of messages) {
       const newRetryCount = msg.retryCount + 1;
@@ -186,6 +189,8 @@ async function processBusinessMessagesInternal(businessId, messages) {
       console.log(`[Scheduler] ⏳ Tiempo de espera completado, desconectando...`);
     }
 
+    // MANTENER INSTANCIA ABIERTA (Mejora UX y velocidad)
+    /*
     console.log(`[Scheduler] 🔌 Desconectando WhatsApp para ${resolvedBusinessId}...`);
     try {
       await whatsappService.stopInstance(resolvedBusinessId);
@@ -193,6 +198,7 @@ async function processBusinessMessagesInternal(businessId, messages) {
     } catch (disconnectError) {
       console.warn(`[Scheduler] ⚠️ Error desconectando (no crítico):`, disconnectError.message);
     }
+    */
 
     return {
       success: true,
@@ -203,9 +209,11 @@ async function processBusinessMessagesInternal(businessId, messages) {
 
   } catch (error) {
     console.error(`[Scheduler] ❌ Error general procesando negocio ${businessId}:`, error.message);
+    /*
     try {
       await whatsappService.stopInstance(businessId);
     } catch (e) {}
+    */
     throw error;
   }
 }
