@@ -8,7 +8,7 @@ const constants = require('./constants');
 const api = axios.create({
   baseURL: constants.BASE_URL,
   headers: {
-    'apiKey': constants.API_KEY,
+    'apikey': constants.API_KEY,
     'Content-Type': 'application/json'
   },
   timeout: 60000 
