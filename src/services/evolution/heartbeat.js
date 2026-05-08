@@ -199,8 +199,17 @@ function startHeartbeat() {
   // Enviar pings cada 2 minutos
   pingInterval = setInterval(pingAllInstances, PING_INTERVAL);
   
-  // Ejecutar verificación inicial
-  heartbeatCheck();
+  // Ejecutar verificación inicial DESPUÉS de un pequeño delay para que 
+  // fetchAllInstances tenga tiempo de poblar la memoria
+  setTimeout(async () => {
+    try {
+      const { fetchAllInstances } = require('./instanceManager');
+      await fetchAllInstances(); // Poblar memoria
+      await heartbeatCheck();    // Ejecutar revisión (esto aplicará el proxy)
+    } catch (e) {
+      console.error('[Heartbeat] ❌ Error en inicialización:', e.message);
+    }
+  }, 5000);
   
   console.log(`[Heartbeat] ✅ Sistema iniciado (verificación cada ${HEARTBEAT_INTERVAL/60000}min, pings cada ${PING_INTERVAL/60000}min)`);
 }

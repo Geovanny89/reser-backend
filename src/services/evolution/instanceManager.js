@@ -48,7 +48,23 @@ async function createInstance(businessId, forceFresh = false) {
     const proxy = await getBestProxy(businessId);
 
     const allInstances = await fetchAllInstances();
-    const existingInstance = allInstances.find(inst => inst.name === businessId);
+    let existingInstance = allInstances.find(inst => inst.name === businessId);
+
+    // MEJORA: Si no existe por ID, buscar por número de teléfono del negocio
+    if (!existingInstance && biz.phone) {
+      const cleanBizPhone = biz.phone.replace(/\D/g, '');
+      console.log(`[Evolution API] 🔍 Buscando instancia por teléfono: ${cleanBizPhone}...`);
+      existingInstance = allInstances.find(inst => {
+        const instPhone = extractPhoneFromInstance(inst);
+        return instPhone === cleanBizPhone || instPhone === '57' + cleanBizPhone;
+      });
+      
+      if (existingInstance) {
+        console.log(`[Evolution API] 🔗 Enlazando negocio ${businessId} con instancia existente ${existingInstance.name}`);
+        // Actualizar el businessId para que el resto de la función use el nombre real de la instancia
+        businessId = existingInstance.name;
+      }
+    }
 
     if (existingInstance && !forceFresh) {
       const status = existingInstance.connectionStatus || existingInstance.state || 'unknown';
@@ -223,7 +239,7 @@ async function ensureProxyConfig(businessId, proxy) {
       const proxySetPayload = {
         enabled: true,
         host: proxy.host,
-        port: proxy.port, 
+        port: Number(proxy.port), 
         protocol: proxy.protocol || 'http',
         username: proxy.username || '',
         password: proxy.password || ''
@@ -675,29 +691,51 @@ async function sendMessageDirect(businessId, phone, text) {
       throw new Error(`Número de teléfono inválido: ${phone}`);
     }
 
+    // MEJORA: Resolver el ID real de la instancia si el businessId proporcionado no existe
+    let actualInstanceId = businessId;
+    const allInstances = await fetchAllInstances();
+    const instExists = allInstances.find(inst => inst.name === businessId);
+    
+    if (!instExists) {
+       // Buscar por teléfono si el negocio existe
+       const { Business } = require('../../models');
+       const biz = await Business.findByPk(businessId);
+       if (biz && biz.phone) {
+         const cleanPhone = biz.phone.replace(/\D/g, '');
+         const mappedInst = allInstances.find(inst => {
+           const iph = extractPhoneFromInstance(inst);
+           return iph === cleanPhone || iph === '57' + cleanPhone;
+         });
+         if (mappedInst) {
+           actualInstanceId = mappedInst.name;
+           console.log(`[Evolution API] 🔄 ID Resuelto para envío: ${businessId} -> ${actualInstanceId}`);
+         }
+       }
+    }
+
     // Verificar estado de conexión ANTES de intentar enviar (evita timeout de 60s)
-    let connectionState = await getConnectionState(businessId);
+    let connectionState = await getConnectionState(actualInstanceId);
     
     // Si es null, intentar una vez más después de un pequeño delay
     if (connectionState === null) {
-      console.log(`[Evolution API] ⏳ Estado de conexión null para ${businessId}, reintentando...`);
+      console.log(`[Evolution API] ⏳ Estado de conexión null para ${actualInstanceId}, reintentando...`);
       await new Promise(r => setTimeout(r, 2000));
-      connectionState = await getConnectionState(businessId);
+      connectionState = await getConnectionState(actualInstanceId);
     }
 
     if (connectionState !== 'open' && connectionState !== 'connected') {
-      console.warn(`[Evolution API] ⚠️ Intento de envío fallido: WhatsApp no está conectado (estado: ${connectionState}) para ${businessId}`);
+      console.warn(`[Evolution API] ⚠️ Intento de envío fallido: WhatsApp no está conectado (estado: ${connectionState}) para ${actualInstanceId}`);
       throw new Error(`WhatsApp no está conectado (estado: ${connectionState}). No se puede enviar mensaje.`);
     }
 
-    console.log(`[Evolution API] 📤 Preparando mensaje para ${formattedPhone} (ID: ${businessId})`);
+    console.log(`[Evolution API] 📤 Preparando mensaje para ${formattedPhone} (ID: ${actualInstanceId})`);
 
     // Calcular delay dinámico según longitud del texto (mín 1.5s, máx 5s) para simular escritura humana
     const dynamicDelay = Math.min(Math.max(text.length * 20, 1500), 5000);
 
     // PASO 1: Activar indicador "Escribiendo..." ANTES de enviar el mensaje
     try {
-      await api.post(`/chat/sendPresence/${businessId}`, {
+      await api.post(`/chat/sendPresence/${actualInstanceId}`, {
         number: formattedPhone,
         delay: dynamicDelay,
         presence: 'composing'
@@ -710,8 +748,8 @@ async function sendMessageDirect(businessId, phone, text) {
     await new Promise(resolve => setTimeout(resolve, dynamicDelay));
 
     // PASO 3: Enviar el mensaje
-    console.log(`[Evolution API] 🚀 Ejecutando /message/sendText/${businessId} para ${formattedPhone}`);
-    const response = await api.post(`/message/sendText/${businessId}`, {
+    console.log(`[Evolution API] 🚀 Ejecutando /message/sendText/${actualInstanceId} para ${formattedPhone}`);
+    const response = await api.post(`/message/sendText/${actualInstanceId}`, {
       number: formattedPhone,
       text: text,
       options: {
@@ -739,15 +777,28 @@ async function hasValidSession(businessId) {
   try {
     // PASO 1: Verificar que la instancia existe en Evolution API
     const allInstances = await fetchAllInstances();
-    const exists = allInstances.find(inst => inst.name === businessId);
+    let exists = allInstances.find(inst => inst.name === businessId);
+
+    // MEJORA: Buscar por teléfono si no existe por ID
+    if (!exists) {
+      const { Business } = require('../../models');
+      const biz = await Business.findByPk(businessId);
+      if (biz && biz.phone) {
+        const cleanPhone = biz.phone.replace(/\D/g, '');
+        exists = allInstances.find(inst => {
+          const iph = extractPhoneFromInstance(inst);
+          return iph === cleanPhone || iph === '57' + cleanPhone;
+        });
+      }
+    }
 
     if (!exists) {
-      console.log(`[Evolution API] ⚠️ Instancia ${businessId} no existe en Evolution API`);
+      console.log(`[Evolution API] ⚠️ Instancia ${businessId} no existe en Evolution API (ni por ID ni por teléfono)`);
       return false;
     }
 
     // PASO 2: Verificar el estado de conexión real
-    const realState = await getConnectionState(businessId);
+    const realState = await getConnectionState(exists.name);
     return realState === 'open' || realState === 'connected';
   } catch (e) {
     console.error(`[Evolution API] ❌ Error verificando sesión válida para ${businessId}:`, e.message);
@@ -770,17 +821,32 @@ async function fetchAllInstances() {
     const instances = response.data || [];
     console.log(`[Evolution API] 📊 fetchInstances returned ${instances.length} instances`);
 
-    // Guardar número de teléfono en BD para instancias conectadas
+    // Sincronizar con la memoria local
+    const { setInstance } = require('./state');
+
+    // Guardar número de teléfono en BD para instancias conectadas y cargar en memoria
     const { WhatsAppSession } = require('../../models');
     for (const inst of instances) {
+      const name = inst.name || inst.instanceName;
+      if (!name) continue;
+
       const phone = extractPhoneFromInstance(inst);
-      if (phone && inst.name) {
+      const status = inst.connectionStatus || inst.state || 'unknown';
+
+      // Cargar en memoria para que el heartbeat lo vea
+      setInstance(name, {
+        instanceName: name,
+        status: status,
+        createdAt: inst.createdAt || new Date()
+      });
+
+      if (phone) {
         try {
           await WhatsAppSession.update(
             { phoneNumber: phone },
-            { where: { businessId: inst.name } }
+            { where: { businessId: name } }
           );
-          console.log(`[Evolution API] 💾 Número guardado para ${inst.name}: ${phone}`);
+          console.log(`[Evolution API] 💾 Número guardado para ${name}: ${phone}`);
         } catch (e) {
           // Silencioso: puede que no exista el registro aún
         }
