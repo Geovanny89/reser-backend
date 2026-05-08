@@ -96,13 +96,12 @@ async function heartbeatCheck() {
     const state = await checkInstanceStatus(businessId);
     
     // Estados válidos: open, connected, connecting (en proceso de conexión)
-    // No reconectar si está en proceso de conexión
-    const validStates = ['open', 'connected', 'connecting'];
+    // Incluimos 'close' como estado temporalmente válido para dar tiempo a la API a auto-reconectarse
+    const validStates = ['open', 'connected', 'connecting', 'close'];
     
-    // Verificar si la instancia es reciente (menos de 5 minutos)
-    // Evitar reconexiones automáticas durante la generación inicial del QR
+    // Verificar si la instancia es muy reciente (menos de 3 minutos)
     const isRecent = instance?.createdAt && 
-      (new Date() - new Date(instance.createdAt)) < 5 * 60 * 1000;
+      (new Date() - new Date(instance.createdAt)) < 3 * 60 * 1000;
     
     // Si está en "connecting" por más de 10 minutos, verificar si hay QR pendiente
     const isStuckInConnecting = state === 'connecting' && instance?.createdAt &&

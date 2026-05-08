@@ -139,40 +139,34 @@ async function createInstance(businessId, forceFresh = false) {
 
     console.log(`[Evolution API] 📦 Respuesta createInstance:`, JSON.stringify(response.data, null, 2));
 
-    // FORZAR configuración de nombre mediante endpoint de settings
-    try {
-      await api.post(`/settings/set/${businessId}`, {
-        browser: ["Windows", "Google Chrome", "10.0"]
-      });
-      console.log(`[Evolution API] ✅ Nombre de navegador forzado a Windows - Google Chrome`);
-    } catch (e) {
-      console.warn(`[Evolution API] ⚠️ No se pudo forzar el nombre en settings (Ignorar si ya está conectando):`, e.message);
-    }
+    // El nombre del navegador ya se envía en el createPayload.
+    // Evitamos llamar a /settings/set inmediatamente después de la creación
+    // ya que esto provoca un reinicio innecesario del socket de Baileys.
 
-    // APLICAR PROXY VÍA ENDPOINT DEDICADO (paso 2/2 requerido en Evolution API v2)
-    // El proxy en el payload de /instance/create solo lo registra, pero para que
-    // Baileys realmente lo use, hay que llamar también a /proxy/set/
+    // APLICAR PROXY VÍA ENDPOINT DEDICADO solo si no se pudo verificar en el paso anterior
+    // o si es una instancia pre-existente que necesita actualización.
     if (proxy) {
       try {
-        const proxySetPayload = {
-          enabled: true,
-          host: proxy.host,
-          port: proxy.port, 
-          protocol: proxy.protocol || 'http',
-          username: proxy.username || '',
-          password: proxy.password || ''
-        };
-        await api.post(`/proxy/set/${businessId}`, proxySetPayload);
-        console.log(`[Evolution API] ✅ Proxy activado vía /proxy/set/ para ${businessId}: ${proxy.host}:${proxy.port}`);
-        // Verificar que quedó guardado
+        // En v2, el proxy en createPayload suele ser suficiente. 
+        // Solo llamamos a /proxy/set si es estrictamente necesario para asegurar persistencia.
         const proxyVerify = await api.get(`/proxy/find/${businessId}`).catch(() => ({ data: null }));
-        if (proxyVerify.data?.enabled) {
-          console.log(`[Evolution API] 🛡️ Proxy verificado en Evolution API: ${proxyVerify.data.host}:${proxyVerify.data.port}`);
+        
+        if (!proxyVerify.data?.enabled || proxyVerify.data.host !== proxy.host) {
+          const proxySetPayload = {
+            enabled: true,
+            host: proxy.host,
+            port: proxy.port, 
+            protocol: proxy.protocol || 'http',
+            username: proxy.username || '',
+            password: proxy.password || ''
+          };
+          await api.post(`/proxy/set/${businessId}`, proxySetPayload);
+          console.log(`[Evolution API] ✅ Proxy activado vía /proxy/set/ para ${businessId}: ${proxy.host}:${proxy.port}`);
         } else {
-          console.warn(`[Evolution API] ⚠️ No se pudo verificar el proxy guardado`);
+          console.log(`[Evolution API] 🛡️ Proxy ya configurado correctamente para ${businessId}`);
         }
       } catch (proxyErr) {
-        console.warn(`[Evolution API] ⚠️ Error aplicando proxy vía /proxy/set/ (no crítico):`, proxyErr.response?.data || proxyErr.message);
+        console.warn(`[Evolution API] ⚠️ Error gestionando proxy (no crítico):`, proxyErr.response?.data || proxyErr.message);
       }
     }
 
