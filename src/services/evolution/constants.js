@@ -4,7 +4,7 @@
  */
 
 // ==================== CONFIGURACIÓN DE API ====================
-const BASE_URL = 'http://localhost:8080';
+const BASE_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const API_KEY = process.env.EVOLUTION_API_KEY || '1234';
 const DEFAULT_TOKEN = '071B3DEF-D4BF-4468-B191-8F1594B1F5D2';
 
