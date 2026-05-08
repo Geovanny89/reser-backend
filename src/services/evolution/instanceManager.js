@@ -42,6 +42,10 @@ async function createInstance(businessId, forceFresh = false) {
       throw new Error(`El negocio con ID ${businessId} no existe.`);
     }
     const businessName = biz.name || 'Chrome (Linux)';
+    
+    // Cargar el proxy al principio para que esté disponible en toda la función
+    console.log(`[Evolution API] 🆕 Seleccionando proxy para ${businessId}...`);
+    const proxy = await getBestProxy(businessId);
 
     const allInstances = await fetchAllInstances();
     const existingInstance = allInstances.find(inst => inst.name === businessId);
@@ -84,9 +88,6 @@ async function createInstance(businessId, forceFresh = false) {
       }
       await new Promise(r => setTimeout(r, 2000));
     }
-
-    console.log(`[Evolution API] 🆕 Seleccionando proxy para ${businessId}...`);
-    const proxy = await getBestProxy(businessId);
 
     // Guardar proxy en la base de datos INMEDIATAMENTE para asegurar la reserva (SQL Directo)
     if (proxy) {
