@@ -1,10 +1,11 @@
 require('dotenv').config();
 
-// ─── Silenciar console.log en producción ───────────────────────────────────
-// Se conservan console.warn y console.error para detectar problemas reales.
+// ─── Silenciar console.log en producción (DESACTIVADO PARA SEGUIMIENTO) ────
+/*
 if (process.env.NODE_ENV === 'production') {
   console.log = () => { };
 }
+*/
 // ──────────────────────────────────────────────────────────────────────────
 
 const http = require('http');
