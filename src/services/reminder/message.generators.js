@@ -1,9 +1,7 @@
 /**
  * Generadores de mensajes para recordatorios con lógica Anti-Baneo
  */
-const { getRandomReminderTemplate } = require('../evolutionService');
 const { getRelativeDayText } = require('./time.utils');
-const { REMINDER_CONFIG } = require('./config');
 
 /**
  * Procesa Spintax: {Hola|Buen día|Saludos} -> selecciona uno al azar
@@ -82,6 +80,7 @@ function generateConfirmedReminder2h(appt, timeStr) {
 }
 
 function generateUnconfirmedReminder2h(appt, timeStr) {
+  const { getRandomReminderTemplate } = require('../evolutionService');
   const template = getRandomReminderTemplate();
   const intro = template.intro
     .replace('{name}', appt.clientName)

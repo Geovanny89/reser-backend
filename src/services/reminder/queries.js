@@ -2,7 +2,7 @@
  * Consultas a base de datos para recordatorios
  */
 const { Appointment, Service, Employee, User, Business, ClientDevice, Op } = require('../../models');
-const { REMINDER_CONFIG, REFERENCE_CONFIG, MS_PER_MINUTE, COLOMBIA_TIME_OPTIONS } = require('./config');
+const { REMINDER_CONFIG, REFERENCE_CONFIG, MS_PER_MINUTE } = require('./config');
 
 const DEFAULT_INCLUDES = [
   { model: Service },
@@ -19,51 +19,36 @@ function buildTimeWindow(now, reminderMs, windowMinutes) {
   };
 }
 
-function buildFutureWindow(now, reminderMs, windowMinutes) {
-  return {
-    end: new Date(now + reminderMs + (windowMinutes * MS_PER_MINUTE)),
-    start: new Date(now),
-  };
-}
-
 async function findAppointmentsForReminder({ now, reminderMs, field, windowMinutes, requireFieldTechnicians = false }) {
   const window = buildTimeWindow(now, reminderMs, windowMinutes);
+  const thirtyMinAgo = new Date(now - 30 * 60 * 1000);
 
   const whereClause = {
     startTime: { [Op.lte]: window.end, [Op.gte]: window.start },
     status: { [Op.in]: ['pending', 'confirmed'] },
     [field]: false,
+    createdAt: { [Op.lt]: thirtyMinAgo } // Ignorar citas creadas hace < 30 min
   };
 
   const include = [...DEFAULT_INCLUDES];
   if (requireFieldTechnicians) {
+    // Si se requiere que sea técnico de campo, filtramos el Business
     include[2] = { model: Business, where: { hasFieldTechnicians: true } };
   }
 
   return Appointment.findAll({ where: whereClause, include });
 }
 
-async function findAppointmentsForFutureReminder({ now, reminderMs, field, windowMinutes }) {
-  const window = buildFutureWindow(now, reminderMs, windowMinutes);
-
-  return Appointment.findAll({
-    where: {
-      startTime: { [Op.lte]: window.end, [Op.gt]: window.start },
-      status: { [Op.in]: ['pending', 'confirmed'] },
-      [field]: false,
-    },
-    include: DEFAULT_INCLUDES,
-  });
-}
-
 async function findAppointmentsForReference(now) {
   const margin = REFERENCE_CONFIG.windowMinutes * MS_PER_MINUTE;
+  const thirtyMinAgo = new Date(now - 30 * 60 * 1000);
 
   return Appointment.findAll({
     where: {
       startTime: { [Op.lte]: new Date(now + margin), [Op.gte]: new Date(now - margin) },
       status: 'confirmed',
       [REFERENCE_CONFIG.field]: false,
+      createdAt: { [Op.lt]: thirtyMinAgo }
     },
     include: DEFAULT_INCLUDES,
   });
@@ -90,10 +75,7 @@ async function findClientEmail(appt) {
 }
 
 module.exports = {
-  REMINDER_CONFIG,
-  REFERENCE_CONFIG,
   findAppointmentsForReminder,
-  findAppointmentsForFutureReminder,
   findAppointmentsForReference,
   findClientPushToken,
   findClientEmail,

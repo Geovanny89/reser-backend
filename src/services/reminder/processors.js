@@ -2,7 +2,7 @@
  * Procesadores de recordatorios
  */
 const { getRelativeDayText, formatTime, formatDateTime } = require('./time.utils');
-const { REMINDER_CONFIG } = require('./config');
+const configModule = require('./config');
 const {
   generateConfirmedReminder24h,
   generateUnconfirmedReminder24h,
@@ -24,9 +24,13 @@ const {
 
 async function processStandardReminder(appt, config, timeLabel) {
   const timeStr = formatTime(appt.startTime);
-  const isConfirmed = appt.confirmed === true;
+  const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
 
   let message, msgType = 'reminder';
+  const REMINDER_CONFIG = configModule.REMINDER_CONFIG;
+  if (!REMINDER_CONFIG) {
+    throw new Error('REMINDER_CONFIG is undefined (circular dependency?)');
+  }
   if (config.confirmation && !isConfirmed) {
     message = config.ms === REMINDER_CONFIG['24h'].ms ? generateUnconfirmedReminder24h(appt, timeStr)
       : config.ms === REMINDER_CONFIG['12h'].ms ? generateUnconfirmedReminder12h(appt, getRelativeDayText(new Date(appt.startTime), timeStr))
@@ -60,7 +64,7 @@ async function processStandardReminder(appt, config, timeLabel) {
 async function processGenericReminder(appt, timeLabel, fieldToUpdate) {
   const timeStr = formatTime(appt.startTime);
   const startTimeStr = formatDateTime(appt.startTime);
-  const isConfirmed = appt.confirmed === true;
+  const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
   const is2h = timeLabel === '2 horas';
   const is1h = timeLabel === '1 hora';
   const is15mOr30mOr1h = timeLabel === '15 minutos' || timeLabel === '30 minutos' || timeLabel === '1 hora';

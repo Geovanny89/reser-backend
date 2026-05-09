@@ -3,31 +3,42 @@
  */
 const {
   REMINDER_CONFIG,
+  CHECK_INTERVAL_MS,
+} = require('./config');
+const {
   findAppointmentsForReminder,
-  findAppointmentsForFutureReminder,
   findAppointmentsForReference,
 } = require('./queries');
-const { formatTime } = require('./time.utils');
-const { generateReminder1h } = require('./message.generators');
-const { scheduleWhatsAppMessage, sendEmployeePush } = require('./notifications');
 const {
   processStandardReminder,
   processGenericReminder,
   processReferenceMessage,
   processTechnicianReminder,
 } = require('./processors');
+const { sendEmployeePush } = require('./notifications');
 
 let intervalId = null;
 const processingAppts = new Set();
 
+/**
+ * Función principal del ciclo de recordatorios
+ */
 async function sendReminders() {
   try {
     const now = Date.now();
     processingAppts.clear();
 
-    // 24h, 12h, 2h (con ventanas simétricas)
-    for (const [key, config] of Object.entries(REMINDER_CONFIG).filter(([k]) => ['24h', '12h', '2h'].includes(k))) {
-      const appts = await findAppointmentsForReminder({ now, reminderMs: config.ms, field: config.field, windowMinutes: config.windowMinutes });
+    // 1. Recordatorios Estándar (24h, 12h, 2h) - Ventana de +/- 10 min
+    const standardKeys = ['24h', '12h', '2h'];
+    for (const key of standardKeys) {
+      const config = REMINDER_CONFIG[key];
+      const appts = await findAppointmentsForReminder({ 
+        now, 
+        reminderMs: config.ms, 
+        field: config.field, 
+        windowMinutes: config.windowMinutes 
+      });
+      
       for (const appt of appts) {
         if (processingAppts.has(appt.id)) continue;
         processingAppts.add(appt.id);
@@ -35,63 +46,76 @@ async function sendReminders() {
       }
     }
 
-    // 1h, 30m, 15m (futuro solo)
-    for (const [key, config] of Object.entries(REMINDER_CONFIG).filter(([k]) => ['1h', '30m', '15m'].includes(k))) {
-      const appts = await findAppointmentsForFutureReminder({ now, reminderMs: config.ms, field: config.field, windowMinutes: config.windowMinutes });
+    // 2. Recordatorios de 1 Hora (1h)
+    const config1h = REMINDER_CONFIG['1h'];
+    const appts1h = await findAppointmentsForReminder({ 
+      now, 
+      reminderMs: config1h.ms, 
+      field: config1h.field, 
+      windowMinutes: config1h.windowMinutes 
+    });
+    
+    for (const appt of appts1h) {
+      if (processingAppts.has(appt.id)) continue;
+      processingAppts.add(appt.id);
+      
+      // Push al empleado
+      await sendEmployeePush(appt, '⏰ Cita en 1 hora',
+        `Tienes una cita con ${appt.clientName || 'Cliente'} (${appt.Service?.name || 'Servicio'}) en 1 hora.`);
+        
+      await processGenericReminder(appt, '1 hora', config1h.field);
+    }
+
+    // 3. Recordatorios de 30 Minutos (30m)
+    const config30m = REMINDER_CONFIG['30m'];
+    const appts30m = await findAppointmentsForReminder({ 
+      now, 
+      reminderMs: config30m.ms, 
+      field: config30m.field, 
+      windowMinutes: config30m.windowMinutes 
+    });
+    
+    for (const appt of appts30m) {
+      if (processingAppts.has(appt.id)) continue;
+      processingAppts.add(appt.id);
+      
+      // Push al empleado
+      await sendEmployeePush(appt, '⏰ Cita en 30 minutos',
+        `Tienes una cita con ${appt.clientName || 'Cliente'} (${appt.Service?.name || 'Servicio'}) en 30 minutos.`);
+        
+      await processGenericReminder(appt, '30 minutos', config30m.field);
+    }
+
+    // 4. Mensaje de Referencia (Hora exacta)
+    const refAppts = await findAppointmentsForReference(now);
+    for (const appt of refAppts) {
+      if (processingAppts.has(appt.id)) continue;
+      processingAppts.add(appt.id);
+      await processReferenceMessage(appt);
+    }
+
+    // 5. Notificaciones para Técnicos de Campo (60m, 30m, 15m)
+    const techKeys = ['tech60m', 'tech30m', 'tech15m'];
+    for (const key of techKeys) {
+      const config = REMINDER_CONFIG[key];
+      const appts = await findAppointmentsForReminder({
+        now, 
+        reminderMs: config.ms, 
+        field: config.field, 
+        windowMinutes: config.windowMinutes,
+        requireFieldTechnicians: true
+      });
+      
+      const labels = {
+        'tech60m': { label: '60 minutos', emoji: '🚨 ¡En 1 hora!' },
+        'tech30m': { label: '30 minutos', emoji: '⏰ ¡En 30 minutos!' },
+        'tech15m': { label: '15 minutos', emoji: '🔥 ¡Ya casi! 15 min' }
+      };
+
       for (const appt of appts) {
         if (processingAppts.has(appt.id)) continue;
         processingAppts.add(appt.id);
-
-        const timeLabel = key === '1h' ? '1 hora' : key === '30m' ? '30 minutos' : '15 minutos';
-
-        // Enviar notificación push al empleado asignado para 15m, 30m y 1h
-        if (key === '1h') {
-          await sendEmployeePush(appt, '⏰ Cita en 1 hora',
-            `Tienes una cita con ${appt.clientName || 'Cliente'} (${appt.Service?.name || 'Servicio'}) en 1 hora.`);
-        } else if (key === '30m') {
-          await sendEmployeePush(appt, '⏰ Cita en 30 minutos',
-            `Tienes una cita con ${appt.clientName || 'Cliente'} (${appt.Service?.name || 'Servicio'}) en 30 minutos.`);
-        } else if (key === '15m') {
-          await sendEmployeePush(appt, '⏰ Cita en 15 minutos',
-            `Tienes una cita con ${appt.clientName || 'Cliente'} (${appt.Service?.name || 'Servicio'}) en 15 minutos.`);
-        }
-
-        if (appt.clientPhone && !appt.Business?.hasFieldTechnicians) {
-          const timeStr = formatTime(appt.startTime);
-          const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
-          const message = generateReminder1h(appt, timeStr, isConfirmed);
-          await scheduleWhatsAppMessage(appt, message, 'reminder');
-          await appt.update({ [config.field]: true });
-          console.log(`[Reminder${key}] 📅 Recordatorio programado para cita ${appt.id}`);
-        } else {
-          await processGenericReminder(appt, timeLabel, config.field);
-        }
-      }
-    }
-
-    // Mensaje de referencia (hora exacta)
-    const refAppts = await findAppointmentsForReference(now);
-    for (const appt of refAppts) {
-      if (!processingAppts.has(appt.id)) {
-        processingAppts.add(appt.id);
-        await processReferenceMessage(appt);
-      }
-    }
-
-    // Técnicos de campo: 60m, 30m, 15m
-    for (const [key, config] of Object.entries(REMINDER_CONFIG).filter(([k]) => k.startsWith('tech'))) {
-      const appts = await findAppointmentsForReminder({
-        now, reminderMs: config.ms, field: config.field, windowMinutes: config.windowMinutes,
-        requireFieldTechnicians: true
-      });
-      const timeLabel = key === 'tech60m' ? '60 minutos' : key === 'tech30m' ? '30 minutos' : '15 minutos';
-      const alertEmoji = key === 'tech60m' ? '🚨 ¡En 1 hora!' : key === 'tech30m' ? '⏰ ¡En 30 minutos!' : '🔥 ¡Ya casi! 15 min';
-
-      for (const appt of appts) {
-        if (!processingAppts.has(appt.id)) {
-          processingAppts.add(appt.id);
-          await processTechnicianReminder(appt, timeLabel, config.field, alertEmoji);
-        }
+        await processTechnicianReminder(appt, labels[key].label, config.field, labels[key].emoji);
       }
     }
 
@@ -100,13 +124,19 @@ async function sendReminders() {
   }
 }
 
+/**
+ * Inicia el servicio de recordatorios
+ */
 function startReminderService() {
   if (intervalId) return;
   console.log('[Reminder] 🔔 Servicio de recordatorios iniciado (cada 1 minuto)');
   sendReminders();
-  intervalId = setInterval(sendReminders, 60 * 1000);
+  intervalId = setInterval(sendReminders, CHECK_INTERVAL_MS);
 }
 
+/**
+ * Detiene el servicio de recordatorios
+ */
 function stopReminderService() {
   if (intervalId) {
     clearInterval(intervalId);
