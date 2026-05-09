@@ -132,6 +132,12 @@ async function createInstance(businessId, forceFresh = false) {
 
     const response = await api.post('/instance/create', createPayload);
     const data = response.data;
+
+    // Forzar configuración de proxy por si la creación lo ignoró
+    if (proxyConfig.host) {
+      await configureProxy(businessId).catch(() => {});
+    }
+
     const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
 
     state.setInstance(businessId, { 
