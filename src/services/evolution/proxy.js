@@ -23,7 +23,10 @@ async function ensureProxyConfig(businessId) {
       await api.post(`/proxy/set/${businessId}`, {
         enabled: true,
         host: proxy.host,
-        port: Number(proxy.port)
+        port: String(proxy.port),
+        password: proxy.password,
+        username: proxy.username,
+        protocol: 'http'
       });
     }
     return true;

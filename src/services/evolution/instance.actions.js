@@ -99,8 +99,9 @@ async function createInstance(businessId, forceFresh = false) {
     // 2. Preparar nombre dinámico (SIEMPRE si es forceFresh para evitar 403)
     let instanceNameToUse = businessId;
     if (forceFresh) {
-      instanceNameToUse = `${businessId}_${Math.floor(1000 + Math.random() * 9000)}`;
-      console.log(`[Evolution API] 🚀 Forzando instancia nueva: ${instanceNameToUse}`);
+      // Usar timestamp para asegurar que el nombre sea único y no choque con basura vieja
+      instanceNameToUse = `${businessId}_${Date.now()}`; 
+      console.log(`[Evolution API] 🚀 Forzando instancia nueva única: ${instanceNameToUse}`);
       
       // Limpieza profunda de instancias previas (incluyendo sufijos)
       try {
@@ -135,7 +136,7 @@ async function createInstance(businessId, forceFresh = false) {
 
     // Forzar configuración de proxy por si la creación lo ignoró
     if (proxyConfig.host) {
-      await configureProxy(businessId).catch(() => {});
+      await configureProxy(instanceNameToUse).catch(() => {});
     }
 
     const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
