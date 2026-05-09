@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const ctrl   = require('../controllers/appointment');
 const auth   = require('../middleware/auth');
+const optionalAuth = require('../middleware/optionalAuth');
 const role   = require('../middleware/role');
 
 /**
@@ -39,7 +40,7 @@ const role   = require('../middleware/role');
  *             schema:
  *               $ref: '#/components/schemas/Appointment'
  */
-router.post('/', ctrl.create);
+router.post('/', optionalAuth, ctrl.create);
 router.get('/stats', auth, ctrl.getStats);
 
 /**
