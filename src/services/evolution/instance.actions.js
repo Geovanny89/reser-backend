@@ -113,11 +113,21 @@ async function createInstance(businessId, forceFresh = false) {
       await new Promise(r => setTimeout(r, 1000));
     }
 
+    const proxy = require('./proxy');
+    const proxyConfig = await proxy.getBestProxy();
+
     const createPayload = {
       instanceName: instanceNameToUse,
       token: constants.DEFAULT_TOKEN,
       integration: 'WHATSAPP-BAILEYS',
-      qrcode: true
+      qrcode: true,
+      proxy: proxyConfig.host ? {
+        enabled: true,
+        host: proxyConfig.host,
+        port: Number(proxyConfig.port),
+        username: proxyConfig.username,
+        password: proxyConfig.password
+      } : undefined
     };
 
     const response = await api.post('/instance/create', createPayload);
@@ -132,7 +142,7 @@ async function createInstance(businessId, forceFresh = false) {
     
     if (qrData) {
       state.setQR(businessId, qrData);
-      console.log(`[Evolution API] 📲 QR generado y guardado para ${businessId}`);
+      console.log(`[Evolution API] 📲 QR generado (Proxy: ${proxyConfig.host || 'Directo'}) para ${businessId}`);
     }
 
     return {
@@ -151,9 +161,12 @@ async function createInstance(businessId, forceFresh = false) {
 }
 
 async function configureProxy(businessId) {
-  // DESACTIVADO TEMPORALMENTE: Los proxies están causando 'Pre-key upload timeout'
-  console.log(`[Evolution API] ℹ️ Proxy omitido para ${businessId} (Modo Debug)`);
-  return true;
+  try {
+    const proxy = require('./proxy');
+    return await proxy.ensureProxyConfig(businessId);
+  } catch (err) {
+    return false;
+  }
 }
 
 async function configureWebhook(businessId) {
