@@ -52,7 +52,13 @@ async function checkInstanceStatus(businessId) {
     
     return state;
   } catch (err) {
-    console.error(`[Heartbeat] ❌ Error verificando ${businessId}:`, err.message);
+    if (err.response && err.response.status === 404) {
+      console.log(`[Heartbeat] 🧹 Instancia ${businessId} no existe en la API. Limpiando de memoria...`);
+      const { deleteInstance } = require('./state');
+      deleteInstance(businessId);
+    } else {
+      console.error(`[Heartbeat] ❌ Error verificando ${businessId}:`, err.message);
+    }
     return null;
   }
 }
@@ -72,7 +78,13 @@ async function pingInstance(businessId) {
     console.log(`[Heartbeat] 💓 Ping enviado a ${businessId}`);
     return true;
   } catch (err) {
-    console.error(`[Heartbeat] ❌ Error en ping a ${businessId}:`, err.message);
+    if (err.response && err.response.status === 404) {
+      console.log(`[Heartbeat] 🧹 Instancia ${businessId} no existe en la API (ping 404). Limpiando de memoria...`);
+      const { deleteInstance } = require('./state');
+      deleteInstance(businessId);
+    } else {
+      console.error(`[Heartbeat] ❌ Error en ping a ${businessId}:`, err.message);
+    }
     return false;
   }
 }
