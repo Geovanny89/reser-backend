@@ -1,4 +1,4 @@
-const { Business, Service, Appointment, Employee, User, Op } = require('../../models');
+const { Business, Service, Appointment, Employee, User, Promotion, Op } = require('../../models');
 const { getAvailability } = require('../../controllers/appointment/availability');
 const actions = require('../../controllers/appointment/actions');
 
@@ -11,6 +11,8 @@ class KadyService {
    */
   async getBusinessInfo(slug) {
     try {
+      const today = new Date().toISOString().split('T')[0];
+      
       const business = await Business.findOne({
         where: { slug, status: 'active' },
         attributes: [
@@ -23,6 +25,16 @@ class KadyService {
             as: 'Services',
             where: { active: true },
             attributes: ['id', 'name', 'description', 'price', 'durationMin', 'imageUrl'],
+            required: false
+          },
+          {
+            model: Promotion,
+            as: 'Promotions',
+            where: {
+              active: true,
+              startDate: { [Op.lte]: today },
+              endDate: { [Op.gte]: today }
+            },
             required: false
           }
         ]
