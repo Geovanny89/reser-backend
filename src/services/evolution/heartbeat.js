@@ -68,14 +68,17 @@ async function checkInstanceStatus(businessId) {
  */
 async function pingInstance(businessId) {
   try {
+    const { getRealInstanceName } = require('./state');
+    const realName = getRealInstanceName(businessId);
+    
     // Intentar obtener el perfil propio o el estado de conexión
     // Esto obliga a Evolution API a interactuar con el socket de WhatsApp
-    await api.get(`/instance/connectionState/${businessId}`);
+    await api.get(`/instance/connectionState/${realName}`);
     
     // Opcional: Hacer un fetch de la configuración para asegurar que el proxy responda
     await api.get(`/instance/fetchInstances`);
     
-    console.log(`[Heartbeat] 💓 Ping enviado a ${businessId}`);
+    console.log(`[Heartbeat] 💓 Ping enviado a ${businessId} (${realName})`);
     return true;
   } catch (err) {
     if (err.response && err.response.status === 404) {
