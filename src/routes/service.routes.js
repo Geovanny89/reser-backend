@@ -47,7 +47,7 @@ router.use(auth);
  *         application/json:
  *           schema:
  *             type: object
- *             required: [name, price, durationMin]
+ *             required: [name, durationMin]
  *             properties:
  *               name:        { type: string, example: "Corte de cabello" }
  *               description: { type: string }
