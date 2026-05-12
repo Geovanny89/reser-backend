@@ -46,6 +46,7 @@ module.exports = (sequelize) => {
     extraServices: { type: DataTypes.JSON, defaultValue: [], comment: 'Lista de servicios adicionales: [{serviceId, name, price, durationMin}]' },
     referenceCode: { type: DataTypes.STRING(8), unique: true, comment: 'Código único de 6 caracteres para referencia en WhatsApp (ej: ABC123)' },
     source: { type: DataTypes.STRING(30), defaultValue: 'web', comment: 'Origen de la cita: web, kady_chatbot, admin, etc.' },
+    suppliesCost: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0, comment: 'Costo de insumos usados en esta cita (se resta antes de calcular comisión)' },
 
     // === Campo para flujo de mensajes automáticos (independiente del status principal) ===
     messageFlowStatus: {

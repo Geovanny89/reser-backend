@@ -27,7 +27,7 @@ async function createAppointment(data, user) {
   const {
     businessId, serviceId, employeeId, clientName, clientPhone, clientEmail, address,
     startTime, notes, status, additionalEmployeeIds = [], depositAmount, depositAccepted,
-    extraServices = []
+    extraServices = [], suppliesCost
   } = data;
 
   console.log('[Create Appointment] Datos recibidos:', {
@@ -153,6 +153,7 @@ async function createAppointment(data, user) {
   const mainPrice = parseFloat(service.price || 0);
   const extrasPrice = (extraServices || []).reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0);
   const basePrice = mainPrice + extrasPrice;
+  const initialSuppliesCost = suppliesCost !== undefined ? parseFloat(suppliesCost) : (parseFloat(service.suppliesCost) || 0);
   
   let discountApplied = 0;
   let promotionId = null;
@@ -228,6 +229,7 @@ async function createAppointment(data, user) {
     finalPrice,
     promotionId,
     extraServices: extraServices || [],
+    suppliesCost: initialSuppliesCost,
     source: data.source || 'web'
   };
 

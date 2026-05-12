@@ -14,7 +14,7 @@ const { sendPaymentReceipt, sendRatingEmail } = require('./notifications');
 async function updateAppointmentStatus(appointmentId, newStatus, user, options = {}) {
   // Manejar compatibilidad si options es solo paymentMethod (string)
   const opt = typeof options === 'string' ? { paymentMethod: options } : options;
-  const { paymentMethod, discountApplied, finalPrice, additionalAmount, additionalNote } = opt;
+  const { paymentMethod, discountApplied, finalPrice, additionalAmount, additionalNote, suppliesCost } = opt;
 
   const appointment = await Appointment.findByPk(appointmentId, {
     include: [
@@ -51,6 +51,9 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
       if (finalPrice !== undefined) updateData.finalPrice = parseFloat(finalPrice);
       if (additionalAmount !== undefined) updateData.additionalAmount = parseFloat(additionalAmount);
       if (additionalNote !== undefined) updateData.additionalNote = additionalNote;
+      if (suppliesCost !== undefined && parseFloat(suppliesCost) > 0) {
+        updateData.suppliesCost = parseFloat(suppliesCost);
+      }
 
       // Calcular precio final si no viene explícitamente
       if (updateData.finalPrice === undefined) {

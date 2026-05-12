@@ -20,6 +20,7 @@ module.exports = (sequelize) => {
       allowNull: true,
       comment: 'ID del grupo de servicios al que pertenece'
     },
+    suppliesCost: { type: DataTypes.DECIMAL(10, 2), defaultValue: 0, comment: 'Costo fijo de insumos para este servicio' },
   }, {
     indexes: [
       { fields: ['businessId'], name: 'idx_service_businessId' },

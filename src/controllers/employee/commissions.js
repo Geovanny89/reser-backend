@@ -99,7 +99,10 @@ async function getMyCommissions(req, res) {
       // En servicios técnicos o técnicos de campo no hay comisiones ni precios
       const hideMoney = isTechnicalServices || hasFieldTechnicians;
       const hasCommission = hideMoney ? false : (appt.Service.hasEmployeeCommission !== false);
-      const myCommission = hasCommission ? (totalPrice * commissionPct / 100) : 0;
+      
+      const supplies = parseFloat(appt.suppliesCost) || 0;
+      const commissionable = Math.max(0, totalPrice - supplies);
+      const myCommission = hasCommission ? (commissionable * commissionPct / 100) : 0;
       
       return {
         id: appt.id,
@@ -112,6 +115,7 @@ async function getMyCommissions(req, res) {
         price: hideMoney ? 0 : totalPrice,
         basePrice: hideMoney ? 0 : basePrice,
         additional: hideMoney ? 0 : additional,
+        supplies: hideMoney ? 0 : supplies,
         myCommission: hideMoney ? 0 : parseFloat(myCommission.toFixed(2)),
         commissionPct: hasCommission ? commissionPct : 0,
         hasCommission: hasCommission,
@@ -194,13 +198,21 @@ async function getMyCommissions(req, res) {
 async function getCommissionReport(req, res) {
   try {
     const businessId = req.query.businessId || req.params.businessId;
-    const { month } = req.query;
+    const { month, startDate, endDate } = req.query;
     
-    if (!businessId || !month)
-      return res.status(400).json({ error: 'businessId y month (YYYY-MM) son requeridos' });
+    if (!businessId)
+      return res.status(400).json({ error: 'businessId es requerido' });
 
-    const start = startOfMonth(month);
-    const end = endOfMonth(month);
+    let start, end;
+    if (startDate && endDate) {
+      start = startOfDay(startDate);
+      end = endOfDay(endDate);
+    } else if (month) {
+      start = startOfMonth(month);
+      end = endOfMonth(month);
+    } else {
+      return res.status(400).json({ error: 'month (YYYY-MM) o startDate/endDate (YYYY-MM-DD) son requeridos' });
+    }
 
     const appointments = await Appointment.findAll({
       where: {
@@ -225,7 +237,11 @@ async function getCommissionReport(req, res) {
       
       const hasCommission = appt.Service.hasEmployeeCommission !== false; // Default true
       const commissionPct = hasCommission ? (parseFloat(appt.Employee.commissionPct) || 0) : 0;
-      const ownerPct = hasCommission ? (parseFloat(appt.Employee.ownerPct) || 100) : 100;
+      
+      const supplies = parseFloat(appt.suppliesCost) || 0;
+      const commissionable = Math.max(0, totalPrice - supplies);
+      const employeeEarns = (commissionable * commissionPct / 100);
+      const ownerEarns = totalPrice - employeeEarns;
       
       return {
         date:          appt.startTime,
@@ -234,9 +250,10 @@ async function getCommissionReport(req, res) {
         price:         totalPrice, // Precio total (base + adicional)
         basePrice:     basePrice,
         additional:    additional,
+        supplies:      supplies,
         employee:      appt.Employee.User.name,
-        employeeEarns: (totalPrice * commissionPct / 100).toFixed(2),
-        ownerEarns:    (totalPrice * ownerPct / 100).toFixed(2),
+        employeeEarns: employeeEarns.toFixed(2),
+        ownerEarns:    ownerEarns.toFixed(2),
         hasCommission: hasCommission,
       };
     });

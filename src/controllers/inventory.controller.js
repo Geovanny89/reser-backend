@@ -120,6 +120,11 @@ exports.recordUsage = async (req, res) => {
     // Descontar del stock
     await item.update({ currentStock: item.currentStock - qty });
 
+    // Sincronizar suppliesCost en la cita
+    if (appointmentId) {
+      await syncAppointmentSuppliesCost(appointmentId);
+    }
+
     res.status(201).json(usage);
   } catch (e) {
     console.error('[recordUsage] Error:', e);
@@ -204,6 +209,11 @@ exports.updateUsage = async (req, res) => {
     // Ajustar stock: si diff > 0 (aumentó) restamos, si diff < 0 (disminuyó) sumamos
     await item.update({ currentStock: item.currentStock - diff });
 
+    // Sincronizar suppliesCost en la cita
+    if (usage.appointmentId) {
+      await syncAppointmentSuppliesCost(usage.appointmentId);
+    }
+
     res.json(usage);
   } catch (e) {
     console.error('[updateUsage] Error:', e);
@@ -225,7 +235,14 @@ exports.deleteUsage = async (req, res) => {
       await item.update({ currentStock: item.currentStock + qty });
     }
 
+    const appointmentId = usage.appointmentId;
     await usage.destroy();
+
+    // Sincronizar suppliesCost en la cita
+    if (appointmentId) {
+      await syncAppointmentSuppliesCost(appointmentId);
+    }
+
     res.json({ message: 'Consumo eliminado y stock restaurado' });
   } catch (e) {
     console.error('[deleteUsage] Error:', e);
@@ -395,3 +412,29 @@ exports.importFromExcel = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+/**
+ * Sincroniza el suppliesCost de una cita basándose en todos los consumos de inventario registrados
+ */
+async function syncAppointmentSuppliesCost(appointmentId) {
+  try {
+    const usages = await InventoryUsage.findAll({
+      where: { appointmentId },
+      include: [{ model: InventoryItem, attributes: ['costPerUnit'] }]
+    });
+
+    let totalCost = 0;
+    usages.forEach(u => {
+      const cost = parseFloat(u.InventoryItem?.costPerUnit || 0);
+      const qty = parseFloat(u.quantity || 0);
+      totalCost += (cost * qty);
+    });
+
+    await Appointment.update(
+      { suppliesCost: totalCost },
+      { where: { id: appointmentId } }
+    );
+    console.log(`[Inventory] Sincronizado suppliesCost para cita ${appointmentId}: $${totalCost}`);
+  } catch (err) {
+    console.error('[Inventory] Error sincronizando suppliesCost:', err.message);
+  }
+}

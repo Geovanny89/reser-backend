@@ -62,7 +62,11 @@ exports.getByBusiness = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { name, description, price, durationMin, isTechnicalService, priceOptional, hasEmployeeCommission, businessId, imageUrl, color, serviceGroupId } = req.body;
+    const { 
+      name, description, price, durationMin, isTechnicalService, 
+      priceOptional, hasEmployeeCommission, businessId, imageUrl, 
+      color, serviceGroupId, suppliesCost 
+    } = req.body;
     const userId = req.user.id;
 
     // Si viene businessId, lo usamos. Si no, buscamos el negocio del usuario
@@ -101,7 +105,8 @@ exports.create = async (req, res) => {
       hasEmployeeCommission: hasEmployeeCommission !== false, // default true
       imageUrl: imageUrl || null,
       color: color || '#3b82f6',
-      serviceGroupId: serviceGroupId || null
+      serviceGroupId: serviceGroupId || null,
+      suppliesCost: parseFloat(suppliesCost || 0)
     });
 
     // Invalidar caché del negocio público

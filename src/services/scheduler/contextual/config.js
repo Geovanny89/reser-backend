@@ -5,10 +5,10 @@
 const CONTEXTUAL_CONFIG = {
   // Ventanas de envío según tipo de mensaje (relativas a hora de cita)
   REMINDER_WINDOWS: {
-    '24h': { before: 26 * 60 * 60 * 1000, after: 22 * 60 * 60 * 1000 }, // 22-26h antes
-    '12h': { before: 14 * 60 * 60 * 1000, after: 10 * 60 * 60 * 1000 }, // 10-14h antes
-    '2h': { before: 3 * 60 * 60 * 1000, after: 1.5 * 60 * 60 * 1000 }, // 1.5-3h antes
-    '1h': { before: 1.5 * 60 * 60 * 1000, after: 0.75 * 60 * 60 * 1000 }, // 45min-1.5h antes
+    '24h': { before: 26 * 60 * 60 * 1000, after: 18 * 60 * 60 * 1000 }, // 18-26h antes (Confirmación)
+    '12h': { before: 18 * 60 * 60 * 1000, after: 6 * 60 * 60 * 1000 },  // 6-18h antes (Confirmación)
+    '2h': { before: 6 * 60 * 60 * 1000, after: 1.5 * 60 * 60 * 1000 },  // 1.5-6h antes (Confirmación)
+    '1h': { before: 1.5 * 60 * 60 * 1000, after: 0 * 60 * 60 * 1000 },   // <1.5h (Sólo Recordatorio)
   },
 
   // TTL por tipo de recordatorio (para controlar backlog y evitar envíos fuera de contexto)

@@ -160,8 +160,13 @@ exports.getFinancialReport = async (req, res) => {
       });
     }
 
-    // === INSUMOS: Costo de consumos (cantidad × costo unitario) ===
+    // === INSUMOS: Costo de consumos (cantidad × costo unitario) + Costo directo por cita ===
     let inventory = { total: 0, items: [], usageCount: 0 };
+    
+    // Sumar suppliesCost de las citas del período
+    const suppliesFromAppts = appointments.reduce((sum, apt) => sum + parseFloat(apt.suppliesCost || 0), 0);
+    inventory.total += suppliesFromAppts;
+
     if (enabledModules.inventory) {
       const usages = await InventoryUsage.findAll({
         where: {
@@ -173,7 +178,7 @@ exports.getFinancialReport = async (req, res) => {
 
       inventory.usageCount = usages.length;
       usages.forEach(u => {
-        const cost = parseFloat(u.InventoryItem?.unitCost || 0);
+        const cost = parseFloat(u.InventoryItem?.costPerUnit || 0);
         const qty = parseFloat(u.quantity || 1);
         inventory.total += (cost * qty);
       });

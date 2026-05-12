@@ -33,23 +33,40 @@ async function getActiveShift(req, res) {
     let income = 0;
     let expenses = 0;
     let withdrawals = 0;
+    let totalSupplies = 0;
+    let totalFixedExpenses = 0;
 
     movements.forEach(m => {
-      const amount = parseFloat(m.amount);
+      const amount = parseFloat(m.amount) || 0;
+      
       if (m.isReversal) {
-        if (m.ReversedMovement?.type === 'income') income -= amount;
-        else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
-        else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+        const reversed = m.ReversedMovement;
+        if (!reversed) return;
+
+        if (reversed.type === 'income') {
+          income -= amount;
+        } else if (reversed.type === 'expense') {
+          if (reversed.category === 'supplies') totalSupplies -= amount;
+          else if (reversed.category === 'fixed') totalFixedExpenses -= amount;
+          else expenses -= amount;
+        } else if (reversed.type === 'withdrawal') {
+          withdrawals -= amount;
+        }
       } else {
         if (m.type === 'income') {
           if (!includeTransfers && m.paymentMethod === 'transfer') return;
           income += amount;
-        } else if (m.type === 'expense') expenses += amount;
-        else if (m.type === 'withdrawal') withdrawals += amount;
+        } else if (m.type === 'expense') {
+          if (m.category === 'supplies') totalSupplies += amount;
+          else if (m.category === 'fixed') totalFixedExpenses += amount;
+          else expenses += amount;
+        } else if (m.type === 'withdrawal') {
+          withdrawals += amount;
+        }
       }
     });
 
-    const currentAmount = parseFloat(activeShift.openingAmount) + income - expenses - withdrawals;
+    const currentAmount = parseFloat(activeShift.openingAmount) + income - expenses - withdrawals - totalSupplies;
 
     res.json({
       activeShift: {
@@ -58,8 +75,11 @@ async function getActiveShift(req, res) {
         totalIncome: income,
         totalExpenses: expenses,
         totalWithdrawals: withdrawals,
+        totalSupplies: totalSupplies,
+        totalFixedExpenses: totalFixedExpenses,
         movementsCount: movements.length
-      }
+      },
+      movements
     });
   } catch (error) {
     console.error('Error obteniendo turno activo:', error);
@@ -85,9 +105,27 @@ async function openShift(req, res) {
       return res.status(400).json({ error: 'Ya existe un turno activo. Ciérrelo antes de abrir uno nuevo.' });
     }
 
+    // VALIDACIÓN: Asegurar que el employeeId sea un ID de empleado válido
+    // Si no existe, pero es el ID del usuario actual, intentamos buscar su registro de empleado
+    let finalEmployeeId = employeeId;
+    if (employeeId) {
+      const exists = await Employee.findByPk(employeeId);
+      if (!exists) {
+        // Buscar si es el userId y tiene un registro de empleado
+        const empByUser = await Employee.findOne({ where: { userId: employeeId, businessId } });
+        if (empByUser) {
+          finalEmployeeId = empByUser.id;
+        } else {
+          // Si no es un empleado válido, lo dejamos como null para evitar el error de llave foránea
+          // El campo createdBy seguirá registrando quién realizó la acción
+          finalEmployeeId = null;
+        }
+      }
+    }
+
     const shift = await CashRegisterShift.create({
       businessId,
-      employeeId: employeeId || null,
+      employeeId: finalEmployeeId,
       openingAmount: openingAmount || 0,
       openedAt: new Date(),
       status: 'open',
@@ -132,23 +170,33 @@ async function closeShift(req, res) {
     let income = 0;
     let expenses = 0;
     let withdrawals = 0;
+    let totalSupplies = 0;
+    let totalFixedExpenses = 0;
 
     movements.forEach(m => {
       const amount = parseFloat(m.amount);
+      
       if (m.isReversal) {
-        if (m.ReversedMovement?.type === 'income') income -= amount;
-        else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
-        else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+        if (m.ReversedMovement?.type === 'income') {
+          income -= amount;
+        } else if (m.ReversedMovement?.type === 'expense') {
+          if (m.ReversedMovement.category === 'supplies') totalSupplies -= amount;
+          else if (m.ReversedMovement.category === 'fixed') totalFixedExpenses -= amount;
+          else expenses -= amount;
+        } else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
       } else {
         if (m.type === 'income') {
           if (!includeTransfers && m.paymentMethod === 'transfer') return;
           income += amount;
-        } else if (m.type === 'expense') expenses += amount;
-        else if (m.type === 'withdrawal') withdrawals += amount;
+        } else if (m.type === 'expense') {
+          if (m.category === 'supplies') totalSupplies += amount;
+          else if (m.category === 'fixed') totalFixedExpenses += amount;
+          else expenses += amount;
+        } else if (m.type === 'withdrawal') withdrawals += amount;
       }
     });
 
-    const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals;
+    const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals - totalSupplies;
     const difference = parseFloat(closingAmount) - expectedAmount;
 
     await shift.update({
@@ -162,9 +210,12 @@ async function closeShift(req, res) {
 
     res.json({
       ...shift.toJSON(),
+      currentAmount: parseFloat(shift.openingAmount) + income - expenses - withdrawals - totalSupplies,
       totalIncome: income,
       totalExpenses: expenses,
       totalWithdrawals: withdrawals,
+      totalSupplies: totalSupplies,
+      totalFixedExpenses: totalFixedExpenses,
       movementsCount: movements.length
     });
   } catch (error) {
@@ -208,17 +259,27 @@ async function getShiftHistory(req, res) {
         let income = 0;
         let expenses = 0;
         let withdrawals = 0;
+        let totalSupplies = 0;
+        let totalFixedExpenses = 0;
 
         movements.forEach(m => {
           const amount = parseFloat(m.amount);
+          
           if (m.isReversal) {
-            if (m.ReversedMovement?.type === 'income') income -= amount;
-            else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
-            else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+            if (m.ReversedMovement?.type === 'income') {
+              income -= amount;
+            } else if (m.ReversedMovement?.type === 'expense') {
+              if (m.ReversedMovement.category === 'supplies') totalSupplies -= amount;
+              else if (m.ReversedMovement.category === 'fixed') totalFixedExpenses -= amount;
+              else expenses -= amount;
+            } else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
           } else {
             if (m.type === 'income') income += amount;
-            else if (m.type === 'expense') expenses += amount;
-            else if (m.type === 'withdrawal') withdrawals += amount;
+            else if (m.type === 'expense') {
+              if (m.category === 'supplies') totalSupplies += amount;
+              else if (m.category === 'fixed') totalFixedExpenses += amount;
+              else expenses += amount;
+            } else if (m.type === 'withdrawal') withdrawals += amount;
           }
         });
 
@@ -227,6 +288,8 @@ async function getShiftHistory(req, res) {
           totalIncome: income,
           totalExpenses: expenses,
           totalWithdrawals: withdrawals,
+          totalSupplies: totalSupplies,
+          totalFixedExpenses: totalFixedExpenses,
           movementsCount: movements.length
         };
       })

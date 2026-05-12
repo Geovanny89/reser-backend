@@ -175,7 +175,7 @@ async function getTechnicalReport(appointmentId, userId) {
  */
 async function checkIsAdmin(userId, businessId) {
   const { Business, Employee } = require('../../models');
-  
+
   const business = await Business.findOne({
     where: { id: businessId, ownerId: userId }
   });
@@ -525,7 +525,7 @@ async function deleteWorkEvidence(appointmentId, photoIndex, userId) {
   }
 
   const evidences = appointment.workEvidences || [];
-  
+
   if (photoIndex < 0 || photoIndex >= evidences.length) {
     throw new Error('Índice de foto inválido');
   }

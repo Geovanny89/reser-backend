@@ -68,6 +68,7 @@ async function getClientsByBusiness(businessId, search = null) {
   // Agrupar por cliente
   const clientsMap = new Map();
 
+  // 1. Primero procesar citas (fuente principal de nombres y datos)
   appointments.forEach(appt => {
     const key = appt.clientPhone || appt.clientEmail || appt.clientName || 'Sin contacto';
     
@@ -115,6 +116,54 @@ async function getClientsByBusiness(businessId, search = null) {
       status: appt.status,
       price: appt.finalPrice || appt.basePrice || 0
     });
+  });
+
+  // 2. Procesar asignaciones de etiquetas (pueden tener nombres de clientes sin citas)
+  tagAssignments.forEach(tag => {
+    const key = tag.clientPhone || tag.clientEmail || tag.clientName;
+    if (!key) return;
+
+    if (!clientsMap.has(key)) {
+      clientsMap.set(key, {
+        id: null,
+        name: tag.clientName || 'Sin nombre',
+        phone: tag.clientPhone || null,
+        email: tag.clientEmail || null,
+        birthday: profilesByClient.get(tag.clientPhone) || profilesByClient.get(tag.clientEmail) || null,
+        totalAppointments: 0,
+        completedAppointments: 0,
+        cancelledAppointments: 0,
+        totalSpent: 0,
+        lastVisit: null,
+        firstVisit: null,
+        tags: tagsByClient.get(tag.clientPhone) || tagsByClient.get(tag.clientEmail) || [],
+        appointments: []
+      });
+    }
+  });
+
+  // 3. Procesar perfiles (para asegurar que clientes con solo perfil/cumpleaños aparezcan)
+  profiles.forEach(p => {
+    const key = p.clientPhone || p.clientEmail;
+    if (!key) return;
+
+    if (!clientsMap.has(key)) {
+      clientsMap.set(key, {
+        id: null,
+        name: 'Cliente sin nombre', // No tenemos nombre en profiles
+        phone: p.clientPhone || null,
+        email: p.clientEmail || null,
+        birthday: p.birthday || null,
+        totalAppointments: 0,
+        completedAppointments: 0,
+        cancelledAppointments: 0,
+        totalSpent: 0,
+        lastVisit: null,
+        firstVisit: null,
+        tags: tagsByClient.get(p.clientPhone) || tagsByClient.get(p.clientEmail) || [],
+        appointments: []
+      });
+    }
   });
 
   const clients = Array.from(clientsMap.values());

@@ -73,6 +73,16 @@ exports.create = async (req, res) => {
         });
 
         if (activeShift) {
+          // Mapear categoría del gasto a categoría de movimiento de caja
+          let movementCategory = 'general';
+          const catLower = String(category).toLowerCase();
+          
+          if (catLower.includes('arriendo') || catLower.includes('servicio') || catLower.includes('fijo') || catLower.includes('alquiler')) {
+            movementCategory = 'fixed';
+          } else if (catLower.includes('insumo') || catLower.includes('material') || catLower.includes('suministro')) {
+            movementCategory = 'supplies';
+          }
+
           await CashMovement.create({
             businessId,
             shiftId: activeShift.id,
@@ -80,11 +90,12 @@ exports.create = async (req, res) => {
             type: 'expense',
             amount: parseFloat(amount),
             paymentMethod: 'cash',
+            category: movementCategory,
             description: `Gasto: ${description} (${category})`,
             notes,
             createdBy: req.user?.id
           });
-          console.log(`[Cash Register] Movimiento de gasto registrado: $${amount}`);
+          console.log(`[Cash Register] Movimiento de gasto (${movementCategory}) registrado: $${amount}`);
         } else {
           console.log(`[Cash Register] No hay turno activo para registrar gasto en caja`);
         }

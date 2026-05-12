@@ -1,4 +1,4 @@
-const { CashRegisterShift, CashMovement, Employee, Appointment, Expense } = require('../../models');
+const { CashRegisterShift, CashMovement, Employee, Appointment, Expense, Business, User } = require('../../models');
 
 /**
  * Obtener movimientos de un turno
@@ -22,7 +22,67 @@ async function getShiftMovements(req, res) {
       order: [['createdAt', 'DESC']]
     });
 
-    res.json({ movements });
+    const shift = await CashRegisterShift.findByPk(shiftId, {
+      include: [{ model: Employee, as: 'Employee' }]
+    });
+
+    if (!shift) {
+      return res.status(404).json({ error: 'Turno no encontrado' });
+    }
+
+    const business = await Business.findByPk(shift.businessId);
+    const includeTransfers = business?.includeTransfersInCashRegister !== false;
+
+    let income = 0;
+    let expenses = 0;
+    let withdrawals = 0;
+    let totalSupplies = 0;
+    let totalFixedExpenses = 0;
+
+    // Re-ejecutaré el cálculo completo para el shift
+    const allMovements = await CashMovement.findAll({
+      where: { shiftId },
+      include: [{ model: CashMovement, as: 'ReversedMovement' }]
+    });
+
+    allMovements.forEach(m => {
+      const amount = parseFloat(m.amount) || 0;
+      if (m.isReversal) {
+        const reversed = m.ReversedMovement;
+        if (reversed?.type === 'income') income -= amount;
+        else if (reversed?.type === 'expense') {
+          if (reversed.category === 'supplies') totalSupplies -= amount;
+          else if (reversed.category === 'fixed') totalFixedExpenses -= amount;
+          else expenses -= amount;
+        }
+        else if (reversed?.type === 'withdrawal') withdrawals -= amount;
+      } else {
+        if (m.type === 'income') {
+          if (!includeTransfers && m.paymentMethod === 'transfer') return;
+          income += amount;
+        } else if (m.type === 'expense') {
+          if (m.category === 'supplies') totalSupplies += amount;
+          else if (m.category === 'fixed') totalFixedExpenses += amount;
+          else expenses += amount;
+        } else if (m.type === 'withdrawal') withdrawals += amount;
+      }
+    });
+
+    const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals - totalSupplies;
+
+    res.json({ 
+      shift: {
+        ...shift.toJSON(),
+        currentAmount: expectedAmount,
+        totalIncome: income,
+        totalExpenses: expenses,
+        totalWithdrawals: withdrawals,
+        totalSupplies: totalSupplies,
+        totalFixedExpenses: totalFixedExpenses,
+        movementsCount: allMovements.length
+      },
+      movements 
+    });
   } catch (error) {
     console.error('Error obteniendo movimientos:', error);
     res.status(500).json({ error: 'Error al obtener movimientos' });
@@ -34,7 +94,7 @@ async function getShiftMovements(req, res) {
  */
 async function createMovement(req, res) {
   try {
-    const { businessId, shiftId, type, amount, paymentMethod, description, notes, appointmentId, expenseId } = req.body;
+    const { businessId, shiftId, type, amount, paymentMethod, description, notes, appointmentId, expenseId, category } = req.body;
 
     if (!businessId || !shiftId) {
       return res.status(400).json({ error: 'businessId y shiftId son requeridos' });
@@ -68,6 +128,7 @@ async function createMovement(req, res) {
       notes,
       appointmentId: appointmentId || null,
       expenseId: expenseId || null,
+      category: category || 'general',
       createdBy: req.user?.id
     });
 
@@ -91,7 +152,7 @@ async function createMovement(req, res) {
       .filter(m => m.type === 'withdrawal')
       .reduce((sum, m) => sum + parseFloat(m.amount), 0);
 
-    const currentAmount = parseFloat(updatedShift.openingAmount) + income - expenses - withdrawals;
+    const currentAmount = parseFloat(updatedShift.openingAmount) + income - (expenses - movements.filter(m => m.category === 'fixed').reduce((sum, m) => sum + parseFloat(m.amount), 0)) - withdrawals - movements.filter(m => m.category === 'supplies').reduce((sum, m) => sum + parseFloat(m.amount), 0);
 
     res.status(201).json({
       movement,
@@ -99,8 +160,10 @@ async function createMovement(req, res) {
         ...updatedShift.toJSON(),
         currentAmount,
         totalIncome: income,
-        totalExpenses: expenses,
+        totalExpenses: movements.filter(m => m.type === 'expense' && m.category !== 'supplies' && m.category !== 'fixed').reduce((sum, m) => sum + parseFloat(m.amount), 0),
         totalWithdrawals: withdrawals,
+        totalSupplies: movements.filter(m => m.category === 'supplies').reduce((sum, m) => sum + parseFloat(m.amount), 0),
+        totalFixedExpenses: movements.filter(m => m.category === 'fixed').reduce((sum, m) => sum + parseFloat(m.amount), 0),
         movementsCount: movements.length
       },
       movements

@@ -28,13 +28,13 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const dropped = [];
 
   // Recordatorio 24h
+  const win24h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['24h'];
   const ttl24h = CONTEXTUAL_CONFIG.REMINDER_TTL['24h'];
-  const windowEnd24h = 22 * 60 * 60 * 1000;
   const canSend24h = !isConfirmed &&
                      !appointment.reminder24hSentAt &&
-                     timeUntilAppointment <= (26 * 60 * 60 * 1000 + gracePeriod) &&
-                     timeUntilAppointment >= (22 * 60 * 60 * 1000 - gracePeriod) &&
-                     timeUntilAppointment > (windowEnd24h - ttl24h);
+                     timeUntilAppointment <= (win24h.before + gracePeriod) &&
+                     timeUntilAppointment >= (win24h.after - gracePeriod) &&
+                     timeUntilAppointment > (win24h.after - ttl24h);
 
   if (canSend24h) {
     if (backlogStatus === 'critical' && !isConfirmed) {
@@ -45,13 +45,13 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   }
 
   // Recordatorio 12h
+  const win12h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['12h'];
   const ttl12h = CONTEXTUAL_CONFIG.REMINDER_TTL['12h'];
-  const windowEnd12h = 10 * 60 * 60 * 1000;
   const canSend12h = !isConfirmed &&
                      !appointment.reminder12hSentAt &&
-                     timeUntilAppointment <= (14 * 60 * 60 * 1000 + gracePeriod) &&
-                     timeUntilAppointment >= (10 * 60 * 60 * 1000 - gracePeriod) &&
-                     timeUntilAppointment > (windowEnd12h - ttl12h);
+                     timeUntilAppointment <= (win12h.before + gracePeriod) &&
+                     timeUntilAppointment >= (win12h.after - gracePeriod) &&
+                     timeUntilAppointment > (win12h.after - ttl12h);
 
   if (canSend12h) {
     if (backlogStatus === 'critical') {
@@ -61,23 +61,23 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
     }
   }
 
-  // Recordatorio 2h
+  // Recordatorio 2h (Solo recordatorio)
+  const win2h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['2h'];
   const ttl2h = CONTEXTUAL_CONFIG.REMINDER_TTL['2h'];
-  const windowEnd2h = 1.5 * 60 * 60 * 1000;
   const canSend2h = !appointment.reminder2hSentAt &&
-                    timeUntilAppointment <= (3 * 60 * 60 * 1000 + gracePeriod) &&
-                    timeUntilAppointment >= (1.5 * 60 * 60 * 1000 - gracePeriod) &&
-                    timeUntilAppointment > (windowEnd2h - ttl2h);
+                    timeUntilAppointment <= (win2h.before + gracePeriod) &&
+                    timeUntilAppointment >= (win2h.after - gracePeriod) &&
+                    timeUntilAppointment > (win2h.after - ttl2h);
 
   if (canSend2h) needed.push({ type: '2h', timestampField: 'reminder2hSentAt', priority: 2 });
 
-  // Recordatorio 1h
+  // Recordatorio 1h (Solo recordatorio, sin confirmación)
+  const win1h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['1h'];
   const ttl1h = CONTEXTUAL_CONFIG.REMINDER_TTL['1h'];
-  const windowEnd1h = 0.75 * 60 * 60 * 1000;
   const canSend1h = !appointment.reminderSentAt &&
-                    timeUntilAppointment <= (1.5 * 60 * 60 * 1000 + gracePeriod) &&
-                    timeUntilAppointment >= (0.75 * 60 * 60 * 1000 - gracePeriod) &&
-                    timeUntilAppointment > (windowEnd1h - ttl1h);
+                    timeUntilAppointment <= (win1h.before + gracePeriod) &&
+                    timeUntilAppointment >= (win1h.after - gracePeriod) &&
+                    timeUntilAppointment > (win1h.after - ttl1h);
 
   if (canSend1h) needed.push({ type: '1h', timestampField: 'reminderSentAt', priority: 1 });
 
@@ -163,13 +163,12 @@ async function runContextualScheduler() {
       }
 
       const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const lookaheadLimit = new Date(now.getTime() + 30 * 60 * 60 * 1000); // Buscar hasta 30 horas adelante
       
       const appointments = await Appointment.findAll({
         where: {
           businessId: business.id,
-          startTime: { [Op.between]: [startOfDay, endOfDay] },
+          startTime: { [Op.between]: [now, lookaheadLimit] },
           status: { [Op.in]: ['pending', 'confirmed', 'attention'] }
         },
         include: [{ model: Service }, { model: Business }],

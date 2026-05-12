@@ -43,6 +43,12 @@ module.exports = (sequelize) => {
       defaultValue: 'cash',
       comment: 'Método de pago'
     },
+    suppliesCost: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: false,
+      defaultValue: 0,
+      comment: 'Costo de insumos asociados a este movimiento (informativo)'
+    },
     description: { 
       type: DataTypes.STRING, 
       allowNull: false,
@@ -69,6 +75,12 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: DataTypes.NOW,
       comment: 'Fecha y hora del movimiento'
+    },
+    category: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: 'general',
+      comment: 'Categoría del movimiento (general, supplies, withdrawal, salary, etc.)'
     },
     createdBy: { 
       type: DataTypes.UUID, 

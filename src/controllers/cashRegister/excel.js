@@ -59,9 +59,11 @@ async function exportHistoryToExcel(req, res) {
       { header: 'Empleado',      key: 'employee',        width: 22 },
       { header: 'Monto Inicial', key: 'openingAmount',   width: 16 },
       { header: 'Ingresos',      key: 'income',          width: 16 },
-      { header: 'Gastos',        key: 'expenses',        width: 16 },
+      { header: 'G. Operativos', key: 'expenses',        width: 16 },
+      { header: 'G. Fijos',      key: 'fixed',           width: 16 },
+      { header: 'Insumos',       key: 'supplies',        width: 16 },
       { header: 'Retiros',       key: 'withdrawals',     width: 16 },
-      { header: 'Monto Esperado',key: 'expectedAmount',  width: 16 },
+      { header: 'Saldo Operativo',key: 'expectedAmount',  width: 18 },
       { header: 'Monto Real',    key: 'closingAmount',   width: 16 },
       { header: 'Diferencia',    key: 'difference',      width: 14 },
       { header: 'Estado',        key: 'status',          width: 12 },
@@ -78,21 +80,32 @@ async function exportHistoryToExcel(req, res) {
       let income = 0;
       let expenses = 0;
       let withdrawals = 0;
+      let totalSupplies = 0;
+      let totalFixedExpenses = 0;
 
       shift.Movements.forEach(m => {
-        const amount = parseFloat(m.amount);
+        const amount = parseFloat(m.amount) || 0;
         if (m.isReversal) {
-          if (m.ReversedMovement?.type === 'income') income -= amount;
-          else if (m.ReversedMovement?.type === 'expense') expenses -= amount;
-          else if (m.ReversedMovement?.type === 'withdrawal') withdrawals -= amount;
+          const reversed = m.ReversedMovement;
+          if (reversed?.type === 'income') income -= amount;
+          else if (reversed?.type === 'expense') {
+            if (reversed.category === 'supplies') totalSupplies -= amount;
+            else if (reversed.category === 'fixed') totalFixedExpenses -= amount;
+            else expenses -= amount;
+          }
+          else if (reversed?.type === 'withdrawal') withdrawals -= amount;
         } else {
           if (m.type === 'income') income += amount;
-          else if (m.type === 'expense') expenses += amount;
+          else if (m.type === 'expense') {
+            if (m.category === 'supplies') totalSupplies += amount;
+            else if (m.category === 'fixed') totalFixedExpenses += amount;
+            else expenses += amount;
+          }
           else if (m.type === 'withdrawal') withdrawals += amount;
         }
       });
 
-      const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals;
+      const expectedAmount = parseFloat(shift.openingAmount) + income - expenses - withdrawals - totalSupplies;
       const diff = shift.closingAmount != null ? parseFloat(shift.closingAmount) - expectedAmount : null;
       const shiftEmp = shift.Employee || shift.employee;
       const shiftEmpName = shiftEmp?.User?.name || shiftEmp?.user?.name || shiftEmp?.name || shift.Creator?.name || '-';
@@ -105,6 +118,8 @@ async function exportHistoryToExcel(req, res) {
         openingAmount:  parseFloat(shift.openingAmount),
         income,
         expenses,
+        fixed:          totalFixedExpenses,
+        supplies:       totalSupplies,
         withdrawals,
         expectedAmount,
         closingAmount:  shift.closingAmount != null ? parseFloat(shift.closingAmount) : '-',
@@ -119,7 +134,7 @@ async function exportHistoryToExcel(req, res) {
       }
     });
 
-    ['openingAmount','income','expenses','withdrawals','expectedAmount','closingAmount','difference'].forEach(col => {
+    ['openingAmount','income','expenses','fixed','supplies','withdrawals','expectedAmount','closingAmount','difference'].forEach(col => {
       summarySheet.getColumn(col).numFmt = '#,##0';
     });
 
