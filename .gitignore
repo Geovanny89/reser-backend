@@ -62,6 +62,7 @@ uploads/
 !/package-lock.json
 !/.gitignore
 !/README.md
+!/fix_final_v5.js
 
 # Logs y volcados
 *.log
