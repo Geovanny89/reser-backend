@@ -124,6 +124,7 @@ exports.getBySlug = async (req, res) => {
           as: 'Services', 
           where: { active: true }, 
           required: false,
+          separate: true,
           attributes: ['id', 'name', 'description', 'price', 'durationMin', 'isTechnicalService', 'priceOptional', 'imageUrl', 'serviceGroupId']
         },
         {
@@ -131,6 +132,7 @@ exports.getBySlug = async (req, res) => {
           as: 'ServiceGroups',
           where: { active: true },
           required: false,
+          separate: true,
           include: [{
             model: Service,
             as: 'Services',
@@ -141,6 +143,7 @@ exports.getBySlug = async (req, res) => {
         },
         {
           model: Employee, as: 'Employees', where: { active: true }, required: false,
+          separate: true,
           attributes: ['id', 'businessId', 'userId', 'specialty', 'photoUrl', 'description', 'isManager', 'active'],
           include: [
             { model: User, attributes: ['id', 'name'] },
@@ -157,7 +160,13 @@ exports.getBySlug = async (req, res) => {
     });
     const tBiz1 = Date.now();
     console.log(`[PERF getBySlug] Business.findOne=${tBiz1 - tBiz0}ms slug=${req.params.slug}`);
+    
     if (!biz) return res.status(404).json({ error: 'Negocio no encontrado' });
+    
+    // Verificar si el negocio está bloqueado
+    if (biz.status === 'blocked') {
+      return res.status(403).json({ error: 'Este negocio se encuentra temporalmente suspendido' });
+    }
 
     // Paralelizar consultas de promociones y reviews para mejor rendimiento
     const now = new Date();

@@ -17,40 +17,10 @@ uploads/
 /load-tests/
 /tests/
 /test/
-/migrations/
 /scripts/
 /scratch/
-
-# Ignorar todos los archivos JS en la raíz por seguridad/limpieza
-/*.js
-!/ecosystem.config.js
-
-# Permitir archivos de configuración importantes
-!/docker-compose.yml
-!/package.json
-!/package-lock.json
-# Dependencias y entorno
-node_modules
-.env
-.env.example
-src/config/firebase-service-account.json
-src/config/proxies.json
-
-# WhatsApp / Puppeteer sessions
-sessions/
-.wwebjs_cache/
-.wwebjs_auth/
-
-# Uploads
-uploads/
-
-# Carpetas de desarrollo/test (No necesarias en VPS)
-/load-tests/
-/tests/
-/test/
 /migrations/
-/scripts/
-/scratch/
+!/migrations/add-performance-indexes.sql
 
 # Ignorar todos los archivos JS en la raíz por seguridad/limpieza
 /*.js
@@ -67,5 +37,4 @@ uploads/
 # Logs y volcados
 *.log
 *.stackdump
-*.sql
 evolution_instances/
