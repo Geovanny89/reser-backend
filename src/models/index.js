@@ -33,6 +33,8 @@ const AppointmentReminderEvent = require('./AppointmentReminderEvent')(sequelize
 const PlatformReview = require('./PlatformReview')(sequelize);
 const ClientProfile = require('./ClientProfile')(sequelize);
 const BirthdayTemplate = require('./BirthdayTemplate')(sequelize);
+const HelpArticle = require('./help_articles')(sequelize);
+
 
 // Business — User (owner)
 Business.belongsTo(User, { foreignKey: 'ownerId', as: 'Owner' });
@@ -198,4 +200,4 @@ Business.hasMany(BirthdayTemplate, { foreignKey: 'businessId', as: 'BirthdayTemp
 
 const { Op } = require('sequelize');
 
-module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation, CashRegisterShift, CashMovement, AppointmentReminderEvent, PlatformReview, ClientProfile, BirthdayTemplate };
+module.exports = { sequelize, Op, User, Business, BusinessType, Service, Employee, Appointment, Schedule, SpecialSchedule, ClientDevice, WhatsAppSession, SystemSetting, Promotion, ClientTag, ClientTagAssignment, BusinessReview, ScheduledMessage, EmployeeService, AppointmentNote, Expense, InventoryItem, InventoryUsage, Deposit, AppointmentEmployee, IncomingMessage, ServiceGroup, ActivityLog, EmployeeVacation, CashRegisterShift, CashMovement, AppointmentReminderEvent, PlatformReview, ClientProfile, BirthdayTemplate, HelpArticle };

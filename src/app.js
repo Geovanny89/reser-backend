@@ -95,6 +95,8 @@ app.use('/api/notifications', require('./routes/notification.routes'));
 app.use('/api/system-settings', require('./routes/systemSetting.routes'));
 app.use('/api/superadmin', require('./routes/superAdmin.routes'));
 app.use('/api/platform-reviews', require('./routes/platformReview.routes'));
+app.use('/api/help', require('./routes/help.routes'));
+
 
 // Módulos opcionales configurables
 app.use('/api/expenses', checkBusinessStatus, require('./routes/expense.routes'));

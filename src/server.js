@@ -163,7 +163,7 @@ function startSubscriptionCheck() {
  */
 function startBirthdayCron() {
   console.log('🎂 Iniciando monitor de cumpleaños');
-  const { processBirthdays } = require('./scripts/birthdayCron');
+  const { processBirthdays } = require('./services/birthdayService');
 
   // Ejecutar inmediatamente al iniciar
   processBirthdays();
@@ -344,6 +344,8 @@ async function start() {
 
     await seedBusinessTypes();
     await seedSuperAdmin();
+    const seedHelpArticles = require('./scripts/seedHelp');
+    await seedHelpArticles();
 
     // Crear servidor HTTP y inicializar Socket.io
     httpServer = http.createServer(app);
