@@ -6,6 +6,9 @@ const { Employee, User, Appointment, Service, Business } = require('../../models
 const { Op } = require('sequelize');
 const { getColombiaDate, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth } = require('./utils');
 
+// Helper: retorna 0 en lugar de NaN para valores corruptos en la BD
+const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
+
 /**
  * Obtener comisiones del empleado logueado
  */
@@ -92,21 +95,21 @@ async function getMyCommissions(req, res) {
 
     // Calcular reporte completo para totales
     const allReport = allAppointments.map(appt => {
-      // Si finalPrice existe, ya incluye adicionales. Si no, price + additionalAmount
-      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined;
-      const basePrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
-      const additional = parseFloat(appt.additionalAmount) || 0;
+      // Usar safeFloat para evitar NaN de registros corruptos en la BD
+      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined && !isNaN(parseFloat(appt.finalPrice));
+      const basePrice = hasFinalPrice ? safeFloat(appt.finalPrice) : safeFloat(appt.Service.price);
+      const additional = safeFloat(appt.additionalAmount);
       const totalPrice = hasFinalPrice ? basePrice : (basePrice + additional);
       
       // En servicios técnicos o técnicos de campo no hay comisiones ni precios
       const hideMoney = isTechnicalServices || hasFieldTechnicians;
       const hasCommission = hideMoney ? false : (appt.Service.hasEmployeeCommission !== false);
       
-      const supplies = parseFloat(appt.suppliesCost) || 0;
+      const supplies = safeFloat(appt.suppliesCost);
       const commissionable = Math.max(0, totalPrice - supplies);
       
       const myCommission = (appt.employeeEarns !== null && appt.employeeEarns !== undefined)
-        ? parseFloat(appt.employeeEarns)
+        ? safeFloat(appt.employeeEarns)
         : (hasCommission ? (commissionable * commissionPct / 100) : 0);
       
       return {
@@ -235,19 +238,18 @@ async function getCommissionReport(req, res) {
     });
 
     const report = appointments.map(appt => {
-      // Si finalPrice existe, ya incluye base + adicional + extras - descuentos.
-      // Si no existe, calculamos manualmente: price + additionalAmount
-      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined;
-      const totalPrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service?.price || 0) + parseFloat(appt.additionalAmount || 0));
+      // Usar safeFloat para evitar NaN de registros corruptos en la BD
+      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined && !isNaN(parseFloat(appt.finalPrice));
+      const totalPrice = hasFinalPrice ? safeFloat(appt.finalPrice) : (safeFloat(appt.Service?.price) + safeFloat(appt.additionalAmount));
       
-      const hasCommission = appt.Service?.hasEmployeeCommission !== false; // Default true
-      const commissionPct = hasCommission ? (parseFloat(appt.Employee?.commissionPct || 0)) : 0;
+      const hasCommission = appt.Service?.hasEmployeeCommission !== false;
+      const commissionPct = hasCommission ? safeFloat(appt.Employee?.commissionPct) : 0;
       
-      const supplies = parseFloat(appt.suppliesCost) || 0;
+      const supplies = safeFloat(appt.suppliesCost);
       const commissionable = Math.max(0, totalPrice - supplies);
       
       const employeeEarns = (appt.employeeEarns !== null && appt.employeeEarns !== undefined)
-        ? parseFloat(appt.employeeEarns)
+        ? safeFloat(appt.employeeEarns)
         : (commissionable * commissionPct / 100);
         
       const ownerEarns = totalPrice - employeeEarns;

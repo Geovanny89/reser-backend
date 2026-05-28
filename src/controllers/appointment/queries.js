@@ -5,6 +5,9 @@
 const { Appointment, Service, Employee, User, Business, AppointmentEmployee, Op, sequelize } = require('../../models');
 const { colombiaDateFromString } = require('./utils');
 
+// Helper: retorna 0 en lugar de NaN para valores corruptos en la BD
+const safeFloat = (val) => { const n = parseFloat(val); return isNaN(n) ? 0 : n; };
+
 /**
  * Obtiene citas por negocio con filtros de fecha
  */
@@ -200,6 +203,7 @@ async function getAppointmentStats(businessId) {
         startTime: {
           [Op.gte]: new Date(`${currentMonth}-01T00:00:00-05:00`)
         }
+        
       },
       include: [{ model: Service, attributes: ['price'] }]
     })
@@ -232,10 +236,8 @@ async function getAppointmentStats(businessId) {
   });
 
   financeStats.forEach(appt => {
-    // Si finalPrice existe, ya incluye adicionales. Si no, usamos price + additionalAmount
-    const price = (appt.finalPrice !== null && appt.finalPrice !== undefined) 
-      ? parseFloat(appt.finalPrice) 
-      : (parseFloat(appt.Service?.price || 0) + parseFloat(appt.additionalAmount || 0));
+    // Usar safeFloat para evitar que NaN almacenado en BD contamine los totales
+    const price = safeFloat(appt.finalPrice) || safeFloat(appt.basePrice) || (safeFloat(appt.Service?.price) + safeFloat(appt.additionalAmount));
     
     if (appt.paymentMethod === 'transfer') {
       result.finance.transfer += price;

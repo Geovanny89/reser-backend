@@ -1,6 +1,12 @@
 const { Appointment, Expense, InventoryUsage, InventoryItem, Deposit, Business, CashRegisterShift, CashMovement } = require('../models');
 const { Op } = require('sequelize');
 
+// Helper: parsea un valor como float y retorna 0 si es NaN, null o undefined
+const safeFloat = (val) => {
+  const n = parseFloat(val);
+  return isNaN(n) ? 0 : n;
+};
+
 exports.getFinancialReport = async (req, res) => {
   try {
     const { businessId, year, month, startDate: queryStartDate, endDate: queryEndDate, employeeId } = req.query;
@@ -125,17 +131,21 @@ exports.getFinancialReport = async (req, res) => {
         {
           model: require('../models').Employee,
           attributes: ['id', 'commissionPct']
+        },
+        {
+          model: require('../models').Service,
+          attributes: ['price']
         }
       ]
     });
 
     const totalCommissions = appointments.reduce((sum, apt) => {
-      const priceForCommission = (apt.finalPrice !== null && apt.finalPrice !== undefined) ? apt.finalPrice : (apt.basePrice || 0);
-      const commPct = parseFloat(apt.Employee?.commissionPct || 0);
+      const priceForCommission = safeFloat(apt.finalPrice) || safeFloat(apt.basePrice) || safeFloat(apt.Service?.price);
+      const commPct = safeFloat(apt.Employee?.commissionPct);
       const earned = (apt.employeeEarns !== null && apt.employeeEarns !== undefined)
-        ? parseFloat(apt.employeeEarns)
+        ? safeFloat(apt.employeeEarns)
         : (priceForCommission * commPct) / 100;
-      return sum + (isNaN(earned) ? 0 : earned);
+      return sum + earned;
     }, 0);
 
     const appointmentCount = appointments.length;
@@ -261,14 +271,18 @@ exports.getFinancialReport = async (req, res) => {
       // Buscar si existe un movimiento de ingreso para esta cita
       const hasMovement = movements.some(m => m.appointmentId === apt.id && (m.type === 'income' && !m.isReversal));
       return !hasMovement;
-    }).map(apt => ({
-      id: apt.id,
-      clientName: apt.clientName,
-      startTime: apt.startTime,
-      finalPrice: parseFloat(apt.finalPrice || apt.basePrice || 0)
-    }));
+    }).map(apt => {
+      // Sanitizar precio: usar safeFloat para evitar que NaN de la BD contamine el total
+      const price = safeFloat(apt.finalPrice) || safeFloat(apt.basePrice) || safeFloat(apt.Service?.price);
+      return {
+        id: apt.id,
+        clientName: apt.clientName,
+        startTime: apt.startTime,
+        finalPrice: price
+      };
+    });
 
-    const totalUnrecordedAmount = unrecordedAppointments.reduce((sum, apt) => sum + apt.finalPrice, 0);
+    const totalUnrecordedAmount = unrecordedAppointments.reduce((sum, apt) => sum + safeFloat(apt.finalPrice), 0);
 
     // Sumar el ingreso no registrado (citas sin movimiento de caja) al ingreso total para que coincida con el dashboard
     const adjustedTotalIncome = totalIncome + totalUnrecordedAmount;
