@@ -203,7 +203,7 @@ async function getAppointmentStats(businessId) {
       },
       attributes: [
         'paymentMethod',
-        [sequelize.fn('SUM', sequelize.literal('CAST(COALESCE("Service"."price", 0) AS DECIMAL) + CAST(COALESCE("additionalAmount", 0) AS DECIMAL)')), 'total']
+        [sequelize.fn('SUM', sequelize.literal('CAST(COALESCE("Appointment"."finalPrice", "Service"."price", 0) AS DECIMAL) + CAST(COALESCE("Appointment"."additionalAmount", 0) AS DECIMAL)')), 'total']
       ],
       include: [{ model: Service, attributes: [] }],
       group: ['paymentMethod'],

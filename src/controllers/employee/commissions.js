@@ -92,7 +92,7 @@ async function getMyCommissions(req, res) {
 
     // Calcular reporte completo para totales
     const allReport = allAppointments.map(appt => {
-      const basePrice = parseFloat(appt.Service.price) || 0;
+      const basePrice = (appt.finalPrice !== null && appt.finalPrice !== undefined) ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
       const additional = parseFloat(appt.additionalAmount) || 0;
       const totalPrice = basePrice + additional;
       
@@ -102,7 +102,10 @@ async function getMyCommissions(req, res) {
       
       const supplies = parseFloat(appt.suppliesCost) || 0;
       const commissionable = Math.max(0, totalPrice - supplies);
-      const myCommission = hasCommission ? (commissionable * commissionPct / 100) : 0;
+      
+      const myCommission = (appt.employeeEarns !== null && appt.employeeEarns !== undefined)
+        ? parseFloat(appt.employeeEarns)
+        : (hasCommission ? (commissionable * commissionPct / 100) : 0);
       
       return {
         id: appt.id,
@@ -231,7 +234,7 @@ async function getCommissionReport(req, res) {
     });
 
     const report = appointments.map(appt => {
-      const basePrice = parseFloat(appt.Service.price) || 0;
+      const basePrice = (appt.finalPrice !== null && appt.finalPrice !== undefined) ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
       const additional = parseFloat(appt.additionalAmount) || 0;
       const totalPrice = basePrice + additional;
       
@@ -240,7 +243,11 @@ async function getCommissionReport(req, res) {
       
       const supplies = parseFloat(appt.suppliesCost) || 0;
       const commissionable = Math.max(0, totalPrice - supplies);
-      const employeeEarns = (commissionable * commissionPct / 100);
+      
+      const employeeEarns = (appt.employeeEarns !== null && appt.employeeEarns !== undefined)
+        ? parseFloat(appt.employeeEarns)
+        : (commissionable * commissionPct / 100);
+        
       const ownerEarns = totalPrice - employeeEarns;
       
       return {

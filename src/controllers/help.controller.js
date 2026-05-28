@@ -27,7 +27,7 @@ exports.chatQuery = async (req, res) => {
     const cleanQuery = query.replace(/[¡!.,?¿]/g, '').trim();
     if (greetings.includes(cleanQuery) || cleanQuery === '') {
       return res.json({
-        answer: '¡Hola! Soy tu asistente de ayuda de K-Dice. ¿En qué puedo apoyarte hoy? Puedes preguntarme sobre citas, profesionales, servicios o cierres de caja.'
+        answer: '¡Hola! Soy tu asistente de ayuda de K-Dice. ¿En qué puedo apoyarte hoy? Puedes preguntarme sobre citas, profesionales, servicios, clientes, promociones o cierres de caja.'
       });
     }
     

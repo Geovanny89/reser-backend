@@ -104,6 +104,30 @@ const initialArticles = [
     content: 'Evita reservas en días de descanso o feriados con estas herramientas:\n1. **Vacaciones del Personal**: Ve a **Configuración > Empleados**, selecciona la pestaña **Vacaciones** de un empleado y registra el rango de fechas. El profesional no estará disponible para agendar durante ese lapso.\n2. **Horarios Especiales y Bloqueos**: Ve a **Configuración > Horarios Especiales**. Registra excepciones a la jornada habitual:\n   - **Bloqueo de horas**: Agenda un bloqueo para un empleado (ej: almuerzo o cita personal) desde la Agenda de citas.\n   - **Días Festivos/Cierres**: Crea un Horario Especial marcando el día completo como no laborable para todo el negocio o para un profesional en particular.\n3. Estas excepciones actualizan la agenda en tiempo real, impidiendo que los clientes reserven en la página pública durante esos horarios.',
     role: 'admin',
     order: 13
+  },
+  {
+    title: 'Gestión de Servicios (Crear, Editar y Eliminar)',
+    category: 'servicios',
+    keywords: 'servicios, crear servicio, editar servicio, actualizar servicio, eliminar servicio, borrar servicio, nuevo servicio, precio, duracion, service, categoria, grupo',
+    content: 'Para gestionar los servicios de tu negocio:\n1. Ve a **Gestión > Servicios** en el menú lateral.\n2. **Crear Servicio**: Haz clic en **+ Nuevo Servicio**. Rellena el nombre, duración (minutos), precio, descripción y selecciona a qué categoría o grupo pertenece. Puedes asignarle un color o subir una imagen.\n3. **Actualizar/Editar**: En la lista de servicios, busca el servicio y haz clic en el botón de **Editar** (icono de lápiz). Modifica los campos necesarios y guarda los cambios.\n4. **Eliminar Servicio**: Haz clic en el botón de **Eliminar** (icono de papelera) del servicio correspondiente. El sistema te pedirá confirmación.\n\n*Nota: Al eliminar o desactivar un servicio, no se borrarán las citas pasadas que lo hayan utilizado, pero los clientes ya no podrán reservarlo en el futuro.*',
+    role: 'admin',
+    order: 14
+  },
+  {
+    title: 'Mis clientes',
+    category: 'clientes',
+    keywords: 'clientes, buscar cliente, editar cliente, etiquetas de clientes, tags, historial de cliente, plantilla de cumpleaños, mis clientes, client',
+    content: 'Para gestionar tu base de clientes:\n1. Ve a **Mis Clientes** en el menú lateral.\n2. **Búsqueda e Historial:** Puedes buscar clientes por nombre, teléfono o correo. Haz clic en **Ver Historial** en cualquier cliente para consultar sus citas pasadas y notas.\n3. **Editar Información:** Haz clic en **Editar** (icono de lápiz) para corregir o actualizar sus datos de contacto.\n4. **Etiquetas (Segmentación):** Haz clic en **Plantillas/Etiquetas** para clasificar a tus clientes (ej: "VIP", "Frecuente"). Puedes crear etiquetas personalizadas y asignarlas desde la lista.\n5. **Plantillas de Cumpleaños:** Haz clic en **Plantillas de Cumpleaños** para personalizar los mensajes automáticos de felicitación que se envían a tus clientes en su día especial.',
+    role: 'admin',
+    order: 15
+  },
+  {
+    title: 'Gestión de Promociones (Descuentos y Ofertas)',
+    category: 'marketing',
+    keywords: 'promocion, promociones, descuento, oferta, rebaja, discount, promo, crear promocion, editar promocion, eliminar promocion, porcentaje, monto fijo',
+    content: 'Para crear y gestionar las promociones y descuentos temporales de tu negocio:\n1. Ve a **Promociones** en el menú lateral.\n2. **Crear Promoción**: Completa el formulario de la izquierda:\n   - **Nombre de la promoción**: Un título descriptivo (ej: "Descuento de Fin de Año").\n   - **Alcance**: Elige si aplica a **Todos los servicios** o a un **Servicio específico**.\n   - **Tipo y Valor**: Define si el descuento es en **Porcentaje (%)** (ej: 15%) o un **Monto fijo ($)** (ej: $5.000).\n   - **Vigencia**: Selecciona la **Fecha de Inicio** y la **Fecha de Fin** en las que estará activa la promoción.\n   - **Estado**: Activa o inactiva la promoción.\n3. **Guardar**: Haz clic en **Crear promoción**.\n4. **Editar y Eliminar**: En la tabla de la derecha verás el listado de promociones. Puedes hacer clic en **Editar** (icono de lápiz) para modificarla o **Eliminar** (icono de papelera) para borrarla.\n\n*Nota: Las promociones activas se aplican automáticamente al precio final cuando el cliente realiza una reserva desde la página pública o interactúa con el chat de Kady.*',
+    role: 'admin',
+    order: 16
   }
 ];
 
