@@ -92,9 +92,11 @@ async function getMyCommissions(req, res) {
 
     // Calcular reporte completo para totales
     const allReport = allAppointments.map(appt => {
-      const basePrice = (appt.finalPrice !== null && appt.finalPrice !== undefined) ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
+      // Si finalPrice existe, ya incluye adicionales. Si no, price + additionalAmount
+      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined;
+      const basePrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
       const additional = parseFloat(appt.additionalAmount) || 0;
-      const totalPrice = basePrice + additional;
+      const totalPrice = hasFinalPrice ? basePrice : (basePrice + additional);
       
       // En servicios técnicos o técnicos de campo no hay comisiones ni precios
       const hideMoney = isTechnicalServices || hasFieldTechnicians;
@@ -234,9 +236,10 @@ async function getCommissionReport(req, res) {
     });
 
     const report = appointments.map(appt => {
-      const basePrice = (appt.finalPrice !== null && appt.finalPrice !== undefined) ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price) || 0);
-      const additional = parseFloat(appt.additionalAmount) || 0;
-      const totalPrice = basePrice + additional;
+      // Si finalPrice existe, ya incluye base + adicional + extras - descuentos.
+      // Si no existe, calculamos manualmente: price + additionalAmount
+      const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined;
+      const totalPrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price || 0) + parseFloat(appt.additionalAmount || 0));
       
       const hasCommission = appt.Service.hasEmployeeCommission !== false; // Default true
       const commissionPct = hasCommission ? (parseFloat(appt.Employee.commissionPct) || 0) : 0;
@@ -254,9 +257,9 @@ async function getCommissionReport(req, res) {
         date:          appt.startTime,
         service:       appt.Service.name,
         client:        appt.clientName,
-        price:         totalPrice, // Precio total (base + adicional)
-        basePrice:     basePrice,
-        additional:    additional,
+        price:         totalPrice,
+        basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service.price || 0),
+        additional:    parseFloat(appt.additionalAmount || 0),
         supplies:      supplies,
         employee:      appt.Employee.User.name,
         employeeEarns: employeeEarns.toFixed(2),
