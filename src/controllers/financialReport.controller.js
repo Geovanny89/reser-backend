@@ -4,7 +4,7 @@ const { Op } = require('sequelize');
 exports.getFinancialReport = async (req, res) => {
   try {
     const { businessId, year, month, startDate: queryStartDate, endDate: queryEndDate, employeeId } = req.query;
-    console.log('FINANCIAL_REPORT_QUERY:', { businessId, queryStartDate, queryEndDate, employeeId });
+    console.log('FINANCIAL_REPORT_QUERY:', { businessId, queryStartDate, queryEndDate, employeeId, year, month });
     
     if (!businessId) {
       return res.status(400).json({ error: 'businessId es requerido' });
@@ -256,11 +256,6 @@ exports.getFinancialReport = async (req, res) => {
       });
     }
 
-    // === CÁLCULOS FINALES ===
-    const totalExpenses = expenses.total + inventory.total + totalCommissions;
-    const netProfit = totalIncome - totalExpenses;
-    const margin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
-
     // === ALERTAS: Citas terminadas sin movimiento en caja (Descuadres) ===
     const unrecordedAppointments = appointments.filter(apt => {
       // Buscar si existe un movimiento de ingreso para esta cita
@@ -275,11 +270,21 @@ exports.getFinancialReport = async (req, res) => {
 
     const totalUnrecordedAmount = unrecordedAppointments.reduce((sum, apt) => sum + apt.finalPrice, 0);
 
+    // Sumar el ingreso no registrado (citas sin movimiento de caja) al ingreso total para que coincida con el dashboard
+    const adjustedTotalIncome = totalIncome + totalUnrecordedAmount;
+    // Asumimos que lo no registrado fue en efectivo (por ser el método por defecto)
+    const adjustedCashIncome = cashIncome + totalUnrecordedAmount;
+
+    // === CÁLCULOS FINALES ===
+    const totalExpenses = expenses.total + inventory.total + totalCommissions;
+    const netProfit = adjustedTotalIncome - totalExpenses;
+    const margin = adjustedTotalIncome > 0 ? (netProfit / adjustedTotalIncome) * 100 : 0;
+
     res.json({
       period: periodInfo.type === 'month' ? { year, month, startDate, endDate } : { startDate, endDate, type: periodInfo.type },
       summary: {
-        totalIncome,
-        cashIncome,
+        totalIncome: adjustedTotalIncome,
+        cashIncome: adjustedCashIncome,
         transferIncome,
         totalDiscounts,
         totalExpenses,

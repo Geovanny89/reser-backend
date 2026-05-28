@@ -229,8 +229,7 @@ async function getCommissionReport(req, res) {
         { model: Service },
         { 
           model: Employee, 
-          required: true,
-          include: [{ model: User, attributes: ['name'], required: true }] 
+          include: [{ model: User, attributes: ['name'] }] 
         }
       ]
     });
@@ -239,10 +238,10 @@ async function getCommissionReport(req, res) {
       // Si finalPrice existe, ya incluye base + adicional + extras - descuentos.
       // Si no existe, calculamos manualmente: price + additionalAmount
       const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined;
-      const totalPrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service.price || 0) + parseFloat(appt.additionalAmount || 0));
+      const totalPrice = hasFinalPrice ? parseFloat(appt.finalPrice) : (parseFloat(appt.Service?.price || 0) + parseFloat(appt.additionalAmount || 0));
       
-      const hasCommission = appt.Service.hasEmployeeCommission !== false; // Default true
-      const commissionPct = hasCommission ? (parseFloat(appt.Employee.commissionPct) || 0) : 0;
+      const hasCommission = appt.Service?.hasEmployeeCommission !== false; // Default true
+      const commissionPct = hasCommission ? (parseFloat(appt.Employee?.commissionPct || 0)) : 0;
       
       const supplies = parseFloat(appt.suppliesCost) || 0;
       const commissionable = Math.max(0, totalPrice - supplies);
@@ -255,13 +254,13 @@ async function getCommissionReport(req, res) {
       
       return {
         date:          appt.startTime,
-        service:       appt.Service.name,
+        service:       appt.Service?.name || 'Servicio eliminado',
         client:        appt.clientName,
         price:         totalPrice,
-        basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service.price || 0),
+        basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service?.price || 0),
         additional:    parseFloat(appt.additionalAmount || 0),
         supplies:      supplies,
-        employee:      appt.Employee.User.name,
+        employee:      appt.Employee?.User?.name || 'Empleado eliminado',
         employeeEarns: employeeEarns.toFixed(2),
         ownerEarns:    ownerEarns.toFixed(2),
         hasCommission: hasCommission,
