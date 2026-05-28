@@ -201,13 +201,7 @@ async function getAppointmentStats(businessId) {
           [Op.gte]: new Date(`${currentMonth}-01T00:00:00-05:00`)
         }
       },
-      attributes: [
-        'paymentMethod',
-        [sequelize.fn('SUM', sequelize.literal('CAST(COALESCE("Appointment"."finalPrice", "Service"."price", 0) AS DECIMAL) + CAST(COALESCE("Appointment"."additionalAmount", 0) AS DECIMAL)')), 'total']
-      ],
-      include: [{ model: Service, attributes: [] }],
-      group: ['paymentMethod'],
-      raw: true
+      include: [{ model: Service, attributes: ['price'] }]
     })
   ]);
 
@@ -237,10 +231,17 @@ async function getAppointmentStats(businessId) {
     if (s.technicianStatus === 'arrived') result.arrived = parseInt(s.count);
   });
 
-  financeStats.forEach(f => {
-    const total = parseFloat(f.total || 0);
-    if (f.paymentMethod === 'cash') result.finance.cash = total;
-    if (f.paymentMethod === 'transfer') result.finance.transfer = total;
+  financeStats.forEach(appt => {
+    // Si finalPrice existe, ya incluye adicionales. Si no, usamos price + additionalAmount
+    const price = (appt.finalPrice !== null && appt.finalPrice !== undefined) 
+      ? parseFloat(appt.finalPrice) 
+      : (parseFloat(appt.Service?.price || 0) + parseFloat(appt.additionalAmount || 0));
+    
+    if (appt.paymentMethod === 'transfer') {
+      result.finance.transfer += price;
+    } else {
+      result.finance.cash += price;
+    }
   });
 
   return result;
