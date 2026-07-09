@@ -17,20 +17,21 @@ if (!EVOLUTION_URL || !API_KEY) {
 
 (async () => {
   try {
-    const resp = await axios.get(`${EVOLUTION_URL}/instances`, {
-      headers: { 'x-api-key': API_KEY },
+    const resp = await axios.get(`${EVOLUTION_URL}/instance/fetchInstances`, {
+      headers: { 'apikey': API_KEY },
     });
-    const instances = resp.data; // se espera un arreglo de objetos
+    const instances = Array.isArray(resp.data) ? resp.data : (resp.data?.instances || []);
     console.log(`EVOLUTION_URL: ${EVOLUTION_URL}`);
     console.log(`API_KEY: ${API_KEY}`);
     console.log(`Total instances in API: ${instances.length}`);
 
     instances.forEach(inst => {
-      console.log('\n- Instance:', inst.id);
-      console.log('  Status:', inst.status);
-      // La API puede devolver proxyConfig o null
-      const proxyInfo = inst.proxyConfig ? JSON.stringify(inst.proxyConfig) : 'null';
-      console.log('  Proxy config in Evolution:', proxyInfo);
+      const name = inst.name || inst.instanceName || 'unknown';
+      const status = inst.connectionStatus || inst.state || 'unknown';
+      console.log(`\n- Instance: ${name}`);
+      console.log(`  Status: ${status}`);
+      const proxyInfo = inst.setting?.proxy ? JSON.stringify(inst.setting.proxy) : 'null';
+      console.log(`  Proxy config in Evolution: ${proxyInfo}`);
     });
   } catch (err) {
     console.error('Error al consultar la Evolution API:', err.message);
