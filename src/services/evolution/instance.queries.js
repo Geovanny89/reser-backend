@@ -103,7 +103,10 @@ async function getConnectionState(businessId) {
 async function getInstanceInfo(businessId) {
   try {
     const instances = await fetchAllInstances();
-    const instance = instances.find(inst => inst.name === businessId || inst.instanceName === businessId);
+    const instance = instances.find(inst => {
+      const name = inst.name || inst.instanceName;
+      return name === businessId || (name && name.startsWith(businessId + '_'));
+    });
     if (!instance) return null;
 
     return {
