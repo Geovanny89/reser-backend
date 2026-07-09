@@ -121,32 +121,18 @@ router.get('/whatsapp/status', auth, async (req, res) => {
       console.warn(`[WhatsApp Status] ⚠️ No se pudo consultar Evolution API:`, e.message);
     }
 
-    // Si hay discrepancia entre BD y realidad, actualizar BD
-    if (dbStatus === 'connected' && realState !== 'connected') {
-      console.log(`[WhatsApp Status] ⚠️ Discrepancia detectada: BD dice '${dbStatus}' pero Evolution API reporta '${realState}'. Sincronizando BD...`);
-      await models.WhatsAppSession.update(
-        { status: realState, lastActivity: new Date() },
-        { where: { businessId } }
-      );
-      dbStatus = realState;
-    }
-
-    // Si BD dice disconnected pero Evolution dice connected, actualizar BD
-    if ((dbStatus === 'disconnected' || !session) && realState === 'connected') {
+    // Sincronizar estado en BD si hay discrepancia
+    if (realState !== dbStatus) {
+      console.log(`[WhatsApp Status] 🔄 Sincronizando BD: de '${dbStatus}' a '${realState}' para ${businessId}`);
       const businessExists = await models.Business.findByPk(businessId);
       if (businessExists) {
         await models.WhatsAppSession.upsert({
           businessId,
-          status: 'connected',
+          status: realState,
           lastActivity: new Date()
         });
-        dbStatus = 'connected';
+        dbStatus = realState;
       }
-    }
-
-    // Si está en connecting, asegurar que el estado reportado sea connecting
-    if (realState === 'connecting') {
-      dbStatus = 'connecting';
     }
 
     res.json({
