@@ -27,19 +27,42 @@ async function fetchAllInstances() {
       const phone = extractPhoneFromInstance(inst);
       const status = inst.connectionStatus || inst.state || 'unknown';
 
-      state.setInstance(businessId, {
-        instanceName: fullName,
-        status: status,
-        createdAt: inst.createdAt || new Date()
-      });
+      const existing = state.getInstance(businessId);
+      const isNewActive = status === 'open' || status === 'connected';
+      const isExistingActive = existing && (existing.status === 'open' || existing.status === 'connected');
 
-      if (phone) {
-        try {
-          await WhatsAppSession.update(
-            { phoneNumber: phone },
-            { where: { businessId: businessId } }
-          ).catch(() => { });
-        } catch (e) { }
+      let shouldSet = false;
+      if (!existing) {
+        shouldSet = true;
+      } else if (isNewActive && !isExistingActive) {
+        shouldSet = true;
+      } else if (!isNewActive && isExistingActive) {
+        // No sobrescribir una sesión activa con una inactiva
+        shouldSet = false;
+      } else {
+        // Si ambas están activas o ambas inactivas, preferimos la más reciente
+        const existingTime = new Date(existing.createdAt).getTime();
+        const newTime = new Date(inst.createdAt || new Date()).getTime();
+        if (newTime > existingTime) {
+          shouldSet = true;
+        }
+      }
+
+      if (shouldSet) {
+        state.setInstance(businessId, {
+          instanceName: fullName,
+          status: status,
+          createdAt: inst.createdAt || new Date()
+        });
+
+        if (phone) {
+          try {
+            await WhatsAppSession.update(
+              { phoneNumber: phone },
+              { where: { businessId: businessId } }
+            ).catch(() => { });
+          } catch (e) { }
+        }
       }
     }
 
