@@ -114,8 +114,7 @@ async function heartbeatCheck() {
     const state = await checkInstanceStatus(businessId);
     
     // Estados válidos: open, connected, connecting (en proceso de conexión)
-    // Incluimos 'close' como estado temporalmente válido para dar tiempo a la API a auto-reconectarse
-    const validStates = ['open', 'connected', 'connecting', 'close'];
+    const validStates = ['open', 'connected', 'connecting'];
     
     // Verificar si la instancia es muy reciente (menos de 3 minutos)
     const isRecent = instance?.createdAt && 

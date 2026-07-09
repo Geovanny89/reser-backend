@@ -90,7 +90,7 @@ function formatProxyForEvolution(proxy) {
 async function testProxyConnection(proxy) {
   if (!proxy || !proxy.host || !proxy.port) return false;
 
-  const url = 'http://www.google.com';
+  const url = 'https://www.google.com';
   const start = Date.now();
   const config = {
     timeout: 4000,
