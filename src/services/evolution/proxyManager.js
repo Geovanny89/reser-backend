@@ -90,7 +90,7 @@ function formatProxyForEvolution(proxy) {
 async function testProxyConnection(proxy) {
   if (!proxy || !proxy.host || !proxy.port) return false;
 
-  const url = 'https://www.google.com';
+  const url = 'http://www.google.com';
   const start = Date.now();
   const config = {
     timeout: 4000,
@@ -110,6 +110,7 @@ async function testProxyConnection(proxy) {
 
   try {
     if (!proxy || !proxy.host || !proxy.port) { console.warn(`[Proxy Manager] ⚠️ Proxy incompleto o inexistente, se omite la prueba.`); return false; }
+    await axios.get(url, config);
     console.log(`[Proxy Manager] ✅ Proxy ${proxy.host}:${proxy.port} activo (Test ok en ${Date.now() - start}ms)`);
     return true;
   } catch (err) {
