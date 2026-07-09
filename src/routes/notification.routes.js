@@ -19,13 +19,27 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
     }
 
     // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre y nos dé un QR fresco
-    await whatsappService.createInstance(businessId, true);
+    const createResult = await whatsappService.createInstance(businessId, true);
 
-    // Esperar un poco a que se genere el QR (el evento 'qr' en whatsappService lo guardará en currentQRs)
+    // Configurar webhook explícitamente para asegurar que QRCODE_UPDATED llegue
+    try {
+      const { configureWebhook } = require('../services/evolution/instanceManager');
+      await configureWebhook(businessId);
+    } catch (e) {
+      console.warn(`[WhatsApp Route] ⚠️ No se pudo configurar webhook:`, e.message);
+    }
+
+    // Si el QR vino directamente en la respuesta de creación, devolverlo inmediatamente
+    if (createResult?.qrcode) {
+      console.log(`[WhatsApp Route] ✅ QR obtenido directamente de createInstance para ${businessId}`);
+      return res.json({ qr: createResult.qrcode, status: 'connecting' });
+    }
+
+    // Esperar a que el QR llegue (via webhook o fetch activo)
     let attempts = 0;
-    const maxAttempts = 120; // Aumentar a 120 segundos para dar tiempo suficiente a Evolution API v2.3.7
+    const maxAttempts = 60; // 60 segundos máximo
 
-    const waitForQR = setInterval(() => {
+    const waitForQR = setInterval(async () => {
       attempts++;
       const qrData = whatsappService.currentQRs.get(businessId);
 
@@ -35,11 +49,28 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
         return res.json({ qr: qrData, status: 'connecting' });
       }
 
+      // Cada 5 segundos, intentar obtener el QR activamente desde la Evolution API
+      if (attempts % 5 === 0) {
+        try {
+          console.log(`[WhatsApp Route] 🔄 Intento activo de obtener QR para ${businessId} (intento ${attempts})...`);
+          const { getQR } = require('../services/evolution/instanceManager');
+          const fetchedQR = await getQR(businessId);
+          if (fetchedQR) {
+            clearInterval(waitForQR);
+            whatsappService.currentQRs.set(businessId, fetchedQR);
+            console.log(`[WhatsApp Route] ✅ QR obtenido activamente desde Evolution API para ${businessId}`);
+            return res.json({ qr: fetchedQR, status: 'connecting' });
+          }
+        } catch (fetchErr) {
+          console.warn(`[WhatsApp Route] ⚠️ Error obteniendo QR activamente:`, fetchErr.message);
+        }
+      }
+
       if (attempts >= maxAttempts) {
         clearInterval(waitForQR);
         console.log(`[WhatsApp Route] ❌ Tiempo de espera agotado para QR de ${businessId}`);
 
-        // Verificar si por casualidad ya se conectó (compatible con Evolution API)
+        // Verificar si por casualidad ya se conectó
         const instance = whatsappService.instances.get(businessId);
         if (instance && (instance.status === 'open' || instance.status === 'connected')) {
           return res.json({ status: 'connected' });

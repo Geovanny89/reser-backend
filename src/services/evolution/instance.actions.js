@@ -181,7 +181,15 @@ async function configureProxy(businessId) {
 
 async function configureWebhook(businessId) {
   try {
-    const webhookUrl = `${process.env.BACKEND_URL}/api/notifications/evolution/webhook`;
+    // Usar el nombre real de la instancia (con sufijo) desde el estado en memoria
+    const current = state.getInstance(businessId);
+    const instanceName = current?.instanceName || businessId;
+
+    const backendUrl = process.env.BACKEND_URL || `http://127.0.0.1:${process.env.PORT || 4000}`;
+    const webhookUrl = `${backendUrl}/api/notifications/evolution/webhook`;
+
+    console.log(`[Evolution API] 🔗 Configurando webhook para ${instanceName}: ${webhookUrl}`);
+
     const payload = {
       webhook: {
         enabled: true,
@@ -190,9 +198,11 @@ async function configureWebhook(businessId) {
         events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
       }
     };
-    await api.post(`/webhook/instance/${businessId}`, payload);
+    await api.post(`/webhook/instance/${instanceName}`, payload);
+    console.log(`[Evolution API] ✅ Webhook configurado para ${instanceName}`);
     return true;
   } catch (err) {
+    console.error(`[Evolution API] ❌ Error configurando webhook: ${err.response?.data?.message || err.message}`);
     return false;
   }
 }
