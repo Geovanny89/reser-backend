@@ -10,11 +10,11 @@ async function fetchAllInstances() {
   try {
     const response = await api.get('/instance/fetchInstances');
     const instances = response.data || [];
-    
+
     // Sincronizar memoria y BD
     const { WhatsAppSession } = require('../../models');
     const { getBaseBusinessId } = require('./instance.utils');
-    
+
     const foundBusinessIds = new Set();
 
     for (const inst of instances) {
@@ -38,8 +38,8 @@ async function fetchAllInstances() {
           await WhatsAppSession.update(
             { phoneNumber: phone },
             { where: { businessId: businessId } }
-          ).catch(() => {});
-        } catch (e) {}
+          ).catch(() => { });
+        } catch (e) { }
       }
     }
 
@@ -65,7 +65,7 @@ async function getConnectionState(businessId) {
     const realName = state.getRealInstanceName(businessId);
     const response = await api.get(`/instance/connectionState/${realName}`);
     const status = response.data?.instance?.state || response.data?.state || null;
-    
+
     if (status) {
       const current = state.getInstance(businessId) || {};
       state.setInstance(businessId, { ...current, status });
@@ -99,7 +99,7 @@ async function hasValidSession(businessId) {
   try {
     const allInstances = await fetchAllInstances();
     console.log(`[Evolution API] 🔍 Validando sesión para ${businessId}. Total instancias en API: ${allInstances.length}`);
-    
+
     // 1. Priorizar la instancia que tenemos registrada en memoria
     const current = state.getInstance(businessId);
     if (current?.instanceName) {

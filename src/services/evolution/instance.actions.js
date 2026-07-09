@@ -13,9 +13,9 @@ async function stopInstance(businessId, shouldLogout = true) {
   try {
     const { getBaseBusinessId } = require('./instance.utils');
     businessId = getBaseBusinessId(businessId);
-    
+
     console.log(`[Evolution API] 🛑 Solicitando detención de ${businessId}...`);
-    
+
     // 1. Obtener todas las instancias que coincidan (exacto o con sufijo)
     const all = await fetchAllInstances().catch(() => []);
     const matching = all.filter(i => {
@@ -36,9 +36,9 @@ async function stopInstance(businessId, shouldLogout = true) {
       // 2. Intentar desconectar y CERRAR (silencioso)
       try {
         if (shouldLogout) {
-          await api.delete(`/instance/logout/${targetId}`).catch(() => {});
+          await api.delete(`/instance/logout/${targetId}`).catch(() => { });
         }
-        await api.post(`/instance/disconnect/${targetId}`).catch(() => {});
+        await api.post(`/instance/disconnect/${targetId}`).catch(() => { });
       } catch (e) { }
 
       // 3. Intentar borrar físicamente
@@ -46,8 +46,8 @@ async function stopInstance(businessId, shouldLogout = true) {
         await api.delete(`/instance/delete/${targetId}?force=true`, {
           data: { instanceName: targetName },
           timeout: 5000
-        }).catch(() => {});
-      } catch (err) {}
+        }).catch(() => { });
+      } catch (err) { }
     }
 
     // ESPERA CRÍTICA: Darle tiempo a la API para liberar archivos si hubo varias
@@ -57,7 +57,7 @@ async function stopInstance(businessId, shouldLogout = true) {
 
     state.deleteInstance(businessId);
     state.deleteQR(businessId);
-    
+
     return true;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error fatal en stopInstance:`, err.message);
@@ -74,7 +74,7 @@ async function createInstance(businessId, forceFresh = false) {
 
   try {
     creationLocks.add(businessId);
-    
+
     // 1. Verificar si ya existe alguna (incluyendo sufijos) para no causar conflictos
     const instances = await fetchAllInstances().catch(() => []);
     const matching = instances.filter(i => {
@@ -88,7 +88,7 @@ async function createInstance(businessId, forceFresh = false) {
     if (existingOpen && !forceFresh) {
       const activeName = existingOpen.name || existingOpen.instanceName;
       console.log(`[Evolution API] ✅ Reutilizando instancia abierta: ${activeName}`);
-      state.setInstance(businessId, { 
+      state.setInstance(businessId, {
         status: 'open',
         instanceName: activeName,
         phone: extractPhoneFromInstance(existingOpen)
@@ -100,34 +100,34 @@ async function createInstance(businessId, forceFresh = false) {
     let instanceNameToUse = businessId;
     if (forceFresh) {
       // Usar timestamp para asegurar que el nombre sea único y no choque con basura vieja
-      instanceNameToUse = `${businessId}_${Date.now()}`; 
+      instanceNameToUse = `${businessId}_${Date.now()}`;
       console.log(`[Evolution API] 🚀 Forzando instancia nueva única: ${instanceNameToUse}`);
-      
+
       // Limpieza profunda de instancias previas (incluyendo sufijos)
       try {
         await stopInstance(businessId, true);
       } catch (err) {
         console.warn(`[Evolution API] ⚠️ Error en limpieza previa de ${businessId}:`, err.message);
       }
-      
+
       // Breve espera para que la API procese las eliminaciones antes de crear la nueva
       await new Promise(r => setTimeout(r, 1000));
     }
 
     const proxy = require('./proxy');
-    const proxyConfig = await proxy.getBestProxy();
+    const proxyConfig = await proxy.getBestProxy(businessId);
 
     const createPayload = {
       instanceName: instanceNameToUse,
       token: constants.DEFAULT_TOKEN,
       integration: 'WHATSAPP-BAILEYS',
       qrcode: true,
-      proxy: proxyConfig.host ? {
+      proxy: (proxyConfig && proxyConfig.host) ? {
         enabled: true,
         host: proxyConfig.host,
         port: Number(proxyConfig.port),
-        username: proxyConfig.username,
-        password: proxyConfig.password
+        username: proxyConfig.username || '',
+        password: proxyConfig.password || ''
       } : undefined
     };
 
@@ -135,18 +135,21 @@ async function createInstance(businessId, forceFresh = false) {
     const data = response.data;
 
     // Forzar configuración de proxy por si la creación lo ignoró
-    if (proxyConfig.host) {
-      await configureProxy(instanceNameToUse).catch(() => {});
+    if (proxyConfig && proxyConfig.host) {
+      await configureProxy(instanceNameToUse).catch(() => { });
+    } else {
+      // Si no hay proxyConfig o falló la conexión del proxy, asegurar que se desactive en la API
+      await configureProxy(instanceNameToUse).catch(() => { });
     }
 
     const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
 
-    state.setInstance(businessId, { 
+    state.setInstance(businessId, {
       status: 'connecting',
       instanceName: instanceNameToUse,
       token: data.hash?.token || constants.DEFAULT_TOKEN
     });
-    
+
     if (qrData) {
       state.setQR(businessId, qrData);
       console.log(`[Evolution API] 📲 QR generado (Proxy: ${proxyConfig.host || 'Directo'}) para ${businessId}`);
@@ -206,7 +209,7 @@ async function getQR(businessId) {
 async function forceReconnect(businessId, shouldLogout = false) {
   const { getBaseBusinessId } = require('./instance.utils');
   businessId = getBaseBusinessId(businessId);
-  
+
   await stopInstance(businessId, shouldLogout);
   return createInstance(businessId, true);
 }
