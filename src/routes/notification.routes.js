@@ -375,6 +375,17 @@ router.post('/evolution/webhook', async (req, res) => {
         }
       } else if (connectionState === 'close' || connectionState === 'disconnected') {
         const statusReason = data?.statusReason || data?.reason;
+        const incomingInstance = req.body.instance || req.body.instanceName;
+
+        // VALIDACIÓN: Solo procesar cierre si viene de la instancia ACTIVA actual
+        const { getInstance, setInstance } = require('../services/evolution/state');
+        const current = getInstance(businessId);
+
+        if (current && current.instanceName && incomingInstance !== current.instanceName) {
+          console.log(`[Evolution Webhook] ℹ️ Cierre ignorado para ${businessId} (instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
+          return res.status(200).json({ message: 'Close ignored (stale instance)' });
+        }
+
         console.log(`[Evolution Webhook] ⚠️ Instancia ${businessId} desconectada. Razón: ${statusReason}`);
 
         // Determinar estado final
@@ -385,9 +396,8 @@ router.post('/evolution/webhook', async (req, res) => {
         }
 
         // Actualizar memoria
-        const { setInstance } = require('../services/evolution/state');
         setInstance(businessId, {
-          instanceName: businessId,
+          instanceName: incomingInstance,
           status: finalStatus,
           statusReason: statusReason,
           updatedAt: new Date()
