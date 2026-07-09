@@ -7,11 +7,11 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const axios = require('axios');
 
-const EVOLUTION_URL = process.env.EVOLUTION_URL;
-const API_KEY = process.env.API_KEY;
+const EVOLUTION_URL = process.env.EVOLUTION_API_URL;
+const API_KEY = process.env.EVOLUTION_API_KEY;
 
 if (!EVOLUTION_URL || !API_KEY) {
-  console.error('❌ EVOLUTION_URL o API_KEY no están definidas en .env');
+  console.error('❌ EVOLUTION_API_URL o EVOLUTION_API_KEY no están definidas en .env');
   process.exit(1);
 }
 

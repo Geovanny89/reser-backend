@@ -1,5 +1,5 @@
 const axios = require('axios');
-require('dotenv').config({ path: '.env' });
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
 const API_KEY = process.env.EVOLUTION_API_KEY || '1234';
