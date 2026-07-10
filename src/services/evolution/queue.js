@@ -220,19 +220,38 @@ async function handleClientNotReady(message) {
 
 // ==================== UTILIDADES ====================
 
+// Offset for Colombia (UTC-5) in milliseconds
+const COLOMBIA_OFFSET_MS = -5 * 60 * 60 * 1000;
+
+/**
+ * Verifica si es horario laboral en Colombia (7:00 – 19:00).
+ * Colombia no tiene horario de verano.
+ */
 function isBusinessHours() {
-  const hour = new Date().getHours();
-  return hour >= 7 && hour < 19; // 7am - 7pm Colombia
+  const now = new Date();
+  const colombiaTime = new Date(now.getTime() + COLOMBIA_OFFSET_MS);
+  const hour = colombiaTime.getUTCHours();
+  return hour >= 7 && hour < 19;
 }
 
+/**
+ * Calcula el delay hasta la próxima hora de inicio de jornada (7 am) en Colombia.
+ */
 function getDelayToNextBusinessHours() {
   const now = new Date();
-  const tomorrow7am = new Date(now);
-  tomorrow7am.setHours(7, 0, 0, 0);
-  if (tomorrow7am <= now) {
-    tomorrow7am.setDate(tomorrow7am.getDate() + 1);
+  const colombiaNow = new Date(now.getTime() + COLOMBIA_OFFSET_MS);
+  const tomorrow7am = new Date(colombiaNow);
+  tomorrow7am.setUTCHours(12, 0, 0, 0); // 7 am local = 12 UTC
+  if (tomorrow7am <= colombiaNow) {
+    tomorrow7am.setUTCDate(tomorrow7am.getUTCDate() + 1);
   }
-  return tomorrow7am - now;
+  // Convert back to server time
+  const targetServerTime = new Date(tomorrow7am.getTime() - COLOMBIA_OFFSET_MS);
+  return targetServerTime - now;
+}
+
+function getRandomDelay() {
+  return 2000 + Math.random() * 3000; // 2-5 segundos
 }
 
 function getRandomDelay() {
