@@ -317,7 +317,7 @@ exports.getAvailability = async (req, res) => {
     });
 
     const service = serviceId ? await Service.findByPk(serviceId) : null;
-    const duration = service ? service.durationMin : 60;
+    const duration = req.query.duration ? parseInt(req.query.duration) : (service ? service.durationMin : 60);
 
     // Hora actual en Colombia
     const nowColombia = new Date(new Date().getTime() + COLOMBIA_OFFSET_MS);

@@ -15,9 +15,9 @@ const debugLog = (msg) => {
 
 exports.getAvailability = async (req, res) => {
   try {
-    const { date, employeeId, serviceId, businessId, allowPast } = req.query;
-    debugLog(`[Availability Handler] Incoming: date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}`);
-    const result = await getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true');
+    const { date, employeeId, serviceId, businessId, allowPast, duration } = req.query;
+    debugLog(`[Availability Handler] Incoming: date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}, duration=${duration}`);
+    const result = await getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true', null, duration);
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -27,8 +27,8 @@ exports.getAvailability = async (req, res) => {
 /**
  * Obtiene disponibilidad de horarios para una fecha, empleado y servicio
  */
-async function getAvailability(date, employeeId, serviceId, businessId, allowPast = false, excludeId = null) {
-  debugLog(`[getAvailability Core] date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}`);
+async function getAvailability(date, employeeId, serviceId, businessId, allowPast = false, excludeId = null, customDuration = null) {
+  debugLog(`[getAvailability Core] date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}, customDuration=${customDuration}`);
   if (!date || !employeeId || !serviceId || !businessId) {
     debugLog(`[getAvailability Core] MISSING PARAMETERS: date=${!!date}, emp=${!!employeeId}, svc=${!!serviceId}, bus=${!!businessId}`);
     return { availableSlots: [] };
@@ -193,7 +193,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   );
 
   // Generar slots disponibles
-  const duration = service.durationMin || service.duration || 30;
+  const duration = customDuration ? parseInt(customDuration) : (service.durationMin || service.duration || 30);
   console.log(`[Availability] Duración servicio: ${duration}min, allowPast: ${allowPast}`);
   
   debugLog(`[Availability Debug] Starting for date: ${date}, emp: ${employeeId}, svc: ${serviceId}`);

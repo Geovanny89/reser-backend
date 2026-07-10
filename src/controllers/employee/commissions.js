@@ -257,6 +257,7 @@ async function getCommissionReport(req, res) {
       return {
         date:          appt.startTime,
         service:       appt.Service?.name || 'Servicio eliminado',
+        extraServices: Array.isArray(appt.extraServices) ? appt.extraServices : [],
         client:        appt.clientName,
         price:         totalPrice,
         basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service?.price || 0),
@@ -266,6 +267,7 @@ async function getCommissionReport(req, res) {
         employeeEarns: employeeEarns.toFixed(2),
         ownerEarns:    ownerEarns.toFixed(2),
         hasCommission: hasCommission,
+        paymentMethod: appt.paymentMethod || 'cash',
       };
     });
 

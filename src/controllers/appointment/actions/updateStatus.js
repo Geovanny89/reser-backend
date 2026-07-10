@@ -57,7 +57,7 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
 
       // Calcular precio final si no viene explícitamente
       if (updateData.finalPrice === undefined) {
-        const basePrice = parseFloat(appointment.basePrice || appointment.Service?.price || 0);
+        const basePriceVal = parseFloat(appointment.basePrice || appointment.Service?.price || 0);
         const extraServices = updateData.extraServices || appointment.extraServices || [];
         const extrasAmount = extraServices.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0);
         const additionalCharges = appointment.additionalCharges || [];
@@ -65,7 +65,11 @@ async function updateAppointmentStatus(appointmentId, newStatus, user, options =
         const directAdditional = parseFloat(updateData.additionalAmount || appointment.additionalAmount || 0);
         const discount = parseFloat(updateData.discountApplied !== undefined ? updateData.discountApplied : (appointment.discountApplied || 0));
         
-        updateData.finalPrice = Math.max(0, basePrice + extrasAmount + additionalAmountSum + directAdditional - discount);
+        // Si basePrice ya contiene los extras, restamos extrasAmount para evitar doble conteo
+        const hasStoredBasePrice = appointment.basePrice !== undefined && appointment.basePrice !== null;
+        const mainServicePrice = hasStoredBasePrice ? Math.max(0, basePriceVal - extrasAmount) : basePriceVal;
+        
+        updateData.finalPrice = Math.max(0, mainServicePrice + extrasAmount + additionalAmountSum + directAdditional - discount);
       }
 
       // Guardar método de pago

@@ -21,7 +21,7 @@ async function scheduleWhatsAppMessage(appt, message, type = 'reminder') {
       type,
       scheduledAt: colombiaNow,
     });
-    console.log(`[Reminder] ✅ Mensaje ${type} programado (ID: ${scheduled.id.slice(0,8)}) para cita ${appt.id.slice(0,8)}`);
+    console.log(`[Reminder] ✅ Mensaje ${type} programado (ID: ${scheduled.id.slice(0, 8)}) para cita ${appt.id.slice(0, 8)}`);
     return true;
   } catch (err) {
     console.error(`[Reminder] ❌ Error programando mensaje ${type}:`, err.message);

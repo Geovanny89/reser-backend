@@ -14,7 +14,7 @@ async function sendMessageDirect(businessId, phone, text) {
 
     // Resolver ID real desde el estado (que ahora se sincroniza en hasValidSession)
     let actualId = state.getRealInstanceName(businessId);
-    
+
     // Si no tenemos nada en el estado, intentamos una última validación rápida
     if (actualId === businessId) {
       const { hasValidSession } = require('./instance.queries');
@@ -28,13 +28,13 @@ async function sendMessageDirect(businessId, phone, text) {
     }
 
     const delay = Math.min(Math.max(text.length * 20, 1500), 5000);
-    
+
     // Typing indicator
     await api.post(`/chat/sendPresence/${actualId}`, {
       number: formattedPhone,
       delay: delay,
       presence: 'composing'
-    }).catch(() => {});
+    }).catch(() => { });
 
     await new Promise(r => setTimeout(r, delay));
 
@@ -48,7 +48,7 @@ async function sendMessageDirect(businessId, phone, text) {
     return response.data;
   } catch (err) {
     console.error(`[Evolution API] ❌ Error enviando mensaje a ${phone}:`, err.response?.data || err.message);
-    
+
     // Si es error 500, podría ser el proxy. Intentamos avisar al log.
     if (err.response?.status === 500) {
       console.warn(`[Evolution API] ⚠️ Error 500 detectado. Posible problema de sesión o proxy.`);
