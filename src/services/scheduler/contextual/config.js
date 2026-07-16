@@ -7,7 +7,7 @@ const CONTEXTUAL_CONFIG = {
   REMINDER_WINDOWS: {
     '24h': { before: 26 * 60 * 60 * 1000, after: 18 * 60 * 60 * 1000 }, // 18-26h antes (Confirmación)
     '12h': { before: 18 * 60 * 60 * 1000, after: 6 * 60 * 60 * 1000 },  // 6-18h antes (Confirmación)
-    '2h': { before: 6 * 60 * 60 * 1000, after: 1.5 * 60 * 60 * 1000 },  // 1.5-6h antes (Confirmación)
+    '2h': { before: 2.5 * 60 * 60 * 1000, after: 1.75 * 60 * 60 * 1000 },  // 1.75-2.5h antes (Recordatorio)
     '1h': { before: 1.5 * 60 * 60 * 1000, after: 0 * 60 * 60 * 1000 },   // <1.5h (Sólo Recordatorio)
   },
 

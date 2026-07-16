@@ -86,20 +86,20 @@ function generateUnconfirmedReminder12h(appt, dayText) {
 
 function generateConfirmedReminder2h(appt, timeStr) {
   const templates = [
-    `⏰ *${appt.clientName}*, te esperamos en 2 horas (${timeStr}) para *${appt.Service?.name}*.`,
-    `🎯 Nos vemos en 2 horas para tu cita de *${appt.Service?.name}*. ¡Todo listo!`,
-    `✅ *${appt.clientName}*, recordatorio: tu cita confirmada es en 2 horas (${timeStr}).`,
-    `En 2 horas comenzamos con tu cita de *${appt.Service?.name}*. ¡Te esperamos!`
+    `⏰ *${appt.clientName}*, te esperamos hoy a las *${timeStr}* para *${appt.Service?.name}*. ¡Ya falta poco!`,
+    `🎯 Hoy a las *${timeStr}* es tu cita de *${appt.Service?.name}*. ¡Todo listo para recibirte!`,
+    `✅ *${appt.clientName}*, recordatorio: tu cita confirmada es hoy a las *${timeStr}*.`,
+    `¡Ya casi! Hoy a las *${timeStr}* comenzamos con tu cita de *${appt.Service?.name}*. ¡Te esperamos!`
   ];
   return getRandomTemplate(templates);
 }
 
 function generateUnconfirmedReminder2h(appt, timeStr) {
   const templates = [
-    `⏰ *${appt.clientName}*, te recordamos tu cita de *${appt.Service?.name}* es en 2 horas (*${timeStr}*).`,
-    `🎯 *Aviso*: Nos vemos en 2 horas para tu cita de *${appt.Service?.name}* en *${appt.Business?.name}*.`,
+    `⏰ *${appt.clientName}*, te recordamos tu cita de *${appt.Service?.name}* hoy a las *${timeStr}*.`,
+    `🎯 *Aviso*: Hoy a las *${timeStr}* es tu cita de *${appt.Service?.name}* en *${appt.Business?.name}*.`,
     `🔔 *${appt.clientName}*, te recordamos tu cita de las *${timeStr}*. ¡Te esperamos pronto!`,
-    `Tu cita para *${appt.Service?.name}* es en solo 2 horas. ¡No olvides llegar puntual!`
+    `Tu cita para *${appt.Service?.name}* es hoy a las *${timeStr}*. ¡No olvides llegar puntual!`
   ];
   return getRandomTemplate(templates);
 }
