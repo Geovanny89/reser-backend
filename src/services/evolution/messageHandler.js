@@ -636,7 +636,7 @@ async function handleClientResponse(businessId, client, msg) {
 
   // Verificar si puede confirmar/cancelar
   const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(matchedAppt.status) &&
-    (!matchedAppt.confirmed || matchedAppt.messageFlowStatus === 'awaiting_confirmation');
+    (matchedAppt.messageFlowStatus === 'awaiting_confirmation');
 
   console.log(`[Evolution Message] 🔍 Estado cita: status=${matchedAppt.status}, confirmed=${matchedAppt.confirmed}, messageFlowStatus=${matchedAppt.messageFlowStatus}`);
   console.log(`[Evolution Message] 🔍 canConfirmCancel=${canConfirmCancel}, isRatingNumber=${isRatingNumber}`);
@@ -672,7 +672,8 @@ async function handleClientResponse(businessId, client, msg) {
  * Procesa respuesta para una cita específica
  */
 async function processAppointmentResponse(appt, text, msg, phone) {
-  const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(appt.status);
+  const canConfirmCancel = ['pending', 'confirmed', 'attention'].includes(appt.status) &&
+    (appt.messageFlowStatus === 'awaiting_confirmation');
 
   if (canConfirmCancel) {
     if (isConfirmation(text)) {
