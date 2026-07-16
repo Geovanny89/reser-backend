@@ -216,15 +216,41 @@ function determineAction(matchedAppointments, text) {
   // Verificar si es un número (calificación)
   const number = parseInt(cleanText);
   const isRatingNumber = !isNaN(number) && number >= 1 && number <= 5;
+  
+  const isConfirm = isConfirmation(text);
+  const isCancel = isCancellation(text);
 
   // Si hay múltiples citas, priorizar según el tipo de respuesta:
-  // - Si es un número (calificación), priorizar awaiting_rating primero
-  // - Si no, priorizar awaiting_confirmation, luego pending/attention, luego awaiting_rating
   let matchedAppt = matchedAppointments[0];
 
   if (matchedAppointments.length > 1) {
-    if (isRatingNumber) {
-      // PRIORIDAD 1 para calificaciones: citas en awaiting_rating
+    if (isConfirm || isCancel) {
+      // PRIORIDAD 1: Confirmaciones/Cancelaciones (incluyendo "1" y "2")
+      const awaitingConfirmAppt = matchedAppointments.find(a =>
+        a.messageFlowStatus === 'awaiting_confirmation' &&
+        ['pending', 'attention'].includes(a.status)
+      );
+      if (awaitingConfirmAppt) {
+        matchedAppt = awaitingConfirmAppt;
+        console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation para conf/canc`);
+      } else {
+        const pendingAppt = matchedAppointments.find(a =>
+          ['pending', 'attention'].includes(a.status)
+        );
+        if (pendingAppt) {
+          matchedAppt = pendingAppt;
+          console.log(`[Evolution Message] 🎯 Usando cita pendiente para conf/canc`);
+        } else if (isRatingNumber) {
+          // Fallback a rating si mandó "1" o "2" pero no hay citas para confirmar
+          const ratingAppt = matchedAppointments.find(a => a.messageFlowStatus === 'awaiting_rating');
+          if (ratingAppt) {
+            matchedAppt = ratingAppt;
+            console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating (fallback de número)`);
+          }
+        }
+      }
+    } else if (isRatingNumber) {
+      // PRIORIDAD 1 para calificaciones puras (3, 4, 5)
       const ratingAppt = matchedAppointments.find(a =>
         a.messageFlowStatus === 'awaiting_rating'
       );
@@ -232,15 +258,11 @@ function determineAction(matchedAppointments, text) {
         matchedAppt = ratingAppt;
         console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating para calificación`);
       } else {
-        // Si no hay awaiting_rating, buscar awaiting_confirmation
         const awaitingConfirmAppt = matchedAppointments.find(a =>
           a.messageFlowStatus === 'awaiting_confirmation' &&
           ['pending', 'attention'].includes(a.status)
         );
-        if (awaitingConfirmAppt) {
-          matchedAppt = awaitingConfirmAppt;
-          console.log(`[Evolution Message] 🎯 Usando cita awaiting_confirmation (fallback)`);
-        }
+        if (awaitingConfirmAppt) matchedAppt = awaitingConfirmAppt;
       }
     } else {
       // PRIORIDAD normal: awaiting_confirmation -> pending/attention -> awaiting_rating
