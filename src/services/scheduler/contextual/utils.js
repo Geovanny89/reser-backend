@@ -52,15 +52,22 @@ function calculateOptimalSendTime(appointment, messageType) {
 function getRelativeDayText(dateStr) {
   const date = new Date(dateStr);
   const now = new Date();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
   
-  if (date.toDateString() === now.toDateString()) {
+  const options = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' };
+  const dateBogota = date.toLocaleDateString('es-CO', options);
+  const nowBogota = now.toLocaleDateString('es-CO', options);
+  
+  const tomorrow = new Date(now);
+  // Add 24 hours to 'now' to get tomorrow safely, then get its Bogota string
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowBogota = tomorrow.toLocaleDateString('es-CO', options);
+  
+  if (dateBogota === nowBogota) {
     return 'hoy';
-  } else if (date.toDateString() === tomorrow.toDateString()) {
+  } else if (dateBogota === tomorrowBogota) {
     return 'mañana';
   } else {
-    return date.toLocaleDateString('es-CO', { weekday: 'long' });
+    return date.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', weekday: 'long' });
   }
 }
 

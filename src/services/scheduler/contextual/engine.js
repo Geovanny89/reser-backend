@@ -267,7 +267,11 @@ async function runContextualScheduler() {
                 await sendContextualReminder(business.id, freshAppointment, reminder.type, isCritical && delay > CONTEXTUAL_CONFIG.CRITICAL_REMINDER_MAX_DELAY_MS);
                 const sendLatency = Date.now() - sendStartTime;
                 await AppointmentReminderEvent.update({ status: 'sent', sentAt: new Date(), processingBy: null, processingAt: null }, { where: { id: eventId } });
-                await freshAppointment.update({ [reminder.timestampField]: new Date() });
+                const updateData = { [reminder.timestampField]: new Date() };
+                if (!freshAppointment.confirmed && ['24h', '12h', '2h'].includes(reminder.type)) {
+                  updateData.messageFlowStatus = 'awaiting_confirmation';
+                }
+                await freshAppointment.update(updateData);
                 registerMessageSent(business.id);
                 totalSent++;
                 schedulerMetrics.onTimeDelivery++;
