@@ -20,8 +20,13 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const appointmentTime = new Date(appointment.startTime).getTime();
   const timeUntilAppointment = appointmentTime - now;
   const gracePeriod = CONTEXTUAL_CONFIG.GRACE_PERIOD_MS;
+  const timeSinceCreation = now - new Date(appointment.createdAt).getTime();
 
   if (appointment.status === 'cancelled') return [];
+
+  // Esperar al menos 30 minutos después de agendar la cita para evitar enviar 
+  // la confirmación inmediatamente después del mensaje de "cita agendada".
+  if (timeSinceCreation < 30 * 60 * 1000) return [];
 
   const isConfirmed = appointment.confirmed === true;
   const needed = [];
@@ -31,10 +36,10 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const win24h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['24h'];
   const ttl24h = CONTEXTUAL_CONFIG.REMINDER_TTL['24h'];
   const canSend24h = !isConfirmed &&
-                     !appointment.reminder24hSentAt &&
-                     timeUntilAppointment <= (win24h.before + gracePeriod) &&
-                     timeUntilAppointment >= (win24h.after - gracePeriod) &&
-                     timeUntilAppointment > (win24h.after - ttl24h);
+    !appointment.reminder24hSentAt &&
+    timeUntilAppointment <= (win24h.before + gracePeriod) &&
+    timeUntilAppointment >= (win24h.after - gracePeriod) &&
+    timeUntilAppointment > (win24h.after - ttl24h);
 
   if (canSend24h) {
     if (backlogStatus === 'critical' && !isConfirmed) {
@@ -48,10 +53,10 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const win12h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['12h'];
   const ttl12h = CONTEXTUAL_CONFIG.REMINDER_TTL['12h'];
   const canSend12h = !isConfirmed &&
-                     !appointment.reminder12hSentAt &&
-                     timeUntilAppointment <= (win12h.before + gracePeriod) &&
-                     timeUntilAppointment >= (win12h.after - gracePeriod) &&
-                     timeUntilAppointment > (win12h.after - ttl12h);
+    !appointment.reminder12hSentAt &&
+    timeUntilAppointment <= (win12h.before + gracePeriod) &&
+    timeUntilAppointment >= (win12h.after - gracePeriod) &&
+    timeUntilAppointment > (win12h.after - ttl12h);
 
   if (canSend12h) {
     if (backlogStatus === 'critical') {
@@ -65,9 +70,9 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const win2h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['2h'];
   const ttl2h = CONTEXTUAL_CONFIG.REMINDER_TTL['2h'];
   const canSend2h = !appointment.reminder2hSentAt &&
-                    timeUntilAppointment <= (win2h.before + gracePeriod) &&
-                    timeUntilAppointment >= (win2h.after - gracePeriod) &&
-                    timeUntilAppointment > (win2h.after - ttl2h);
+    timeUntilAppointment <= (win2h.before + gracePeriod) &&
+    timeUntilAppointment >= (win2h.after - gracePeriod) &&
+    timeUntilAppointment > (win2h.after - ttl2h);
 
   if (canSend2h) needed.push({ type: '2h', timestampField: 'reminder2hSentAt', priority: 2 });
 
@@ -96,19 +101,19 @@ async function sendContextualReminder(businessId, appointment, reminderType, use
   if (!appointment || !appointment.Service || !appointment.Business) {
     throw new Error('Appointment lacks necessary relations (Service/Business)');
   }
-  
+
   const { generateConfirmedReminder24h, generateUnconfirmedReminder24h,
-          generateConfirmedReminder12h, generateUnconfirmedReminder12h,
-          generateConfirmedReminder2h, generateUnconfirmedReminder2h,
-          generateReminder1h } = require('../../reminder/message.generators');
-  
-  const timeStr = new Date(appointment.startTime).toLocaleTimeString('es-CO', { 
-    timeStyle: 'short', timeZone: 'America/Bogota' 
+    generateConfirmedReminder12h, generateUnconfirmedReminder12h,
+    generateConfirmedReminder2h, generateUnconfirmedReminder2h,
+    generateReminder1h } = require('../../reminder/message.generators');
+
+  const timeStr = new Date(appointment.startTime).toLocaleTimeString('es-CO', {
+    timeStyle: 'short', timeZone: 'America/Bogota'
   });
-  
+
   let message;
   const isConfirmed = appointment.status === 'confirmed' || appointment.confirmed;
-  
+
   if (useReducedMessage) {
     const clientName = appointment.clientName || 'Cliente';
     const serviceName = appointment.Service?.name || 'su cita';
@@ -133,7 +138,7 @@ async function sendContextualReminder(businessId, appointment, reminderType, use
         throw new Error(`Tipo de recordatorio desconocido: ${reminderType}`);
     }
   }
-  
+
   await whatsappService.sendMessageDirect(businessId, appointment.clientPhone, message);
 }
 
@@ -164,7 +169,7 @@ async function runContextualScheduler() {
 
       const now = new Date();
       const lookaheadLimit = new Date(now.getTime() + 30 * 60 * 60 * 1000); // Buscar hasta 30 horas adelante
-      
+
       const appointments = await Appointment.findAll({
         where: {
           businessId: business.id,
@@ -179,14 +184,14 @@ async function runContextualScheduler() {
         schedulerMetrics.lockContentionTotal++;
         const lockKey = `appointment:${appointment.id}:reminder`;
         const lockInfo = await acquireLockWithRetry(lockKey, 30000);
-        
+
         if (!lockInfo.acquired) {
           schedulerMetrics.lockContentionCount++;
           continue;
         }
 
         const heartbeat = createLockHeartbeat(lockKey, lockInfo.token, 10000, 30000);
-        
+
         try {
           const freshAppointment = await Appointment.findByPk(appointment.id, {
             include: [{ model: Service }, { model: Business }]
@@ -232,7 +237,7 @@ async function runContextualScheduler() {
                 const lastAttempt = claimedEvent.updatedAt || claimedEvent.createdAt;
                 let timeSinceLastAttempt = Date.now() - new Date(lastAttempt).getTime();
                 if (timeSinceLastAttempt < 0) timeSinceLastAttempt = 0;
-                
+
                 if (timeSinceLastAttempt < backoffMs) {
                   await AppointmentReminderEvent.update({ processingBy: null, processingAt: null }, { where: { id: claimedEvent.id } });
                   continue;
