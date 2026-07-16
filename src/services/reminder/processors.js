@@ -24,7 +24,7 @@ const {
 
 async function processStandardReminder(appt, config, timeLabel) {
   const timeStr = formatTime(appt.startTime);
-  const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
+  const isConfirmed = appt.confirmed === true;
 
   let message, msgType = 'reminder';
   const REMINDER_CONFIG = configModule.REMINDER_CONFIG;
@@ -37,6 +37,13 @@ async function processStandardReminder(appt, config, timeLabel) {
       : generateUnconfirmedReminder2h(appt, timeStr);
     msgType = 'confirmation';
   } else {
+    // Si ya está confirmado, omitir mensajes de 24h y 12h (redundantes)
+    if (config.confirmation && isConfirmed && (config.ms === REMINDER_CONFIG['24h'].ms || config.ms === REMINDER_CONFIG['12h'].ms)) {
+      console.log(`[Reminder${timeLabel.replace(/\s/g, '')}] ⏭️ Omitiendo recordatorio porque la cita ya está confirmada.`);
+      await appt.update({ [config.field]: true });
+      return;
+    }
+
     message = config.ms === REMINDER_CONFIG['24h'].ms ? generateConfirmedReminder24h(appt, timeStr)
       : config.ms === REMINDER_CONFIG['12h'].ms ? generateConfirmedReminder12h(appt, getRelativeDayText(new Date(appt.startTime), timeStr))
       : config.ms === REMINDER_CONFIG['2h'].ms ? generateConfirmedReminder2h(appt, timeStr)
@@ -62,33 +69,10 @@ async function processStandardReminder(appt, config, timeLabel) {
 }
 
 async function processGenericReminder(appt, timeLabel, fieldToUpdate) {
-  const timeStr = formatTime(appt.startTime);
-  const startTimeStr = formatDateTime(appt.startTime);
-  const isConfirmed = appt.confirmed === true || appt.status === 'confirmed';
-  const is2h = timeLabel === '2 horas';
-  const is1h = timeLabel === '1 hora';
-  const is15mOr30mOr1h = timeLabel === '15 minutos' || timeLabel === '30 minutos' || timeLabel === '1 hora';
-
-  if (is1h || is2h) {
-    await sendClientEmail(appt, is2h && !isConfirmed);
-  }
-
-  const message = generateGenericReminder(appt, timeLabel, timeStr, is2h, isConfirmed);
-  const msgType = (is2h && !isConfirmed) ? 'confirmation' : 'reminder';
-  await scheduleWhatsAppMessage(appt, message, msgType);
-
-  await sendClientPush(appt, `⏰ Recordatorio: ${timeLabel}`,
-    `Tu cita para ${appt.Service?.name || 'Servicio'} en ${appt.Business?.name || 'Negocio'} es a las ${startTimeStr}.`,
-    'appointment_reminder');
-
-  // Solo enviar push al empleado para 2h (para 15m/30m/1h se envía desde core.js)
-  if (!is15mOr30mOr1h) {
-    await sendEmployeePush(appt, `⏰ Recordatorio: ${timeLabel}`,
-      `Cita con ${appt.clientName} (${appt.Service?.name || 'Servicio'}) a las ${startTimeStr}.`);
-  }
-
+  // Para 1h y 30m, el cliente no recibe notificaciones (solo confirmación/recordatorio de 2h/12h/24h).
+  // El push al empleado ya se envió desde core.js antes de llamar a esta función.
   await appt.update({ [fieldToUpdate]: true });
-  console.log(`[Reminder] ✅ Recordatorio de ${timeLabel} enviado para cita ${appt.id}`);
+  console.log(`[Reminder] ✅ Registro de ${timeLabel} actualizado para cita ${appt.id} (Sin notificaciones al cliente)`);
 }
 
 async function processReferenceMessage(appt) {

@@ -77,6 +77,7 @@ async function getByBusiness(req, res) {
         id: a.id,
         clientName: a.clientName || 'Cliente Anónimo',
         rating: a.rating,
+        comment: a.ratingComment || '',
         date: a.updatedAt
       }));
 

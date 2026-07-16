@@ -226,8 +226,7 @@ function determineAction(matchedAppointments, text) {
     if (isRatingNumber) {
       // PRIORIDAD 1 para calificaciones: citas en awaiting_rating
       const ratingAppt = matchedAppointments.find(a =>
-        a.messageFlowStatus === 'awaiting_rating' ||
-        (a.status === 'done' && !a.rating)
+        a.messageFlowStatus === 'awaiting_rating'
       );
       if (ratingAppt) {
         matchedAppt = ratingAppt;
@@ -371,14 +370,33 @@ async function handleCancellation(appt, msg) {
 /**
  * Maneja calificación
  */
-async function handleRating(appt, cleanText) {
+async function handleRating(appt, cleanText, phone, msg) {
   try {
+    const rawText = (msg?.body || '').trim();
+    let commentText = '';
+    const ratingStr = String(cleanText);
+
+    if (rawText.toLowerCase().startsWith(ratingStr.toLowerCase())) {
+      let rest = rawText.slice(ratingStr.length).trim();
+      rest = rest.replace(/^[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜíóíó]+/, '').trim();
+      if (rest.length > 0) {
+        commentText = rest;
+      }
+    } else {
+      let rest = rawText.replace(ratingStr, '').trim();
+      rest = rest.replace(/^[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜíóíó]+/, '').trim();
+      if (rest.length > 0) {
+        commentText = rest;
+      }
+    }
+
     // Emitir actualización en tiempo real
     emitAppointmentUpdate(appt.toJSON(), 'updated');
 
     // Actualizar la cita
     await appt.update({
       rating: parseInt(cleanText),
+      ratingComment: commentText || null,
       ratingSubmittedAt: new Date(),
       messageFlowStatus: 'rated'
     });
@@ -390,10 +408,10 @@ async function handleRating(appt, cleanText) {
         appointmentId: appt.id,
         clientName: appt.clientName || 'Cliente de WhatsApp',
         rating: parseInt(cleanText),
-        comment: 'Calificación vía WhatsApp',
+        comment: commentText || '',
         isApproved: true
       });
-      console.log(`[Evolution Message] ⭐ Reseña creada en BusinessReview para cita ${appt.id.substring(0,8)}`);
+      console.log(`[Evolution Message] ⭐ Reseña creada en BusinessReview para cita ${appt.id.substring(0, 8)} con comentario: "${commentText}"`);
     } catch (reviewErr) {
       console.error('[Evolution Message] ⚠️ Error creando BusinessReview:', reviewErr.message);
     }
@@ -401,9 +419,9 @@ async function handleRating(appt, cleanText) {
     // Enviar agradecimiento (USAR EL TELÉFONO DE LA CITA, NO EL REMITENTE DEL WEBHOOK)
     const thankYouMsg = `✅ ¡Gracias por tu calificación de ${cleanText}⭐! Nos ayuda mucho a mejorar. ¡Que tengas un excelente día! 😊`;
     await sendMessageDirect(appt.businessId, appt.clientPhone, thankYouMsg);
-    
+
     console.log(`[Evolution Message] ✅ Cita ${appt.id} calificada con ${cleanText}⭐ por ${appt.clientName}`);
-    
+
     // Notificar por socket
     if (global.io) {
       global.io.to(`business:${appt.businessId}`).emit('appointment_updated', appt);
@@ -604,8 +622,7 @@ async function handleClientResponse(businessId, client, msg) {
   let wasProcessed = false;
 
   // Prioridad: si está esperando calificación, procesar calificación primero
-  const canRate = (matchedAppt.messageFlowStatus === 'awaiting_rating') ||
-    (matchedAppt.status === 'done' && !matchedAppt.rating);
+  const canRate = (matchedAppt.messageFlowStatus === 'awaiting_rating');
 
   if (canRate && isRatingNumber) {
     await handleRating(matchedAppt, number, cleanIncomingPhone, msg);
@@ -655,8 +672,7 @@ async function processAppointmentResponse(appt, text, msg, phone) {
     }
   }
 
-  const canRate = (appt.messageFlowStatus === 'awaiting_rating') ||
-    (appt.status === 'done' && !appt.rating);
+  const canRate = (appt.messageFlowStatus === 'awaiting_rating');
 
   if (canRate) {
     const rating = extractRating(text);

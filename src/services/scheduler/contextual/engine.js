@@ -23,7 +23,7 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
 
   if (appointment.status === 'cancelled') return [];
 
-  const isConfirmed = appointment.status === 'confirmed' || appointment.confirmed;
+  const isConfirmed = appointment.confirmed === true;
   const needed = [];
   const dropped = [];
 
@@ -71,15 +71,15 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
 
   if (canSend2h) needed.push({ type: '2h', timestampField: 'reminder2hSentAt', priority: 2 });
 
-  // Recordatorio 1h (Solo recordatorio, sin confirmación)
-  const win1h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['1h'];
-  const ttl1h = CONTEXTUAL_CONFIG.REMINDER_TTL['1h'];
-  const canSend1h = !appointment.reminderSentAt &&
-                    timeUntilAppointment <= (win1h.before + gracePeriod) &&
-                    timeUntilAppointment >= (win1h.after - gracePeriod) &&
-                    timeUntilAppointment > (win1h.after - ttl1h);
+  // Recordatorio 1h (Solo recordatorio, sin confirmación) - DESHABILITADO
+  // const win1h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['1h'];
+  // const ttl1h = CONTEXTUAL_CONFIG.REMINDER_TTL['1h'];
+  // const canSend1h = !appointment.reminderSentAt &&
+  //                   timeUntilAppointment <= (win1h.before + gracePeriod) &&
+  //                   timeUntilAppointment >= (win1h.after - gracePeriod) &&
+  //                   timeUntilAppointment > (win1h.after - ttl1h);
 
-  if (canSend1h) needed.push({ type: '1h', timestampField: 'reminderSentAt', priority: 1 });
+  // if (canSend1h) needed.push({ type: '1h', timestampField: 'reminderSentAt', priority: 1 });
 
   if (dropped.length > 0) {
     schedulerMetrics.droppedMessages += dropped.length;
