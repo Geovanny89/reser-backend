@@ -36,16 +36,15 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const win24h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['24h'];
   const ttl24h = CONTEXTUAL_CONFIG.REMINDER_TTL['24h'];
   const canSend24h = !isConfirmed &&
-    !appointment.reminder24hSentAt &&
+    !appointment.reminder24hSent &&
     timeUntilAppointment <= (win24h.before + gracePeriod) &&
-    timeUntilAppointment >= (win24h.after - gracePeriod) &&
     timeUntilAppointment > (win24h.after - ttl24h);
 
   if (canSend24h) {
     if (backlogStatus === 'critical' && !isConfirmed) {
       dropped.push({ type: '24h', reason: 'load_shedding' });
     } else {
-      needed.push({ type: '24h', timestampField: 'reminder24hSentAt', priority: 3 });
+      needed.push({ type: '24h', timestampField: 'reminder24hSent', priority: 3 });
     }
   }
 
@@ -53,38 +52,35 @@ function determineNeededReminders(appointment, backlogStatus = 'normal') {
   const win12h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['12h'];
   const ttl12h = CONTEXTUAL_CONFIG.REMINDER_TTL['12h'];
   const canSend12h = !isConfirmed &&
-    !appointment.reminder12hSentAt &&
+    !appointment.reminder12hSent &&
     timeUntilAppointment <= (win12h.before + gracePeriod) &&
-    timeUntilAppointment >= (win12h.after - gracePeriod) &&
     timeUntilAppointment > (win12h.after - ttl12h);
 
   if (canSend12h) {
     if (backlogStatus === 'critical') {
       dropped.push({ type: '12h', reason: 'load_shedding' });
     } else {
-      needed.push({ type: '12h', timestampField: 'reminder12hSentAt', priority: 3 });
+      needed.push({ type: '12h', timestampField: 'reminder12hSent', priority: 3 });
     }
   }
 
   // Recordatorio 2h (Solo recordatorio)
   const win2h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['2h'];
   const ttl2h = CONTEXTUAL_CONFIG.REMINDER_TTL['2h'];
-  const canSend2h = !appointment.reminder2hSentAt &&
+  const canSend2h = !appointment.reminder2hSent &&
     timeUntilAppointment <= (win2h.before + gracePeriod) &&
-    timeUntilAppointment >= (win2h.after - gracePeriod) &&
     timeUntilAppointment > (win2h.after - ttl2h);
 
-  if (canSend2h) needed.push({ type: '2h', timestampField: 'reminder2hSentAt', priority: 2 });
+  if (canSend2h) needed.push({ type: '2h', timestampField: 'reminder2hSent', priority: 2 });
 
   // Recordatorio 1h (Solo recordatorio, sin confirmación) - DESHABILITADO
   // const win1h = CONTEXTUAL_CONFIG.REMINDER_WINDOWS['1h'];
   // const ttl1h = CONTEXTUAL_CONFIG.REMINDER_TTL['1h'];
-  // const canSend1h = !appointment.reminderSentAt &&
+  // const canSend1h = !appointment.reminderSent &&
   //                   timeUntilAppointment <= (win1h.before + gracePeriod) &&
-  //                   timeUntilAppointment >= (win1h.after - gracePeriod) &&
   //                   timeUntilAppointment > (win1h.after - ttl1h);
 
-  // if (canSend1h) needed.push({ type: '1h', timestampField: 'reminderSentAt', priority: 1 });
+  // if (canSend1h) needed.push({ type: '1h', timestampField: 'reminderSent', priority: 1 });
 
   if (dropped.length > 0) {
     schedulerMetrics.droppedMessages += dropped.length;
@@ -272,7 +268,7 @@ async function runContextualScheduler() {
                 await sendContextualReminder(business.id, freshAppointment, reminder.type, isCritical && delay > CONTEXTUAL_CONFIG.CRITICAL_REMINDER_MAX_DELAY_MS);
                 const sendLatency = Date.now() - sendStartTime;
                 await AppointmentReminderEvent.update({ status: 'sent', sentAt: new Date(), processingBy: null, processingAt: null }, { where: { id: eventId } });
-                const updateData = { [reminder.timestampField]: new Date() };
+                const updateData = { [reminder.timestampField]: true };
                 if (!freshAppointment.confirmed && ['24h', '12h', '2h'].includes(reminder.type)) {
                   updateData.messageFlowStatus = 'awaiting_confirmation';
                 }
