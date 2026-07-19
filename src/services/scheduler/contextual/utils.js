@@ -23,9 +23,11 @@ function getPersistentJitter(appointmentId, windowSizeMs) {
  * Calcula el momento óptimo para enviar un mensaje basado en la cita
  */
 function calculateOptimalSendTime(appointment, messageType) {
-  const now = Date.now();
+  const now = new Date();
+  const nowBogota = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' })).getTime();
   const appointmentTime = new Date(appointment.startTime).getTime();
-  const timeUntilAppointment = appointmentTime - now;
+  const appointmentBogota = new Date(new Date(appointment.startTime).toLocaleString('en-US', { timeZone: 'America/Bogota' })).getTime();
+  const timeUntilAppointment = appointmentBogota - nowBogota;
 
   if (timeUntilAppointment < 0) return null;
 
@@ -35,9 +37,9 @@ function calculateOptimalSendTime(appointment, messageType) {
   const windowWidth = window.before - window.after;
   const jitter = getPersistentJitter(appointment.id, windowWidth);
   const targetTimeFromAppointment = window.after + jitter;
-  const targetAbsoluteTime = appointmentTime - targetTimeFromAppointment;
+  const targetAbsoluteTime = appointmentBogota - targetTimeFromAppointment;
 
-  if (now < targetAbsoluteTime) return targetAbsoluteTime - now;
+  if (nowBogota < targetAbsoluteTime) return targetAbsoluteTime - nowBogota;
 
   if (timeUntilAppointment <= window.before && timeUntilAppointment >= window.after) {
     return Math.random() * 5 * 60 * 1000;
@@ -52,16 +54,16 @@ function calculateOptimalSendTime(appointment, messageType) {
 function getRelativeDayText(dateStr) {
   const date = new Date(dateStr);
   const now = new Date();
-  
+
   const options = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' };
   const dateBogota = date.toLocaleDateString('es-CO', options);
   const nowBogota = now.toLocaleDateString('es-CO', options);
-  
+
   const tomorrow = new Date(now);
   // Add 24 hours to 'now' to get tomorrow safely, then get its Bogota string
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowBogota = tomorrow.toLocaleDateString('es-CO', options);
-  
+
   if (dateBogota === nowBogota) {
     return 'hoy';
   } else if (dateBogota === tomorrowBogota) {

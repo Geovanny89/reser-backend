@@ -46,7 +46,12 @@ function adjustToBusinessHours(date) {
  */
 function getColombiaTimeISO() {
   const now = new Date();
-  return new Date(now.getTime() - COLOMBIA_OFFSET_MS).toISOString().replace('Z', '-05:00');
+  // Convertir la fecha actual a zona horaria de Colombia
+  const options = { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+  const dateParts = now.toLocaleString('en-US', options).replace(',', '').split(/[\/:\s]/);
+  const [month, day, year, hour, minute, second] = dateParts.map(Number);
+  // Crear fecha con offset de Colombia explícito
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}-05:00`;
 }
 
 /**

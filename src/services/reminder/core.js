@@ -16,6 +16,7 @@ const {
   processTechnicianReminder,
 } = require('./processors');
 const { sendEmployeePush } = require('./notifications');
+const { getNowInColombia } = require('./time.utils');
 
 let intervalId = null;
 const processingAppts = new Set();
@@ -25,7 +26,8 @@ const processingAppts = new Set();
  */
 async function sendReminders() {
   try {
-    const now = Date.now();
+    const nowColombia = getNowInColombia();
+    const now = nowColombia.getTime();
     processingAppts.clear();
 
     // 1. Recordatorios Estándar (24h, 12h, 2h) - Ventana de +/- 10 min

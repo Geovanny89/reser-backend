@@ -11,15 +11,14 @@ async function scheduleWhatsAppMessage(appt, message, type = 'reminder') {
   if (!appt.clientPhone || appt.Business?.hasFieldTechnicians) return false;
 
   try {
-    // Compute current time in Colombia (UTC‑5) to avoid timezone offset issues
-    const colombiaNow = new Date(Date.now() + COLOMBIA_OFFSET_MS);
+    // Usar fecha actual normal, el scheduler se encarga de la zona horaria
     const scheduled = await scheduleMessage({
       businessId: appt.businessId,
       appointmentId: appt.id,
       phone: appt.clientPhone,
       message,
       type,
-      scheduledAt: colombiaNow,
+      scheduledAt: new Date(),
     });
     console.log(`[Reminder] ✅ Mensaje ${type} programado (ID: ${scheduled.id.slice(0, 8)}) para cita ${appt.id.slice(0, 8)}`);
     return true;

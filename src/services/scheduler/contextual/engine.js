@@ -16,9 +16,10 @@ const { acquireLockWithRetry, claimEventAtomically } = require('./locking');
  * Determina qué recordatorios necesita una cita
  */
 function determineNeededReminders(appointment, backlogStatus = 'normal') {
-  const now = Date.now();
-  const appointmentTime = new Date(appointment.startTime).getTime();
-  const timeUntilAppointment = appointmentTime - now;
+  const now = new Date();
+  const nowBogota = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' })).getTime();
+  const appointmentTimeBogota = new Date(new Date(appointment.startTime).toLocaleString('en-US', { timeZone: 'America/Bogota' })).getTime();
+  const timeUntilAppointment = appointmentTimeBogota - nowBogota;
   const gracePeriod = CONTEXTUAL_CONFIG.GRACE_PERIOD_MS;
   const timeSinceCreation = now - new Date(appointment.createdAt).getTime();
 
