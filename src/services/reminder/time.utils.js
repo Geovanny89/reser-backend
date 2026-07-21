@@ -22,16 +22,29 @@ function getRelativeDayText(date, timeStr) {
   const nowComponents = toColombiaDateComponents(new Date());
   const appointmentComponents = toColombiaDateComponents(date);
 
-  // Construir fechas en Colombia sin UTC para comparar solo la fecha
-  const nowDate = new Date(nowComponents.year, nowComponents.month - 1, nowComponents.day);
-  const appointmentDate = new Date(appointmentComponents.year, appointmentComponents.month - 1, appointmentComponents.day);
-  const tomorrowDate = new Date(nowDate);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-
-  if (appointmentDate.getTime() === nowDate.getTime()) {
+  // Comparar directamente los componentes, sin usar Date (evita errores de zona horaria)
+  if (
+    appointmentComponents.year === nowComponents.year &&
+    appointmentComponents.month === nowComponents.month &&
+    appointmentComponents.day === nowComponents.day
+  ) {
     return `hoy a las *${timeStr}*`;
   }
-  if (appointmentDate.getTime() === tomorrowDate.getTime()) {
+
+  // Calcular mañana manualmente usando componentes
+  const nowDate = new Date(nowComponents.year, nowComponents.month - 1, nowComponents.day);
+  nowDate.setDate(nowDate.getDate() + 1);
+  const tomorrowComponents = {
+    year: nowDate.getFullYear(),
+    month: nowDate.getMonth() + 1,
+    day: nowDate.getDate()
+  };
+
+  if (
+    appointmentComponents.year === tomorrowComponents.year &&
+    appointmentComponents.month === tomorrowComponents.month &&
+    appointmentComponents.day === tomorrowComponents.day
+  ) {
     return `mañana a las *${timeStr}*`;
   }
   
