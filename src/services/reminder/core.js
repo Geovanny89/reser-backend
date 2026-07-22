@@ -16,8 +16,6 @@ const {
   processTechnicianReminder,
 } = require('./processors');
 const { sendEmployeePush } = require('./notifications');
-const { getNowInColombia } = require('./time.utils');
-
 let intervalId = null;
 const processingAppts = new Set();
 
@@ -26,7 +24,8 @@ const processingAppts = new Set();
  */
 async function sendReminders() {
   try {
-    const now = getNowInColombia().getTime(); // Usar tiempo de Colombia en milisegundos
+    const colombiaOffsetMs = 5 * 60 * 60 * 1000; // Colombia es UTC-5: restamos 5 horas
+    const now = Date.now() - colombiaOffsetMs;
     processingAppts.clear();
 
     // 1. Recordatorios Estándar (24h, 12h, 2h) - Ventana de +/- 10 min
