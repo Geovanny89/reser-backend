@@ -142,7 +142,8 @@ exports.getFinancialReport = async (req, res) => {
       include: [
         {
           model: require('../models').Employee,
-          attributes: ['id', 'commissionPct']
+          attributes: ['id', 'commissionPct'],
+          include: [{ model: require('../models').User, attributes: ['name'] }]
         },
         {
           model: require('../models').Service,
@@ -152,10 +153,39 @@ exports.getFinancialReport = async (req, res) => {
           model: require('../models').AppointmentEmployee,
           as: 'AdditionalEmployees',
           attributes: ['id', 'employeeId'],
-          include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
+          include: [{
+            model: require('../models').Employee,
+            attributes: ['id', 'commissionPct'],
+            include: [{ model: require('../models').User, attributes: ['name'] }]
+          }]
         }
       ]
     });
+
+    // Mapa de empleados para resolver comisión de extras aunque falte el join
+    const empMap = new Map();
+    appointments.forEach(apt => {
+      if (apt.Employee) empMap.set(String(apt.Employee.id), apt.Employee);
+      (apt.AdditionalEmployees || []).forEach(ae => {
+        if (ae.Employee) empMap.set(String(ae.employeeId), ae.Employee);
+      });
+    });
+    const missingIds = new Set();
+    appointments.forEach(apt => {
+      (Array.isArray(apt.extraServices) ? apt.extraServices : []).forEach(es => {
+        if (es?.employeeId && !empMap.has(String(es.employeeId))) {
+          missingIds.add(String(es.employeeId));
+        }
+      });
+    });
+    if (missingIds.size > 0) {
+      const found = await require('../models').Employee.findAll({
+        where: { id: { [Op.in]: [...missingIds] }, businessId },
+        attributes: ['id', 'commissionPct'],
+        include: [{ model: require('../models').User, attributes: ['name'] }]
+      });
+      found.forEach(e => empMap.set(String(e.id), e));
+    }
 
     // Helper: Distribuye ingresos de una cita entre sus empleados
     // (misma lógica que splitRevenueByEmployee en el frontend y commissions.js)
@@ -185,12 +215,10 @@ exports.getFinancialReport = async (req, res) => {
         let empName = 'Sin asignar';
         let empComm = 0;
         if (empId) {
-          const inAdditional = apt.AdditionalEmployees?.find?.(
-            (ae) => String(ae.employeeId) === String(empId)
-          );
-          if (inAdditional?.Employee) {
-            empName = inAdditional.Employee.User?.name || inAdditional.Employee.name || empName;
-            empComm = safeFloat(inAdditional.Employee.commissionPct);
+          const emp = empMap.get(String(empId));
+          if (emp) {
+            empName = emp.User?.name || emp.name || empName;
+            empComm = safeFloat(emp.commissionPct);
           } else if (String(empId) === String(principalId)) {
             empName = principalName;
             empComm = principalCommissionPct;

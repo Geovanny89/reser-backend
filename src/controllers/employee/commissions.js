@@ -402,6 +402,37 @@ async function getCommissionReport(req, res) {
       ]
     });
 
+    // Mapa de empleados (principal + adicionales + extras por employeeId en JSON)
+    // para resolver commissionPct/nombre aunque falte el join AppointmentEmployees
+    const empMap = new Map();
+    appointments.forEach(a => {
+      if (a.Employee) empMap.set(String(a.Employee.id), a.Employee);
+      (a.AdditionalEmployees || []).forEach(ae => {
+        if (ae.Employee) empMap.set(String(ae.employeeId), ae.Employee);
+      });
+    });
+    const missingEmpIds = new Set();
+    appointments.forEach(a => {
+      (Array.isArray(a.extraServices) ? a.extraServices : []).forEach(es => {
+        if (es?.employeeId && !empMap.has(String(es.employeeId))) {
+          missingEmpIds.add(String(es.employeeId));
+        }
+      });
+    });
+    if (missingEmpIds.size > 0) {
+      const found = await Employee.findAll({
+        where: { id: { [Op.in]: [...missingEmpIds] }, businessId },
+        attributes: ['id', 'commissionPct'],
+        include: [{ model: User, attributes: ['name'] }]
+      });
+      found.forEach(e => empMap.set(String(e.id), e));
+    }
+
+    const resolveEmployee = (empId) => {
+      if (!empId) return null;
+      return empMap.get(String(empId)) || null;
+    };
+
     // Helper: Repartir ingresos y comisiones por empleado en la cita
     const splitByEmployee = (appt) => {
       // =========================
@@ -417,11 +448,6 @@ async function getCommissionReport(req, res) {
 
       const hasFinal = finalPriceVal > 0;
 
-      // El "base" de la cita para desglosar:
-      // - Si hay finalPrice, el total efectivo es finalPrice (ya incluye adicional - descuento)
-      // - Si no, es base + adicional (luego se aplica descuento separadamente)
-      const grossCitaTotal = hasFinal ? finalPriceVal : (baseVal + additionalVal);
-
       const parts = []; // {employeeId, name, gross, commissionPct, isPrincipal, services: []}
 
       // =========================
@@ -436,13 +462,14 @@ async function getCommissionReport(req, res) {
         let empName = 'Sin asignar';
         let empComm = 0;
         if (empId) {
-          const inAdditional = appt.AdditionalEmployees?.find?.(
-            (ae) => String(ae.employeeId) === empId
-          );
-          if (inAdditional?.Employee?.User?.name) empName = inAdditional.Employee.User.name;
-          else if (empId === String(appt.employeeId)) empName = appt.Employee?.User?.name || 'Empleado eliminado';
-          if (inAdditional?.Employee?.commissionPct !== undefined) empComm = safeFloat(inAdditional.Employee.commissionPct);
-          else if (empId === String(appt.employeeId)) empComm = safeFloat(appt.Employee?.commissionPct);
+          const emp = resolveEmployee(empId);
+          if (emp) {
+            empName = emp.User?.name || empName;
+            empComm = safeFloat(emp.commissionPct);
+          } else if (empId === String(appt.employeeId)) {
+            empName = appt.Employee?.User?.name || 'Empleado eliminado';
+            empComm = safeFloat(appt.Employee?.commissionPct);
+          }
         }
         extraParts.push({
           employeeId: empId || `extra-${es.serviceId || es.name}`,
@@ -455,15 +482,12 @@ async function getCommissionReport(req, res) {
       });
 
       // =========================
-      // 2. Empleado principal: total de la cita - suma extras (ya incluyen descuento si hubo via finalPrice)
-      //    Así Maiya recibe el valor real del corte, no todo el total.
+      // 2. Empleado principal: total de la cita - suma extras
       // =========================
       let principalGross = 0;
       if (hasFinal) {
-        // Con finalPrice: el total de la cita ya está ajustado, el principal se queda con (total - extras)
         principalGross = Math.max(0, finalPriceVal - sumExtraPrices);
       } else {
-        // Sin finalPrice: principal = base + adicional - extras (luego se aplica descuento al final)
         principalGross = Math.max(0, baseVal + additionalVal - sumExtraPrices);
       }
       if (appt.employeeId) {
@@ -478,20 +502,16 @@ async function getCommissionReport(req, res) {
       }
       parts.push(...extraParts);
 
-      // Total gross para calcular reparto de descuento SOLO cuando NO hay finalPrice
       const totalGross = parts.reduce((s, p) => s + p.gross, 0);
 
       // =========================
-      // 3. Aplicar descuento (solo cuando NO hay finalPrice, pues finalPrice ya lo dedujo)
-      //    y calcular comisión por split
+      // 3. Descuento (solo sin finalPrice) + comisión por split
       // =========================
       let totalCommissionThisApt = 0;
       const supplies = safeFloat(appt.suppliesCost);
-      // totalPrice = precio final de la cita (lo que cobró el cliente)
       const totalPrice = hasFinal ? finalPriceVal : (baseVal + additionalVal - discount);
 
       const splits = parts.map((p, idx) => {
-        // Descuento: solo aplicar cuando NO hay finalPrice (ya que finalPrice ya lo incluye)
         let discountShare = 0;
         if (!hasFinal && discount > 0 && totalGross > 0) {
           discountShare = (p.gross / totalGross) * discount;
@@ -505,7 +525,6 @@ async function getCommissionReport(req, res) {
         }
         const revenue = Math.max(0, p.gross - discountShare);
 
-        // Insumos proporcionales
         const suppliesShare = totalPrice > 0 ? (revenue / totalPrice) * supplies : 0;
         const commissionable = Math.max(0, revenue - suppliesShare);
 
@@ -517,7 +536,6 @@ async function getCommissionReport(req, res) {
           appt.employeeEarns !== undefined &&
           !isNaN(parseFloat(appt.employeeEarns))
         ) {
-          // override manual: solo aplica la ganancia manual al principal
           commission = safeFloat(appt.employeeEarns);
         } else {
           commission = hasCommission && p.commissionPct > 0
@@ -537,7 +555,6 @@ async function getCommissionReport(req, res) {
         };
       });
 
-      // Suma comisiones + negocio = totalPrice (debe cumplirse)
       const ownerEarns = Math.max(0, totalPrice - totalCommissionThisApt);
 
       return {
@@ -564,7 +581,9 @@ async function getCommissionReport(req, res) {
         extraServices: Array.isArray(appt.extraServices) ? appt.extraServices : [],
         client:        appt.clientName,
         price:         totalPrice,
-        basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service?.price || 0),
+        basePrice:     hasFinalPrice
+          ? Math.max(0, totalPrice - (Array.isArray(appt.extraServices) ? appt.extraServices.reduce((s, e) => s + safeFloat(e.price), 0) : 0))
+          : parseFloat(appt.Service?.price || 0),
         additional:    parseFloat(appt.additionalAmount || 0),
         supplies:      supplies,
         employee:      appt.Employee?.User?.name || 'Empleado eliminado',
@@ -578,30 +597,21 @@ async function getCommissionReport(req, res) {
     });
 
     // =========================
-    // NUEVO: Arreglo de items POR EMPLEADO / POR CITA
-    // (para agrupar correctamente en el frontend cada profesional con sus ganancias)
+    // Items POR EMPLEADO / POR CITA
+    // ownerEarns por fila = revenue − commission (no reparto proporcional del sobrante)
     // =========================
     const appointmentsByEmployee = [];
     appointments.forEach(appt => {
-      const { splits, totalPrice, supplies, ownerEarns: ownerTotal } = splitByEmployee(appt);
+      const { splits, totalPrice, supplies } = splitByEmployee(appt);
       const hasFinalPrice = appt.finalPrice !== null && appt.finalPrice !== undefined && !isNaN(parseFloat(appt.finalPrice));
-      const totalRevenueSplits = splits.reduce((s, p) => s + p.revenue, 0);
+      const principalServicePrice = hasFinalPrice
+        ? Math.max(0, totalPrice - (Array.isArray(appt.extraServices) ? appt.extraServices.reduce((s, e) => s + safeFloat(e.price), 0) : 0))
+        : parseFloat(appt.Service?.price || 0);
 
-      // Repartir ownerEarns (ganancia del negocio) PROPORCIONALMENTE entre los splits
-      // según el revenue de cada empleado vs el total de la cita.
-      // Así todas las filas muestran un valor representativo y no quedan en $0.
-      let accumulatedOwner = 0;
-      splits.forEach((split, idx) => {
-        let ownerShare = 0;
-        if (ownerTotal > 0 && totalRevenueSplits > 0) {
-          ownerShare = (split.revenue / totalRevenueSplits) * ownerTotal;
-          // Último split recibe el residuo para evitar centavos perdidos por redondeo
-          if (idx === splits.length - 1) {
-            ownerShare = ownerTotal - accumulatedOwner;
-          } else {
-            accumulatedOwner += ownerShare;
-          }
-        }
+      splits.forEach((split) => {
+        const suppliesShare = totalPrice > 0 ? (split.revenue / totalPrice) * supplies : 0;
+        // Negocio gana = lo facturado por este tramo − lo que gana el profesional
+        const ownerShare = Math.max(0, split.revenue - split.commission);
 
         appointmentsByEmployee.push({
           appointmentId: appt.id,
@@ -609,22 +619,18 @@ async function getCommissionReport(req, res) {
           service:       appt.Service?.name || 'Servicio eliminado',
           extraServices: Array.isArray(appt.extraServices) ? appt.extraServices : [],
           client:        appt.clientName,
-          // Precio TOTAL de la cita (para referencia en tablas)
-          price:         split.isPrincipal ? totalPrice : 0,
-          // Precio REAL que corresponde a ESTE empleado (no toda la cita)
+          price:         split.revenue,
           employeeShare: split.revenue,
-          basePrice:     hasFinalPrice ? parseFloat(appt.finalPrice) : parseFloat(appt.Service?.price || 0),
-          additional:    parseFloat(appt.additionalAmount || 0),
+          basePrice:     split.isPrincipal ? principalServicePrice : split.revenue,
+          additional:    split.isPrincipal ? parseFloat(appt.additionalAmount || 0) : 0,
           supplies:      split.isPrincipal ? supplies : 0,
-          suppliesShare: totalPrice > 0 ? (split.revenue / totalPrice) * supplies : 0,
+          suppliesShare,
           employee:      split.employee,
           employeeId:    split.employeeId,
           isPrincipal:   split.isPrincipal,
           splitServices: split.services,
           commissionPct: split.commissionPct,
-          // Lo que GANA este empleado en esta cita (comisión)
           employeeEarns: split.commission.toFixed(2),
-          // Lo que GANA el negocio PROPORCIONALMENTE a lo facturado por este empleado
           ownerEarns:    parseFloat(ownerShare.toFixed(2)).toFixed(2),
           hasCommission: appt.Service?.hasEmployeeCommission !== false,
           paymentMethod: appt.paymentMethod || 'cash',
