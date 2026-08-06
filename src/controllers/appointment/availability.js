@@ -2,7 +2,7 @@
  * Lógica de disponibilidad de horarios
  */
 
-const { Appointment, Service, Employee, Business, Schedule, SpecialSchedule, EmployeeVacation, Promotion, Op, sequelize } = require('../../models');
+const { Appointment, Service, Employee, Business, Schedule, SpecialSchedule, EmployeeVacation, Promotion, AppointmentEmployee, Op, sequelize } = require('../../models');
 const { colombiaDateFromString, getDayOfWeekColombia, COLOMBIA_OFFSET_MS, getNowColombia, getTodayStringColombia } = require('./utils');
 const fs = require('fs');
 const path = require('path');
@@ -13,11 +13,26 @@ const debugLog = (msg) => {
   fs.appendFileSync(logFile, `[${timestamp}] ${msg}\n`);
 };
 
+/**
+ * True si el empleado es principal, está en AppointmentEmployees,
+ * o aparece en extraServices[].employeeId (cubre citas antiguas sin join).
+ */
+function appointmentInvolvesEmployee(appt, employeeId) {
+  const empId = String(employeeId);
+  if (String(appt.employeeId) === empId) return true;
+  if (Array.isArray(appt.AdditionalEmployees) &&
+      appt.AdditionalEmployees.some(ae => String(ae.employeeId) === empId)) {
+    return true;
+  }
+  const extras = Array.isArray(appt.extraServices) ? appt.extraServices : [];
+  return extras.some(es => es?.employeeId != null && String(es.employeeId) === empId);
+}
+
 exports.getAvailability = async (req, res) => {
   try {
-    const { date, employeeId, serviceId, businessId, allowPast, duration } = req.query;
-    debugLog(`[Availability Handler] Incoming: date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}, duration=${duration}`);
-    const result = await getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true', null, duration);
+    const { date, employeeId, serviceId, businessId, allowPast, duration, excludeId } = req.query;
+    debugLog(`[Availability Handler] Incoming: date=${date}, emp=${employeeId}, svc=${serviceId}, bus=${businessId}, past=${allowPast}, duration=${duration}, excludeId=${excludeId}`);
+    const result = await getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true', excludeId || null, duration);
     res.json(result);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -64,7 +79,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
 
   // Verificar si hay horarios especiales para esta fecha
   const [month, dayNum] = date.split('-').slice(1);
-  
+
   const specialSchedules = await SpecialSchedule.findAll({
     where: {
       businessId,
@@ -73,7 +88,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
         {
           [Op.or]: [
             { specificDate: date },
-            { 
+            {
               isRecurringYearly: true,
               [Op.and]: [
                 sequelize.where(
@@ -130,21 +145,21 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
       const regularSchedules = await Schedule.findAll({
         where: { employeeId, dayOfWeek, active: true }
       });
-      
+
       workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
-      
+
       // Combinar con almuerzos y bloqueos regulares
       lunchRanges = [
         ...lunchRanges,
         ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
       ];
-      
+
       blockedRanges = [
         ...blockedRanges,
         ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
       ];
     }
-    
+
     console.log(`[Availability] Usando horarios especiales para ${date}. Work: ${workSchedules.length}, Blocked: ${blockedRanges.length}, Lunch: ${lunchRanges.length}`);
   } else {
     // Usar horarios regulares por día de la semana
@@ -156,10 +171,10 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
       const type = (s.type || 'work').trim().toLowerCase();
       return type === 'work';
     });
-    
+
     lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
     blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
-    
+
     debugLog(`[Availability] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
   }
 
@@ -173,36 +188,194 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   const endOfDay = new Date(`${date}T23:59:59.999-05:00`);
 
   const whereCondition = {
-    employeeId,
     businessId,
     status: { [Op.notIn]: ['cancelled'] },
     startTime: { [Op.lt]: endOfDay },
-    endTime: { [Op.gt]: startOfDay }
+    endTime: { [Op.gt]: startOfDay },
   };
 
   if (excludeId) {
     whereCondition.id = { [Op.ne]: excludeId };
   }
 
-  const existingAppointments = await Appointment.findAll({
-    where: whereCondition
+  // Cargar citas del día y filtrar por involucramiento real del empleado
+  // (principal, AppointmentEmployees, o extraServices[].employeeId)
+  const dayAppointments = await Appointment.findAll({
+    where: whereCondition,
+    include: [
+      { model: AppointmentEmployee, as: 'AdditionalEmployees', required: false }
+    ],
+    subQuery: false
   });
 
-  console.log(`[Availability] Citas existentes (no canceladas): ${existingAppointments.length}`, 
+  const existingAppointments = dayAppointments.filter(a => appointmentInvolvesEmployee(a, employeeId));
+
+  console.log(`[Availability] Citas existentes (no canceladas, como principal o adicional): ${existingAppointments.length}`,
     existingAppointments.map(a => ({ id: a.id, status: a.status, start: a.startTime, end: a.endTime }))
   );
 
+  // Cache de Services para consultar una sola vez por ID (evita N+1)
+  const serviceCache = new Map();
+  const fetchServiceCached = async (svcId) => {
+    if (!svcId) return null;
+    const key = String(svcId);
+    if (serviceCache.has(key)) return serviceCache.get(key);
+    try {
+      const s = await Service.findByPk(svcId, { attributes: ['id', 'durationMin'] });
+      serviceCache.set(key, s || null);
+      return s;
+    } catch (e) {
+      serviceCache.set(key, null);
+      return null;
+    }
+  };
+
+  // Precargar todos los Service necesarios en una sola consulta (más eficiente)
+  try {
+    const uniqueSvcIds = [...new Set(existingAppointments.map(a => a.serviceId).filter(Boolean))];
+    if (uniqueSvcIds.length > 0) {
+      const svcs = await Service.findAll({
+        where: { id: { [Op.in]: uniqueSvcIds } },
+        attributes: ['id', 'durationMin']
+      });
+      svcs.forEach(s => serviceCache.set(String(s.id), s));
+    }
+  } catch (e) {
+    console.error('[Availability] Error precargando servicios, continuaré individual:', e.message);
+  }
+
+  // ========== CALCULAR TRAMOS REALES DEL EMPLEADO EN CADA CITA ==========
+  const employeeBusyRanges = []; // [{start, end, appointmentId}]
+  for (const appt of existingAppointments) {
+    try {
+      const apptStartMs = new Date(appt.startTime).getTime();
+      const extrasRaw = appt.extraServices || [];
+      const extras = Array.isArray(extrasRaw) ? extrasRaw : [];
+
+      // Obtener el servicio de la cita (cache)
+      const apptService = serviceCache.get(String(appt.serviceId)) || null;
+
+      const baseDuration = (() => {
+        const raw1 = apptService?.durationMin;
+        if (raw1 !== undefined && raw1 !== null && !isNaN(parseInt(raw1))) return parseInt(raw1);
+        return null;
+      })();
+
+      const principalEmpId = String(appt.employeeId);
+      const isPrincipal = String(employeeId) === principalEmpId;
+
+      if (baseDuration === null || baseDuration < 0 || isNaN(baseDuration)) {
+        // FALLBACK por falta de datos del servicio.
+        // - Si es el profesional PRINCIPAL → bloquear TODO el rango (seguro, es el dueño de la cita).
+        // - Si es un profesional ADICIONAL → NO bloquear nada.
+        //   No podemos saber en qué tramo exacto está asignado, y bloquear 4h por un extra de 1h
+        //   es mucho peor que permitir una posible sobrescritura (create.js validará de nuevo).
+        console.log(`[Availability] Cita ${appt.id} sin servicio/duración. ` +
+          `Empleado ${employeeId} ${isPrincipal ? 'ES PRINCIPAL → bloquear rango completo' : 'es adicional → NO bloquear'}`);
+        if (isPrincipal) {
+          employeeBusyRanges.push({
+            start: new Date(appt.startTime),
+            end: new Date(appt.endTime),
+            appointmentId: appt.id
+          });
+        }
+        continue;
+      }
+
+      const blocks = [];
+      let cursor = apptStartMs;
+
+      // Bloque 0: servicio base
+      const baseEnd = cursor + baseDuration * 60000;
+      blocks.push({
+        employeeId: principalEmpId,
+        start: new Date(cursor),
+        end: new Date(baseEnd),
+      });
+      cursor = baseEnd;
+
+      // Bloques extras secuenciales
+      extras.forEach((es, i) => {
+        const d = parseInt(es.durationMin) || 0;
+        const blockStart = cursor;
+        const blockEnd = cursor + d * 60000;
+        const empForExtra = es.employeeId && String(es.employeeId) !== principalEmpId
+          ? String(es.employeeId)
+          : principalEmpId;
+        blocks.push({
+          employeeId: empForExtra,
+          start: new Date(blockStart),
+          end: new Date(blockEnd),
+          meta: `extra[${i}] name=${es.name || '?'} dur=${d}min empId=${es.employeeId || 'NULL'} → assignedEmp=${empForExtra}`
+        });
+        cursor = blockEnd;
+      });
+
+      // ==== LOG DETALLADO POR CITA ====
+      console.log(`[Availability-DBG] Cita ${appt.id} Principal=${principalEmpId} ConsultandoEmp=${employeeId}`);
+      console.log(`  baseDuration=${baseDuration}min, extras=${extras.length}`);
+      blocks.forEach((b, i) => {
+        const sTime = new Date(b.start).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+        const eTime = new Date(b.end).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+        console.log(`  block[${i}] emp=${b.employeeId} [${sTime}-${eTime}] ${b.meta || 'SERVICIO BASE'}`);
+      });
+
+      // Filtrar solo los bloques de ESTE empleado
+      const myBlocks = blocks.filter(b => String(b.employeeId) === String(employeeId));
+
+      console.log(`  → Bloques para empleado ${employeeId}: ${myBlocks.length}`);
+
+      if (myBlocks.length === 0) {
+        // Importante: si ESTE empleado NO tiene bloques propios en la cita,
+        // significa que NO está ocupado en ella (por ejemplo, aparece como
+        // empleado adicional en la BD pero todos los extras tienen otro profesional).
+        // => NO agregamos nada a employeeBusyRanges.
+        continue;
+      }
+
+      // Fusionar bloques contiguos (por si acaso)
+      myBlocks.sort((a, b) => a.start.getTime() - b.start.getTime());
+      let merged = { start: myBlocks[0].start, end: myBlocks[0].end };
+      for (let i = 1; i < myBlocks.length; i++) {
+        if (myBlocks[i].start.getTime() <= merged.end.getTime() + 1000) {
+          merged.end = myBlocks[i].end > merged.end ? myBlocks[i].end : merged.end;
+        } else {
+          employeeBusyRanges.push({ ...merged, appointmentId: appt.id });
+          merged = { start: myBlocks[i].start, end: myBlocks[i].end };
+        }
+      }
+      employeeBusyRanges.push({ ...merged, appointmentId: appt.id });
+    } catch (err) {
+      console.error('[Availability] Error calculando bloques para cita', appt.id, '→ fallback inteligente. Err:', err.message);
+      const isPrincipalCatch = String(employeeId) === String(appt.employeeId);
+      if (isPrincipalCatch) {
+        employeeBusyRanges.push({
+          start: new Date(appt.startTime),
+          end: new Date(appt.endTime),
+          appointmentId: appt.id
+        });
+      } else {
+        console.log('[Availability] Empleado adicional ' + employeeId + ' → NO bloqueado por seguridad.');
+      }
+    }
+  }
+  console.log(`[Availability] Tramos de ocupación REAL para empleado ${employeeId}:`, employeeBusyRanges.map(r => ({
+    id: r.appointmentId,
+    start: r.start.toISOString(),
+    end: r.end.toISOString()
+  })));
+
   // Generar slots disponibles
-  const duration = customDuration ? parseInt(customDuration) : (service.durationMin || service.duration || 30);
+  const duration = customDuration ? parseInt(customDuration) : (service.durationMin || 30);
   console.log(`[Availability] Duración servicio: ${duration}min, allowPast: ${allowPast}`);
-  
+
   debugLog(`[Availability Debug] Starting for date: ${date}, emp: ${employeeId}, svc: ${serviceId}`);
 
   const slots = generateAvailableSlots(
     workSchedules,
     lunchRanges,
     blockedRanges,
-    existingAppointments,
+    employeeBusyRanges,
     duration,
     date,
     allowPast
@@ -250,10 +423,7 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
   };
 }
 
-/**
- * Genera slots disponibles considerando citas existentes, almuerzo y bloqueos
- */
-function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, existingAppointments, duration, date, allowPast) {
+function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, employeeBusyRanges, duration, date, allowPast) {
   if (!workSchedules || workSchedules.length === 0) return [];
 
   const slots = [];
@@ -269,11 +439,10 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
     return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
   };
 
-  const dateToMinutesColombia = (date) => {
-    const d = new Date(date);
-    // Get time components in Colombia timezone directly
-    const timeStr = d.toLocaleTimeString('en-US', { 
-      timeZone: 'America/Bogota', 
+  const dateToMinutesColombia = (dateIn) => {
+    const d = new Date(dateIn);
+    const timeStr = d.toLocaleTimeString('en-US', {
+      timeZone: 'America/Bogota',
       hour12: false,
       hour: '2-digit',
       minute: '2-digit'
@@ -286,6 +455,8 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
     return start1 < end2 && end1 > start2;
   };
 
+  const clampToRange = (val, min, max) => Math.max(min, Math.min(max, val));
+
   // ==================== ORDENAR HORARIOS ====================
 
   workSchedules.sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
@@ -295,11 +466,22 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
   for (const sched of workSchedules) {
     const workStart = toMinutes(sched.startTime);
     const workEnd = toMinutes(sched.endTime);
+    const workStartMin = Math.max(0, Math.min(24 * 60, workStart));
+    const workEndMin = Math.max(workStartMin + 1, Math.min(24 * 60, workEnd));
 
-    let current = workStart;
+    // Protección: duración mayor que horario → no hay slots posibles
+    if (safeDuration > (workEndMin - workStartMin)) continue;
 
-    // 🔥 CORRECTO: el slot debe TERMINAR dentro del horario
-    while (current + safeDuration <= workEnd) {
+    let current = workStartMin;
+    let safetyCounter = 0;
+    const SAFETY_LIMIT = 1000;
+
+    while (current + safeDuration <= workEndMin) {
+      safetyCounter++;
+      if (safetyCounter > SAFETY_LIMIT) {
+        console.error(`[generateAvailableSlots] Bucle sospechoso, abortando. current=${current}, schedule=${sched.startTime}-${sched.endTime}`);
+        break;
+      }
 
       const hh = String(Math.floor(current / 60)).padStart(2, '0');
       const mm = String(current % 60).padStart(2, '0');
@@ -316,23 +498,25 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
         const nowMs = Date.now();
         const slotMs = slotTime.getTime();
         if (slotMs <= (nowMs - MARGIN_MS)) {
-          // console.log(`[Availability Debug] Slot ${timeStr} skipped because past. Slot: ${new Date(slotMs).toISOString()}, Now: ${new Date(nowMs).toISOString()}`);
-          current += SLOT_INTERVAL;
+          current = clampToRange(current + SLOT_INTERVAL, current + 1, workEndMin);
           continue;
         }
       }
 
-      // ==================== 2. CITAS EXISTENTES ====================
+      // ==================== 2. RANGOS DE OCUPACIÓN REAL DEL EMPLEADO ====================
 
-      const conflictAppt = existingAppointments.find(appt => {
-        const apptS = dateToMinutesColombia(appt.startTime);
-        const apptE = dateToMinutesColombia(appt.endTime);
-        return overlaps(current, current + safeDuration, apptS, apptE);
+      const conflictBusy = (employeeBusyRanges || []).find(range => {
+        if (!range || !range.start || !range.end) return false;
+        const rangeS = dateToMinutesColombia(range.start);
+        const rangeE = dateToMinutesColombia(range.end);
+        return overlaps(current, current + safeDuration, rangeS, rangeE);
       });
 
-      if (conflictAppt) {
-        // Saltar exactamente al final de la cita - el siguiente slot inicia cuando termina esta
-        current = dateToMinutesColombia(conflictAppt.endTime);
+      if (conflictBusy) {
+        // Saltar al final del rango, pero NUNCA por debajo de current+1 ni por encima de workEndMin
+        const nextByConflict = dateToMinutesColombia(conflictBusy.end);
+        const clamped = clampToRange(nextByConflict, current + 1, workEndMin);
+        current = clamped;
         continue;
       }
 
@@ -346,10 +530,8 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
 
       if (conflictBlock) {
         const blockEnd = toMinutes(conflictBlock.endTime);
-
-        if (blockEnd >= workEnd) break;
-
-        current = blockEnd;
+        if (blockEnd >= workEndMin) break;
+        current = clampToRange(blockEnd, current + 1, workEndMin);
         continue;
       }
 
@@ -361,8 +543,8 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, exist
         endTime: slotEndTime.toISOString()
       });
 
-      // 🔥 CLAVE: avanzar por intervalo, NO por duración
-      current += SLOT_INTERVAL;
+      // Avanzar por intervalo
+      current = clampToRange(current + SLOT_INTERVAL, current + 1, workEndMin);
     }
   }
 
@@ -424,7 +606,7 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
 
   // Verificar horarios especiales
   const [month, dayNum] = date.split('-').slice(1);
-  
+
   const specialSchedules = await SpecialSchedule.findAll({
     where: {
       businessId,
@@ -433,7 +615,7 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
         {
           [Op.or]: [
             { specificDate: date },
-            { 
+            {
               isRecurringYearly: true,
               [Op.and]: [
                 sequelize.where(
@@ -488,15 +670,15 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
       const regularSchedules = await Schedule.findAll({
         where: { employeeId, dayOfWeek, active: true }
       });
-      
+
       workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
-      
+
       // Combinar con almuerzos y bloqueos regulares
       lunchRanges = [
         ...lunchRanges,
         ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
       ];
-      
+
       blockedRanges = [
         ...blockedRanges,
         ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
@@ -512,7 +694,7 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
       const type = (s.type || 'work').trim().toLowerCase();
       return type === 'work';
     });
-    
+
     lunchRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
     blockedRanges = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
     console.log(`[validateManualTime] Usando horarios regulares para ${date} (Día ${dayOfWeek}). Work: ${workSchedules.length}`);
@@ -532,7 +714,7 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
   };
 
   const manualMinutes = toMinutes(manualTime);
-  const duration = service.durationMin || service.duration || 30;
+  const duration = service.durationMin || 30;
   const manualStart = manualMinutes;
   const manualEnd = manualMinutes + duration;
 
@@ -579,36 +761,116 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     return { valid: false, reason: 'La hora seleccionada coincide con un horario de almuerzo o bloqueo' };
   }
 
-  // Verificar conflicto con citas existentes
+  // Verificar conflicto con citas existentes (usando TRAMOS REALES del empleado, no rango completo)
   const startOfDay = new Date(`${date}T00:00:00-05:00`);
   const endOfDay = new Date(`${date}T23:59:59.999-05:00`);
 
-  const existingAppointments = await Appointment.findAll({
+  const dayAppointments = await Appointment.findAll({
     where: {
-      employeeId,
       businessId,
       status: { [Op.notIn]: ['cancelled'] },
       startTime: { [Op.lt]: endOfDay },
-      endTime: { [Op.gt]: startOfDay }
-    }
+      endTime: { [Op.gt]: startOfDay },
+    },
+    include: [
+      { model: AppointmentEmployee, as: 'AdditionalEmployees', required: false }
+    ],
+    subQuery: false
   });
+
+  const existingAppointments = dayAppointments.filter(a => appointmentInvolvesEmployee(a, employeeId));
+
+  // Precargar servicios necesarios en lote
+  const svcMap = new Map();
+  try {
+    const uniqueSvcIds = [...new Set(existingAppointments.map(a => a.serviceId).filter(Boolean))];
+    if (uniqueSvcIds.length > 0) {
+      const svcs = await Service.findAll({
+        where: { id: { [Op.in]: uniqueSvcIds } },
+        attributes: ['id', 'durationMin']
+      });
+      svcs.forEach(s => svcMap.set(String(s.id), s));
+    }
+  } catch (e) {
+    console.error('[validateManualTime] Error precargando servicios:', e.message);
+  }
 
   const slotTime = new Date(`${date}T${manualTime}:00-05:00`);
   const slotEndTime = new Date(slotTime.getTime() + duration * 60000);
+  const slotS = slotTime.getTime();
+  const slotE = slotEndTime.getTime();
 
-  const conflictAppt = existingAppointments.find(appt => {
-    const apptStart = new Date(appt.startTime).getTime();
-    const apptEnd = new Date(appt.endTime).getTime();
-    const slotS = slotTime.getTime();
-    const slotE = slotEndTime.getTime();
-    
-    // Un slot nuevo puede empezar exactamente cuando termina el anterior
-    // Usamos un margen de 1000ms (1 segundo) para evitar problemas de precisión
-    return slotS < (apptEnd - 1000) && slotE > (apptStart + 1000);
-  });
+  // Calcular tramos reales de ocupación para este empleado en cada cita
+  let hasConflict = false;
+  let conflictReason = '';
+  for (const appt of existingAppointments) {
+    try {
+      const apptStartMs = new Date(appt.startTime).getTime();
+      const extrasRaw = appt.extraServices || [];
+      const extras = Array.isArray(extrasRaw) ? extrasRaw : [];
+      const apptService = svcMap.get(String(appt.serviceId)) || null;
+      const isPrincipal = String(employeeId) === String(appt.employeeId);
 
-  if (conflictAppt) {
-    return { valid: false, reason: 'El empleado ya tiene una cita en ese horario' };
+      const baseDuration = (() => {
+        const raw1 = apptService?.durationMin;
+        if (raw1 !== undefined && raw1 !== null && !isNaN(parseInt(raw1))) return parseInt(raw1);
+        return null;
+      })();
+
+      const ranges = [];
+      if (baseDuration === null || baseDuration < 0 || isNaN(baseDuration)) {
+        // Solo el principal bloquea el rango completo si faltan datos
+        if (isPrincipal) {
+          ranges.push({ start: new Date(appt.startTime), end: new Date(appt.endTime) });
+        }
+      } else {
+        const blocks = [];
+        let cursor = apptStartMs;
+        const principalEmpId = String(appt.employeeId);
+        const baseEnd = cursor + baseDuration * 60000;
+        blocks.push({ employeeId: principalEmpId, start: new Date(cursor), end: new Date(baseEnd) });
+        cursor = baseEnd;
+        extras.forEach((es) => {
+          const d = parseInt(es.durationMin) || 0;
+          const bStart = cursor;
+          const bEnd = cursor + d * 60000;
+          const empForExtra = es.employeeId && String(es.employeeId) !== principalEmpId
+            ? String(es.employeeId)
+            : principalEmpId;
+          blocks.push({ employeeId: empForExtra, start: new Date(bStart), end: new Date(bEnd) });
+          cursor = bEnd;
+        });
+        const myBlocks = blocks.filter(b => String(b.employeeId) === String(employeeId));
+        ranges.push(...myBlocks.map(b => ({ start: b.start, end: b.end })));
+      }
+
+      for (const r of ranges) {
+        const rS = new Date(r.start).getTime();
+        const rE = new Date(r.end).getTime();
+        if (slotS < (rE - 1000) && slotE > (rS + 1000)) {
+          hasConflict = true;
+          const t1 = new Date(rS).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+          const t2 = new Date(rE).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+          conflictReason = `El empleado está ocupado de ${t1} a ${t2} en otra cita`;
+          break;
+        }
+      }
+    } catch (err) {
+      // Fallback: si hay error, bloquear el rango completo para seguridad.
+      const rS = new Date(appt.startTime).getTime();
+      const rE = new Date(appt.endTime).getTime();
+      if (slotS < (rE - 1000) && slotE > (rS + 1000)) {
+        hasConflict = true;
+        const t1 = new Date(rS).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+        const t2 = new Date(rE).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' });
+        conflictReason = `El empleado está ocupado de ${t1} a ${t2} en otra cita`;
+      }
+    }
+    if (hasConflict) break;
+  }
+
+  if (hasConflict) {
+    return { valid: false, reason: conflictReason };
   }
 
   // Verificar si ya pasó (con margen de 5 minutos)
@@ -617,8 +879,8 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     return { valid: false, reason: 'La hora seleccionada ya pasó' };
   }
 
-  return { 
-    valid: true, 
+  return {
+    valid: true,
     startTime: slotTime.toISOString(),
     endTime: slotEndTime.toISOString()
   };

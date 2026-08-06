@@ -208,6 +208,23 @@ function filterAppointmentsByPhone(appointments, cleanPhone, from) {
 }
 
 /**
+ * Verifica si una cita está esperando calificación de forma válida (dentro del límite de 6 horas)
+ */
+function isAwaitingRatingValid(appt) {
+  if (!appt || appt.messageFlowStatus !== 'awaiting_rating') {
+    return false;
+  }
+  const baseTime = appt.ratingSentAt;
+  if (!baseTime) {
+    return false; // Si no hay fecha de envío, no se asume como válida para evitar calificaciones eternas
+  }
+  const sentAt = new Date(baseTime);
+  const now = new Date();
+  const diffHours = (now - sentAt) / (1000 * 60 * 60);
+  return diffHours <= 6;
+}
+
+/**
  * Determina la acción basada en el texto
  */
 function determineAction(matchedAppointments, text) {
@@ -215,8 +232,10 @@ function determineAction(matchedAppointments, text) {
 
   // Verificar si es un número (calificación)
   const number = parseInt(cleanText);
-  const isRatingNumber = !isNaN(number) && number >= 1 && number <= 5;
-  
+  // Solo considerar número de calificación si hay alguna cita que realmente lo esté esperando de forma válida
+  const hasAwaitingRating = matchedAppointments.some(a => isAwaitingRatingValid(a));
+  const isRatingNumber = !isNaN(number) && number >= 1 && number <= 5 && hasAwaitingRating;
+
   const isConfirm = isConfirmation(text);
   const isCancel = isCancellation(text);
 
@@ -242,7 +261,7 @@ function determineAction(matchedAppointments, text) {
           console.log(`[Evolution Message] 🎯 Usando cita pendiente para conf/canc`);
         } else if (isRatingNumber) {
           // Fallback a rating si mandó "1" o "2" pero no hay citas para confirmar
-          const ratingAppt = matchedAppointments.find(a => a.messageFlowStatus === 'awaiting_rating');
+          const ratingAppt = matchedAppointments.find(a => isAwaitingRatingValid(a));
           if (ratingAppt) {
             matchedAppt = ratingAppt;
             console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating (fallback de número)`);
@@ -252,7 +271,7 @@ function determineAction(matchedAppointments, text) {
     } else if (isRatingNumber) {
       // PRIORIDAD 1 para calificaciones puras (3, 4, 5)
       const ratingAppt = matchedAppointments.find(a =>
-        a.messageFlowStatus === 'awaiting_rating'
+        isAwaitingRatingValid(a)
       );
       if (ratingAppt) {
         matchedAppt = ratingAppt;
@@ -281,7 +300,7 @@ function determineAction(matchedAppointments, text) {
           matchedAppt = pendingAppt;
           console.log(`[Evolution Message] 🎯 Usando cita pendiente: status=${pendingAppt.status}`);
         } else {
-          const ratingAppt = matchedAppointments.find(a => a.messageFlowStatus === 'awaiting_rating');
+          const ratingAppt = matchedAppointments.find(a => isAwaitingRatingValid(a));
           if (ratingAppt) {
             matchedAppt = ratingAppt;
             console.log(`[Evolution Message] 🎯 Usando cita awaiting_rating`);
@@ -438,9 +457,12 @@ async function handleRating(appt, cleanText, phone, msg) {
       console.error('[Evolution Message] ⚠️ Error creando BusinessReview:', reviewErr.message);
     }
 
-    // Enviar agradecimiento (USAR EL TELÉFONO DE LA CITA, NO EL REMITENTE DEL WEBHOOK)
-    const thankYouMsg = `✅ ¡Gracias por tu calificación de ${cleanText}⭐! Nos ayuda mucho a mejorar. ¡Que tengas un excelente día! 😊`;
-    await sendMessageDirect(appt.businessId, appt.clientPhone, thankYouMsg);
+    // Enviar agradecimiento solo para calificaciones altas (4 o 5 estrellas)
+    const ratingNumber = parseInt(cleanText);
+    if (ratingNumber >= 4) {
+      const thankYouMsg = `✅ ¡Gracias por tu calificación de ${cleanText}⭐! Nos ayuda mucho a mejorar. ¡Que tengas un excelente día! 😊`;
+      await sendMessageDirect(appt.businessId, appt.clientPhone, thankYouMsg);
+    }
 
     console.log(`[Evolution Message] ✅ Cita ${appt.id} calificada con ${cleanText}⭐ por ${appt.clientName}`);
 
@@ -644,7 +666,7 @@ async function handleClientResponse(businessId, client, msg) {
   let wasProcessed = false;
 
   // Prioridad: si está esperando calificación, procesar calificación primero
-  const canRate = (matchedAppt.messageFlowStatus === 'awaiting_rating');
+  const canRate = isAwaitingRatingValid(matchedAppt);
 
   if (canRate && isRatingNumber) {
     await handleRating(matchedAppt, number, cleanIncomingPhone, msg);
@@ -695,7 +717,7 @@ async function processAppointmentResponse(appt, text, msg, phone) {
     }
   }
 
-  const canRate = (appt.messageFlowStatus === 'awaiting_rating');
+  const canRate = isAwaitingRatingValid(appt);
 
   if (canRate) {
     const rating = extractRating(text);

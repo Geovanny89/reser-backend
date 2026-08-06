@@ -150,8 +150,16 @@ module.exports = {
   // Handlers de disponibilidad
   getAvailability: async (req, res) => {
     try {
-      const { date, employeeId, serviceId, businessId, allowPast } = req.query;
-      const result = await availability.getAvailability(date, employeeId, serviceId, businessId, allowPast === 'true');
+      const { date, employeeId, serviceId, businessId, allowPast, excludeId, duration } = req.query;
+      const result = await availability.getAvailability(
+        date,
+        employeeId,
+        serviceId,
+        businessId,
+        allowPast === 'true',
+        excludeId || null,
+        duration || null
+      );
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: e.message });

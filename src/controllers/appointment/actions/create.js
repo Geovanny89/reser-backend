@@ -7,6 +7,7 @@ const { sendEmail } = require('../../../config/email');
 const { sendPushNotification } = require('../../../services/pushNotificationService');
 const { generateAppointmentCreatedMessage } = require('../../../services/reminder/message.generators');
 const { logActivity } = require('../../../utils/activityLogger');
+const { assertNoBlockConflicts } = require('../conflictUtils');
 
 /**
  * Genera un código de referencia único de 6 caracteres
@@ -96,20 +97,12 @@ async function createAppointment(data, user) {
     startTimeWithOffset = startTime + '-05:00'; // Colombia UTC-5
   }
   const start = new Date(startTimeWithOffset);
-  
-  // Calcular duración total (Principal + Extras)
-  const mainDuration = parseInt(service.durationMin || 0);
-  const extrasDuration = (extraServices || []).reduce((sum, s) => sum + (parseInt(s.durationMin) || 0), 0);
-  const totalDuration = mainDuration + extrasDuration;
-
-  const end = new Date(start.getTime() + totalDuration * 60000);
-  console.log('[Create Appointment] Checking conflict:', { employeeId, start: start.toISOString(), end: end.toISOString(), originalStartTime: startTime });
 
   // Validar que la hora no sea en el pasado (con margen de 5 minutos)
   // Las citas express (status='attention') o creadas por ADMIN están exentas
   const isExpress = status === 'attention';
   const isAdmin = user && (['admin', 'admin_suc', 'superadmin'].includes(user.role));
-  
+
   if (!isExpress && !isAdmin) {
     const now = new Date();
     const MARGIN_MS = 5 * 60 * 1000; // 5 minutos de margen
@@ -118,20 +111,61 @@ async function createAppointment(data, user) {
     }
   }
 
-  // Verificar conflictos SOLO si no es cita express (status='attention')
-  // Las citas express son para atención inmediata y no deben ser bloqueadas
+  // ========== BLOQUES SECUENCIALES POR PROFESIONAL ==========
+  // Cada servicio (base + extras) tiene un profesional asignado y un rango de tiempo individual.
+  // Orden secuencial: Servicio Base → Extra[0] → Extra[1] → ...
+  // - Si un extra tiene employeeId → lo atiende ese profesional en su tramo.
+  // - Si un extra NO tiene employeeId → lo atiende el profesional PRINCIPAL.
+  // El endTime de la cita es la suma de TODAS las duraciones (horario total).
+  const mainDuration = parseInt(service.durationMin || 0);
+  const extras = extraServices || [];
 
-  if (!isExpress) {
-    const conflict = await Appointment.findOne({
-      where: {
-        employeeId,
-        businessId,
-        status: { [Op.notIn]: ['cancelled'] },
-        startTime: { [Op.lt]: new Date(end.getTime() - 10000) }, // Margen de 10 seg
-        endTime: { [Op.gt]: new Date(start.getTime() + 10000) }, // Margen de 10 seg
-      }
+  // Construir bloques: [{employeeId, startTime, endTime, durationMin, label}]
+  const blocks = [];
+  let cursor = start.getTime();
+
+  // Bloque 0: Servicio BASE → profesional principal
+  const mainEnd = cursor + mainDuration * 60000;
+  blocks.push({
+    employeeId: employeeId,
+    startTime: new Date(cursor),
+    endTime: new Date(mainEnd),
+    durationMin: mainDuration,
+    label: `Servicio: ${service.name}`
+  });
+  cursor = mainEnd;
+
+  // Bloques 1..N: Extras secuenciales
+  extras.forEach((es, idx) => {
+    const d = parseInt(es.durationMin) || 0;
+    const blockStart = cursor;
+    const blockEnd = cursor + d * 60000;
+    const empForExtra = es.employeeId && String(es.employeeId) !== String(employeeId)
+      ? es.employeeId
+      : employeeId;
+    blocks.push({
+      employeeId: empForExtra,
+      startTime: new Date(blockStart),
+      endTime: new Date(blockEnd),
+      durationMin: d,
+      label: `Extra: ${es.name || 'Extra ' + (idx + 1)}`
     });
-    if (conflict) throw new Error('El empleado ya tiene una cita en ese horario');
+    cursor = blockEnd;
+  });
+
+  const totalDuration = blocks.reduce((s, b) => s + b.durationMin, 0);
+  const end = new Date(cursor); // endTime total = fin del último bloque
+  console.log('[Create Appointment] Sequential blocks:', blocks.map(b => ({
+    emp: b.employeeId,
+    label: b.label,
+    start: b.startTime.toISOString(),
+    end: b.endTime.toISOString(),
+    dur: b.durationMin + 'min'
+  })), { totalEnd: end.toISOString() });
+
+  // Validar cada bloque contra los TRAMOS REALES del profesional (no el rango total de la otra cita)
+  if (!isExpress) {
+    await assertNoBlockConflicts(blocks, { businessId });
   }
 
   // CALCULAR PRECIO CON PROMOCIONES Y SERVICIOS EXTRA
@@ -171,8 +205,38 @@ async function createAppointment(data, user) {
 
   const cleanPhone = clientPhone ? clientPhone.replace(/\D/g, '').slice(-10) : null;
 
+  // ========== UNIR empleados adicionales explícitos + empleados asignados a extras ==========
+  // El usuario puede agregar empleados adicionales de dos maneras:
+  //   1. additionalEmployeeIds (selección explícita)
+  //   2. extraServices[].employeeId (cuando le asigna profesional a cada extra)
+  // Ambos deben acabar en AppointmentEmployees para que la disponibilidad los encuentre.
+  const extrasAssignedEmpIds = (extraServices || [])
+    .map(es => (es?.employeeId !== undefined && es?.employeeId !== null) ? String(es.employeeId) : null)
+    .filter(Boolean);
+  const additionalBase = (additionalEmployeeIds || []).map(id => String(id));
+  const employeeIdStr = String(employeeId);
+
+  const mergedAdditional = [...additionalBase];
+  for (const empId of extrasAssignedEmpIds) {
+    if (
+      empId &&
+      empId !== employeeIdStr &&
+      !mergedAdditional.some(x => String(x) === empId)
+    ) {
+      mergedAdditional.push(empId);
+    }
+  }
+  // Mantener UUIDs como string (Employee.id / AppointmentEmployee.employeeId son UUID)
+  const additionalEmployees = mergedAdditional
+    .map(id => String(id).trim())
+    .filter(id => id && id !== 'undefined' && id !== 'null');
+  console.log('[Create Appointment] Empleados adicionales (merge):', {
+    explicitos: additionalEmployeeIds || [],
+    porExtras: extrasAssignedEmpIds,
+    resultadoFinal: additionalEmployees
+  });
+
   // Verificar que los empleados adicionales existan y estén activos
-  const additionalEmployees = additionalEmployeeIds || [];
   if (additionalEmployees.length > 0) {
     for (const addEmpId of additionalEmployees) {
       const addEmp = await Employee.findOne({
@@ -183,22 +247,8 @@ async function createAppointment(data, user) {
       }
 
       // Verificar que no sea el mismo empleado principal
-      if (addEmpId === employeeId) {
+      if (String(addEmpId) === String(employeeId)) {
         throw new Error('No puede agregar el empleado principal como adicional');
-      }
-
-      // Verificar que el empleado adicional no tenga conflicto de horario
-      const addEmpConflict = await Appointment.findOne({
-        where: {
-          employeeId: addEmpId,
-          businessId,
-          status: { [Op.notIn]: ['cancelled'] },
-          startTime: { [Op.lt]: new Date(end.getTime() - 10000) },
-          endTime: { [Op.gt]: new Date(start.getTime() + 10000) },
-        }
-      });
-      if (addEmpConflict && !isExpress) {
-        throw new Error('El empleado adicional ya tiene una cita en ese horario');
       }
     }
   }

@@ -46,24 +46,36 @@ exports.getFinancialReport = async (req, res) => {
       businessId,
       createdAt: { [Op.between]: [startDate, endDate] }
     };
-    
-    // Si es para un empleado específico, podemos filtrar movimientos por cita
-    if (employeeId && employeeId !== 'all' && employeeId !== '') {
-      // Sequelize no permite filtrar directamente por include en el count/sum de forma simple aquí
-      // pero el loop de abajo ya lo maneja.
-    }
 
     const movements = await CashMovement.findAll({
       where: movementsWhere,
       include: [
         { model: CashMovement, as: 'ReversedMovement' },
-        { 
-          model: Appointment, 
-          attributes: ['id', 'employeeId', 'startTime', 'finalPrice', 'basePrice', 'discountApplied'],
-          include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
+        {
+          model: Appointment,
+          attributes: ['id', 'employeeId', 'startTime', 'finalPrice', 'basePrice', 'discountApplied', 'extraServices'],
+          include: [
+            { model: require('../models').Employee, attributes: ['id', 'commissionPct'] },
+            {
+              model: require('../models').AppointmentEmployee,
+              as: 'AdditionalEmployees',
+              attributes: ['id', 'employeeId'],
+              include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
+            }
+          ]
         }
       ]
     });
+
+    // Helper: verifica si un empleado participa en una cita (principal o adicional)
+    const employeeIsInAppointment = (apt, empId) => {
+      if (!apt || !empId) return false;
+      if (String(apt.employeeId) === String(empId)) return true;
+      if (apt.AdditionalEmployees && Array.isArray(apt.AdditionalEmployees)) {
+        return apt.AdditionalEmployees.some(ae => String(ae.employeeId) === String(empId));
+      }
+      return false;
+    };
 
     let totalIncome = 0;
     let transferIncome = 0;
@@ -94,9 +106,9 @@ exports.getFinancialReport = async (req, res) => {
           }
         }
 
-        // Si hay filtro de empleado, verificar que el movimiento esté asociado a una cita de ese empleado
+        // Si hay filtro de empleado, verificar que el empleado sea principal o adicional en la cita
         if (employeeId && employeeId !== 'all' && employeeId !== '') {
-          if (!m.Appointment || String(m.Appointment.employeeId) !== employeeId) {
+          if (!employeeIsInAppointment(m.Appointment, employeeId)) {
             return; // Omitir si no coincide el empleado
           }
         }
@@ -121,9 +133,9 @@ exports.getFinancialReport = async (req, res) => {
       startTime: { [Op.between]: [startDate, endDate] }
     };
 
-    if (employeeId && employeeId !== 'all' && employeeId !== '') {
-      appointmentsWhere.employeeId = employeeId;
-    }
+    // NOTA: No filtramos por employeeId directamente en el WHERE porque
+    // si el empleado es adicional, el appointment.employeeId sería el principal.
+    // Filtramos después del query.
 
     const appointments = await Appointment.findAll({
       where: appointmentsWhere,
@@ -135,20 +147,128 @@ exports.getFinancialReport = async (req, res) => {
         {
           model: require('../models').Service,
           attributes: ['price']
+        },
+        {
+          model: require('../models').AppointmentEmployee,
+          as: 'AdditionalEmployees',
+          attributes: ['id', 'employeeId'],
+          include: [{ model: require('../models').Employee, attributes: ['id', 'commissionPct'] }]
         }
       ]
     });
 
-    const totalCommissions = appointments.reduce((sum, apt) => {
-      const priceForCommission = safeFloat(apt.finalPrice) || safeFloat(apt.basePrice) || safeFloat(apt.Service?.price);
-      const commPct = safeFloat(apt.Employee?.commissionPct);
-      const earned = (apt.employeeEarns !== null && apt.employeeEarns !== undefined)
-        ? safeFloat(apt.employeeEarns)
-        : (priceForCommission * commPct) / 100;
-      return sum + earned;
+    // Helper: Distribuye ingresos de una cita entre sus empleados
+    // (misma lógica que splitRevenueByEmployee en el frontend y commissions.js)
+    const splitRevenue = (apt) => {
+      // CORRECCIÓN CRÍTICA: igual que en commissions.js, finalPrice es el valor real
+      const finalPriceVal = safeFloat(apt.finalPrice);
+      const basePrice = safeFloat(apt.basePrice) || safeFloat(apt.Service?.price);
+      const additionalAmount = safeFloat(apt.additionalAmount);
+      const discountApplied = safeFloat(apt.discountApplied);
+      const hasFinal = finalPriceVal > 0;
+
+      const parts = [];
+      const principalId = apt.employeeId;
+      const principalName = apt.Employee?.User?.name || apt.Employee?.name || 'Sin asignar';
+      const principalCommissionPct = safeFloat(apt.Employee?.commissionPct);
+
+      // 1. Servicios adicionales primero para calcular la suma
+      const extraParts = [];
+      let sumExtraPrices = 0;
+      const extraServices = apt.extraServices && Array.isArray(apt.extraServices) ? apt.extraServices : [];
+
+      extraServices.forEach((es) => {
+        const empId = es.employeeId;
+        const price = safeFloat(es.price);
+        sumExtraPrices += price;
+
+        let empName = 'Sin asignar';
+        let empComm = 0;
+        if (empId) {
+          const inAdditional = apt.AdditionalEmployees?.find?.(
+            (ae) => String(ae.employeeId) === String(empId)
+          );
+          if (inAdditional?.Employee) {
+            empName = inAdditional.Employee.User?.name || inAdditional.Employee.name || empName;
+            empComm = safeFloat(inAdditional.Employee.commissionPct);
+          } else if (String(empId) === String(principalId)) {
+            empName = principalName;
+            empComm = principalCommissionPct;
+          }
+        }
+
+        extraParts.push({
+          employeeId: empId ? String(empId) : `extra-${es.serviceId || es.name}`,
+          name: empName,
+          commissionPct: empComm,
+          gross: price,
+        });
+      });
+
+      // 2. Empleado principal recibe (total_cita - suma_extras), según corresponda
+      let principalGross;
+      if (hasFinal) {
+        principalGross = Math.max(0, finalPriceVal - sumExtraPrices);
+      } else {
+        principalGross = Math.max(0, basePrice + additionalAmount - sumExtraPrices);
+      }
+      if (principalId) {
+        parts.push({
+          employeeId: String(principalId),
+          name: principalName,
+          commissionPct: principalCommissionPct,
+          gross: principalGross,
+        });
+      }
+      parts.push(...extraParts);
+
+      // 3. Aplicar descuento proporcional SOLO si no hay finalPrice (ya lo incluye)
+      const totalGross = parts.reduce((s, p) => s + p.gross, 0);
+      return parts.map((p, idx) => {
+        let discountShare = 0;
+        if (!hasFinal && discountApplied > 0 && totalGross > 0) {
+          discountShare = (p.gross / totalGross) * discountApplied;
+          if (idx === parts.length - 1) {
+            const alreadyApplied = parts.reduce((s, p2, i2) => {
+              if (i2 >= idx) return s;
+              return s + (p2.gross / totalGross) * discountApplied;
+            }, 0);
+            discountShare = discountApplied - alreadyApplied;
+          }
+        }
+        return {
+          ...p,
+          revenue: Math.max(0, p.gross - discountShare),
+        };
+      });
+    };
+
+    // Filtrar citas si hay empleado seleccionado (principal o adicional)
+    const filteredAppointments = appointments.filter(apt => {
+      if (!employeeId || employeeId === 'all' || employeeId === '') return true;
+      return employeeIsInAppointment(apt, employeeId);
+    });
+
+    // Calcular comisiones totales distribuyendo por empleado
+    const totalCommissions = filteredAppointments.reduce((sum, apt) => {
+      const splits = splitRevenue(apt);
+      let totalCommissionThisApt = 0;
+
+      splits.forEach((split) => {
+        let earned;
+        if (apt.employeeEarns !== undefined && apt.employeeEarns !== null &&
+            String(split.employeeId) === String(apt.employeeId)) {
+          earned = safeFloat(apt.employeeEarns);
+        } else {
+          earned = (split.revenue * safeFloat(split.commissionPct)) / 100;
+        }
+        totalCommissionThisApt += earned;
+      });
+
+      return sum + totalCommissionThisApt;
     }, 0);
 
-    const appointmentCount = appointments.length;
+    const appointmentCount = filteredAppointments.length;
 
     // === GASTOS: Solo si el módulo está habilitado ===
     let expenses = { total: 0, byCategory: {}, list: [] };
@@ -173,8 +293,8 @@ exports.getFinancialReport = async (req, res) => {
     // === INSUMOS: Costo de consumos (cantidad × costo unitario) + Costo directo por cita ===
     let inventory = { total: 0, items: [], usageCount: 0 };
     
-    // Sumar suppliesCost de las citas del período
-    const suppliesFromAppts = appointments.reduce((sum, apt) => sum + parseFloat(apt.suppliesCost || 0), 0);
+    // Sumar suppliesCost de las citas del período (filtradas si hay empleado)
+    const suppliesFromAppts = filteredAppointments.reduce((sum, apt) => sum + parseFloat(apt.suppliesCost || 0), 0);
     inventory.total += suppliesFromAppts;
 
     if (enabledModules.inventory) {
@@ -267,7 +387,7 @@ exports.getFinancialReport = async (req, res) => {
     }
 
     // === ALERTAS: Citas terminadas sin movimiento en caja (Descuadres) ===
-    const unrecordedAppointments = appointments.filter(apt => {
+    const unrecordedAppointments = filteredAppointments.filter(apt => {
       // Buscar si existe un movimiento de ingreso para esta cita
       const hasMovement = movements.some(m => m.appointmentId === apt.id && (m.type === 'income' && !m.isReversal));
       return !hasMovement;

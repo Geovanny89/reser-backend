@@ -1,7 +1,7 @@
 /**
  * Controladores de consulta para negocios
  */
-const { Business, Service, Employee, User, Promotion, ServiceGroup, sequelize } = require('../../models');
+const { Business, Service, Employee, User, Promotion, ServiceGroup, AppointmentEmployee, sequelize } = require('../../models');
 const { Op } = require('sequelize');
 const { buildBusinessInclude } = require('./utils');
 const { SUBSCRIPTION_PLANS, ADDITIONAL_USER_PRICE } = require('./constants');
@@ -364,10 +364,27 @@ exports.getAvailability = async (req, res) => {
         status: { [Op.notIn]: ['cancelled'] },
         startTime: { [Op.lt]: endOfDay },
         endTime: { [Op.gt]: startOfDay }
-      }
+      },
+      include: [
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', required: false }
+      ]
     });
 
-    // Helpers
+    // Cache de duraciones de servicio base para reconstruir tramos
+    const serviceDurationCache = new Map();
+    if (service) {
+      serviceDurationCache.set(String(service.id), parseInt(service.durationMin) || 0);
+    }
+    const uniqueSvcIds = [...new Set(dayAppointments.map(a => a.serviceId).filter(Boolean))];
+    if (uniqueSvcIds.length > 0) {
+      const svcs = await Service.findAll({
+        where: { id: { [Op.in]: uniqueSvcIds } },
+        attributes: ['id', 'durationMin']
+      });
+      svcs.forEach(s => serviceDurationCache.set(String(s.id), parseInt(s.durationMin) || 0));
+    }
+
+    // Helpers (definir antes de usar en getEmployeeBusyMinuteRanges)
     const toMinutes = (timeStr) => {
       if (!timeStr) return 0;
       const cleanTime = String(timeStr).trim();
@@ -377,7 +394,6 @@ exports.getAvailability = async (req, res) => {
 
     const dateToMinutesColombia = (date) => {
       const d = new Date(date);
-      // Get time components in Colombia timezone directly
       const timeStr = d.toLocaleTimeString('en-US', { 
         timeZone: 'America/Bogota', 
         hour12: false,
@@ -390,6 +406,61 @@ exports.getAvailability = async (req, res) => {
 
     const overlaps = (slotStart, slotEnd, blockStart, blockEnd) => {
       return slotStart < blockEnd && slotEnd > blockStart;
+    };
+
+    const appointmentInvolvesEmployee = (appt, empId) => {
+      const id = String(empId);
+      if (String(appt.employeeId) === id) return true;
+      if (Array.isArray(appt.AdditionalEmployees) &&
+          appt.AdditionalEmployees.some(ae => String(ae.employeeId) === id)) {
+        return true;
+      }
+      const extras = Array.isArray(appt.extraServices) ? appt.extraServices : [];
+      return extras.some(es => es?.employeeId != null && String(es.employeeId) === id);
+    };
+
+    /** Minutos ocupados del empleado en una cita (tramos secuenciales base + extras) */
+    const getEmployeeBusyMinuteRanges = (appt, empId) => {
+      const principalEmpId = String(appt.employeeId);
+      const targetEmp = String(empId);
+      const isPrincipal = principalEmpId === targetEmp;
+      const baseDuration = serviceDurationCache.get(String(appt.serviceId));
+      const extras = Array.isArray(appt.extraServices) ? appt.extraServices : [];
+
+      if (baseDuration == null || baseDuration < 0 || isNaN(baseDuration)) {
+        if (!isPrincipal) return [];
+        return [{
+          start: dateToMinutesColombia(appt.startTime),
+          end: dateToMinutesColombia(appt.endTime)
+        }];
+      }
+
+      const ranges = [];
+      let cursorMs = new Date(appt.startTime).getTime();
+      const pushIfMine = (blockEmpId, startMs, endMs) => {
+        if (String(blockEmpId) !== targetEmp) return;
+        ranges.push({
+          start: dateToMinutesColombia(new Date(startMs)),
+          end: dateToMinutesColombia(new Date(endMs))
+        });
+      };
+
+      const baseEndMs = cursorMs + baseDuration * 60000;
+      pushIfMine(principalEmpId, cursorMs, baseEndMs);
+      cursorMs = baseEndMs;
+
+      extras.forEach((es) => {
+        const d = parseInt(es.durationMin) || 0;
+        const blockStart = cursorMs;
+        const blockEnd = cursorMs + d * 60000;
+        const empForExtra = es.employeeId && String(es.employeeId) !== principalEmpId
+          ? String(es.employeeId)
+          : principalEmpId;
+        pushIfMine(empForExtra, blockStart, blockEnd);
+        cursorMs = blockEnd;
+      });
+
+      return ranges;
     };
 
     const slots = [];
@@ -409,7 +480,8 @@ exports.getAvailability = async (req, res) => {
 
       if (isOnVacation > 0) continue;
 
-      const empAppointments = dayAppointments.filter(a => String(a.employeeId) === String(emp.id));
+      const empAppointments = dayAppointments.filter(a => appointmentInvolvesEmployee(a, emp.id));
+      const empBusyRanges = empAppointments.flatMap(a => getEmployeeBusyMinuteRanges(a, emp.id));
 
       const empSpecialSchedules = allSpecialSchedules.filter(s => 
         s.employeeId === null || String(s.employeeId) === String(emp.id)
@@ -455,16 +527,14 @@ exports.getAvailability = async (req, res) => {
             continue;
           }
 
-          // 2. Verificar citas existentes
-          const conflictAppt = empAppointments.find(appt => {
-            const apptS = dateToMinutesColombia(appt.startTime);
-            const apptE = dateToMinutesColombia(appt.endTime);
-            return overlaps(current, current + safeDuration, apptS, apptE);
-          });
+          // 2. Verificar citas existentes (tramos reales del profesional)
+          const conflictRange = empBusyRanges.find(r =>
+            overlaps(current, current + safeDuration, r.start, r.end)
+          );
 
-          if (conflictAppt) {
-            // Saltar exactamente al final de la cita - el siguiente slot inicia cuando termina esta
-            current = dateToMinutesColombia(conflictAppt.endTime);
+          if (conflictRange) {
+            // Saltar al final del tramo ocupado
+            current = conflictRange.end;
             continue;
           }
 

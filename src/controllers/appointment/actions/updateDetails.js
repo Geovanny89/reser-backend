@@ -2,6 +2,7 @@ const { Appointment, Service, Employee, User, AppointmentEmployee } = require('.
 const { Op } = require('sequelize');
 const { APPOINTMENT_STATUS, MESSAGE_FLOW_STATUS } = require('../constants');
 const { emitAppointmentUpdate, emitAppointmentCancelled } = require('../../../services/socketService');
+const { assertNoBlockConflicts } = require('../conflictUtils');
 
 /**
  * Cancela una cita
@@ -32,7 +33,8 @@ async function cancelAppointment(appointmentId, reason, user) {
  */
 async function updateAppointment(appointmentId, data) {
   const {
-    clientName, clientPhone, clientEmail, serviceId, employeeId, startTime, notes
+    clientName, clientPhone, clientEmail, serviceId, employeeId, startTime, notes,
+    extraServices, additionalEmployeeIds
   } = data;
 
   const appointment = await Appointment.findByPk(appointmentId, {
@@ -50,37 +52,93 @@ async function updateAppointment(appointmentId, data) {
   if (clientPhone) updateData.clientPhone = clientPhone.replace(/\D/g, '');
   if (clientEmail) updateData.clientEmail = clientEmail.toLowerCase().trim();
   if (notes !== undefined) updateData.notes = notes;
+  if (employeeId) updateData.employeeId = employeeId;
+  if (extraServices !== undefined) updateData.extraServices = extraServices;
 
+  let currentServiceId = serviceId || appointment.serviceId;
   if (serviceId && serviceId !== appointment.serviceId) {
-    const service = await Service.findByPk(serviceId);
-    if (!service) throw new Error('Servicio no encontrado');
     updateData.serviceId = serviceId;
-
-    // Recalcular endTime si cambió el servicio
-    const durationMin = service.durationMin || service.duration || 30;
-    if (startTime) {
-      const start = new Date(startTime);
-      updateData.startTime = start;
-      updateData.endTime = new Date(start.getTime() + durationMin * 60000);
-    } else {
-      const currentStart = new Date(appointment.startTime);
-      updateData.endTime = new Date(currentStart.getTime() + durationMin * 60000);
-    }
   }
 
-  if (employeeId) updateData.employeeId = employeeId;
+  // Recalcular endTime siempre si hay cambio de servicio, extraServices o startTime
+  if (serviceId || startTime || extraServices !== undefined) {
+    const service = await Service.findByPk(currentServiceId);
+    if (!service) throw new Error('Servicio no encontrado');
 
-  if (startTime && !updateData.startTime) {
-    const parsedStartTime = new Date(startTime);
-    if (!isNaN(parsedStartTime.getTime())) {
-      const service = await Service.findByPk(updateData.serviceId || appointment.serviceId);
-      const durationMin = service?.durationMin || service?.duration || 30;
-      updateData.startTime = parsedStartTime;
-      updateData.endTime = new Date(parsedStartTime.getTime() + durationMin * 60000);
-    }
+    const mainDuration = parseInt(service.durationMin || 30);
+    const currentExtras = extraServices !== undefined ? extraServices : (appointment.extraServices || []);
+    const start = startTime ? new Date(startTime) : new Date(appointment.startTime);
+
+    // ========== BLOQUES SECUENCIALES POR PROFESIONAL (mismo flujo que create.js) ==========
+    const principalEmpId = employeeId || appointment.employeeId;
+    const blocks = [];
+    let cursor = start.getTime();
+
+    // Bloque 0: Servicio BASE → principal
+    const mainEnd = cursor + mainDuration * 60000;
+    blocks.push({
+      employeeId: principalEmpId,
+      startTime: new Date(cursor),
+      endTime: new Date(mainEnd),
+      durationMin: mainDuration,
+      label: `Servicio: ${service.name}`
+    });
+    cursor = mainEnd;
+
+    // Bloques extras secuenciales
+    currentExtras.forEach((es, idx) => {
+      const d = parseInt(es.durationMin) || 0;
+      const blockStart = cursor;
+      const blockEnd = cursor + d * 60000;
+      const empForExtra = es.employeeId && String(es.employeeId) !== String(principalEmpId)
+        ? es.employeeId
+        : principalEmpId;
+      blocks.push({
+        employeeId: empForExtra,
+        startTime: new Date(blockStart),
+        endTime: new Date(blockEnd),
+        durationMin: d,
+        label: `Extra: ${es.name || 'Extra ' + (idx + 1)}`
+      });
+      cursor = blockEnd;
+    });
+
+    const totalDuration = blocks.reduce((s, b) => s + b.durationMin, 0);
+    const newEnd = new Date(cursor);
+
+    // Validar conflictos por TRAMO REAL (excluyendo la cita actual)
+    await assertNoBlockConflicts(blocks, {
+      businessId: appointment.businessId,
+      excludeAppointmentId: appointmentId
+    });
+
+    if (startTime) updateData.startTime = start;
+    updateData.endTime = newEnd;
   }
 
   await appointment.update(updateData);
+
+  // Actualizar empleados adicionales si fueron proporcionados
+  // (también fusionar empleados asignados en extraServices)
+  if (additionalEmployeeIds !== undefined || extraServices !== undefined) {
+    const principalId = String(updateData.employeeId || appointment.employeeId);
+    const currentExtras = extraServices !== undefined ? extraServices : (appointment.extraServices || []);
+    const fromExtras = (currentExtras || [])
+      .map(es => (es?.employeeId != null ? String(es.employeeId) : null))
+      .filter(id => id && id !== principalId);
+    const fromExplicit = (additionalEmployeeIds || []).map(id => String(id)).filter(Boolean);
+    const merged = [...new Set([...fromExplicit, ...fromExtras])].filter(id => id !== principalId);
+
+    await AppointmentEmployee.destroy({ where: { appointmentId } });
+    if (merged.length > 0) {
+      const appointmentEmployees = merged.map((addEmpId, index) => ({
+        appointmentId,
+        employeeId: addEmpId,
+        role: index === 0 ? 'auxiliar' : 'apoyo'
+      }));
+      await AppointmentEmployee.bulkCreate(appointmentEmployees);
+    }
+  }
 
   // Recargar con relaciones
   const result = await Appointment.findByPk(appointmentId, {
