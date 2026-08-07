@@ -127,37 +127,31 @@ async function getAvailability(date, employeeId, serviceId, businessId, allowPas
     }
 
     // Clasificar horarios especiales
-    const empSpecial = specialSchedules.filter(s => s.employeeId === employeeId);
-    const bizSpecial = specialSchedules.filter(s => s.employeeId === null);
+    const empSpecial = specialSchedules.filter(s => String(s.employeeId) === String(employeeId));
+    const bizSpecial = specialSchedules.filter(s => s.employeeId === null || s.employeeId === undefined);
 
     // Prioridad para horarios de trabajo: Empleado > Negocio
     const empWork = empSpecial.filter(s => s.type === 'work');
     const bizWork = bizSpecial.filter(s => s.type === 'work');
     workSchedules = empWork.length > 0 ? empWork : bizWork;
 
-    // Combinar bloqueos y almuerzos (negocio + empleado)
     lunchRanges = specialSchedules.filter(s => s.type === 'lunch');
     blockedRanges = specialSchedules.filter(s => s.type === 'blocked');
 
-    // Si los horarios especiales no incluyen un horario de trabajo ('work'),
-    // cargamos el horario regular y le agregamos estos bloqueos/almuerzos.
+    // Horario regular del empleado (almuerzo/descansos del día de la semana)
+    const regularSchedules = await Schedule.findAll({
+      where: { employeeId, dayOfWeek, active: true }
+    });
+    const regularLunch = regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
+    const regularBlocked = regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+
+    // Si el festivo/especial solo define trabajo (ej. 08–18), conservar descansos regulares
+    lunchRanges = [...lunchRanges, ...regularLunch];
+    blockedRanges = [...blockedRanges, ...regularBlocked];
+
+    // Si no hay work especial, usar el work regular
     if (workSchedules.length === 0) {
-      const regularSchedules = await Schedule.findAll({
-        where: { employeeId, dayOfWeek, active: true }
-      });
-
       workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
-
-      // Combinar con almuerzos y bloqueos regulares
-      lunchRanges = [
-        ...lunchRanges,
-        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
-      ];
-
-      blockedRanges = [
-        ...blockedRanges,
-        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
-      ];
     }
 
     console.log(`[Availability] Usando horarios especiales para ${date}. Work: ${workSchedules.length}, Blocked: ${blockedRanges.length}, Lunch: ${lunchRanges.length}`);
@@ -469,19 +463,21 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, emplo
     const workStartMin = Math.max(0, Math.min(24 * 60, workStart));
     const workEndMin = Math.max(workStartMin + 1, Math.min(24 * 60, workEnd));
 
-    // Protección: duración mayor que horario → no hay slots posibles
-    if (safeDuration > (workEndMin - workStartMin)) continue;
-
+    // Última cita: puede EMPEZAR dentro del horario aunque TERMINE después del cierre
+    // (ej. horario hasta 18:00, libre 17:45 → se puede agendar un servicio de 30–40 min)
     let current = workStartMin;
     let safetyCounter = 0;
     const SAFETY_LIMIT = 1000;
 
-    while (current + safeDuration <= workEndMin) {
+    while (current < workEndMin) {
       safetyCounter++;
       if (safetyCounter > SAFETY_LIMIT) {
         console.error(`[generateAvailableSlots] Bucle sospechoso, abortando. current=${current}, schedule=${sched.startTime}-${sched.endTime}`);
         break;
       }
+
+      // Nunca ofrecer la hora exacta de cierre como inicio (ej. 18:00)
+      if (current >= workEndMin) break;
 
       const hh = String(Math.floor(current / 60)).padStart(2, '0');
       const mm = String(current % 60).padStart(2, '0');
@@ -513,19 +509,20 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, emplo
       });
 
       if (conflictBusy) {
-        // Saltar al final del rango, pero NUNCA por debajo de current+1 ni por encima de workEndMin
         const nextByConflict = dateToMinutesColombia(conflictBusy.end);
-        const clamped = clampToRange(nextByConflict, current + 1, workEndMin);
-        current = clamped;
+        // Si la ocupación llega al cierre o más, no hay más inicios posibles
+        if (nextByConflict >= workEndMin) break;
+        current = clampToRange(nextByConflict, current + 1, workEndMin);
         continue;
       }
 
       // ==================== 3. BLOQUEOS / ALMUERZO ====================
-
+      // Solo dentro del horario laboral; se permite terminar después del cierre.
       const conflictBlock = [...lunchRanges, ...blockedRanges].find(r => {
         const blockStart = toMinutes(r.startTime);
         const blockEnd = toMinutes(r.endTime);
-        return overlaps(current, current + safeDuration, blockStart, blockEnd);
+        const slotEndWithinWork = Math.min(current + safeDuration, workEndMin);
+        return overlaps(current, slotEndWithinWork, blockStart, blockEnd);
       });
 
       if (conflictBlock) {
@@ -535,7 +532,7 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, emplo
         continue;
       }
 
-      // ==================== 4. SLOT VÁLIDO ====================
+      // ==================== 4. SLOT VÁLIDO (inicio estrictamente antes del cierre) ====================
 
       slots.push({
         time: timeStr,
@@ -543,8 +540,9 @@ function generateAvailableSlots(workSchedules, lunchRanges, blockedRanges, emplo
         endTime: slotEndTime.toISOString()
       });
 
-      // Avanzar por intervalo
-      current = clampToRange(current + SLOT_INTERVAL, current + 1, workEndMin);
+      const next = current + SLOT_INTERVAL;
+      if (next >= workEndMin) break;
+      current = next;
     }
   }
 
@@ -652,37 +650,29 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     }
 
     // Clasificar horarios especiales
-    const empSpecial = specialSchedules.filter(s => s.employeeId === employeeId);
-    const bizSpecial = specialSchedules.filter(s => s.employeeId === null);
+    const empSpecial = specialSchedules.filter(s => String(s.employeeId) === String(employeeId));
+    const bizSpecial = specialSchedules.filter(s => s.employeeId === null || s.employeeId === undefined);
 
     // Prioridad para horarios de trabajo: Empleado > Negocio
     const empWork = empSpecial.filter(s => s.type === 'work');
     const bizWork = bizSpecial.filter(s => s.type === 'work');
     workSchedules = empWork.length > 0 ? empWork : bizWork;
 
-    // Combinar bloqueos y almuerzos (negocio + empleado)
     lunchRanges = specialSchedules.filter(s => s.type === 'lunch');
     blockedRanges = specialSchedules.filter(s => s.type === 'blocked');
 
-    // Si los horarios especiales no incluyen un horario de trabajo ('work'),
-    // cargamos el horario regular y le agregamos estos bloqueos/almuerzos.
+    const regularSchedules = await Schedule.findAll({
+      where: { employeeId, dayOfWeek, active: true }
+    });
+    const regularLunch = regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
+    const regularBlocked = regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+
+    // Festivo con work especial: conservar descansos regulares del empleado
+    lunchRanges = [...lunchRanges, ...regularLunch];
+    blockedRanges = [...blockedRanges, ...regularBlocked];
+
     if (workSchedules.length === 0) {
-      const regularSchedules = await Schedule.findAll({
-        where: { employeeId, dayOfWeek, active: true }
-      });
-
       workSchedules = regularSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
-
-      // Combinar con almuerzos y bloqueos regulares
-      lunchRanges = [
-        ...lunchRanges,
-        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch')
-      ];
-
-      blockedRanges = [
-        ...blockedRanges,
-        ...regularSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked')
-      ];
     }
     console.log(`[validateManualTime] Usando horarios especiales para ${date}. Work: ${workSchedules.length}, Blocked: ${blockedRanges.length}, Lunch: ${lunchRanges.length}`);
   } else {
@@ -732,7 +722,8 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
     }))
   });
 
-  // Verificar si está dentro de algún horario de trabajo
+  // Verificar si el INICIO está dentro del horario (antes del cierre; no a la hora exacta de fin)
+  // La cita puede terminar después del cierre.
   const inWorkSchedule = workSchedules.some(sched => {
     const workStart = toMinutes(sched.startTime);
     const workEnd = toMinutes(sched.endTime);
@@ -741,20 +732,30 @@ async function validateManualTime(date, employeeId, serviceId, businessId, manua
       workEnd,
       manualStart,
       manualEnd,
-      condition: manualStart >= workStart && manualEnd <= workEnd
+      condition: manualStart >= workStart && manualStart < workEnd
     });
-    return manualStart >= workStart && manualEnd <= workEnd;
+    return manualStart >= workStart && manualStart < workEnd;
   });
 
   if (!inWorkSchedule) {
     return { valid: false, reason: 'La hora seleccionada está fuera del horario de trabajo del empleado' };
   }
 
-  // Verificar conflicto con almuerzo o bloqueos
+  // Verificar conflicto con almuerzo o bloqueos solo dentro del horario laboral
+  const workEndForSlot = (() => {
+    for (const sched of workSchedules) {
+      const workStart = toMinutes(sched.startTime);
+      const workEnd = toMinutes(sched.endTime);
+      if (manualStart >= workStart && manualStart < workEnd) return workEnd;
+    }
+    return manualEnd;
+  })();
+
   const conflictBlock = [...lunchRanges, ...blockedRanges].find(r => {
     const blockStart = toMinutes(r.startTime);
     const blockEnd = toMinutes(r.endTime);
-    return manualStart < blockEnd && manualEnd > blockStart;
+    const endWithinWork = Math.min(manualEnd, workEndForSlot);
+    return manualStart < blockEnd && endWithinWork > blockStart;
   });
 
   if (conflictBlock) {

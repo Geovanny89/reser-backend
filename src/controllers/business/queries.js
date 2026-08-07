@@ -495,9 +495,20 @@ exports.getAvailability = async (req, res) => {
         const closedSchedule = empSpecialSchedules.find(s => s.type === 'closed');
         if (closedSchedule) continue;
 
-        workSchedules = empSpecialSchedules.filter(s => s.type === 'work');
-        lunchRanges = empSpecialSchedules.filter(s => s.type === 'lunch');
-        blockedRanges = empSpecialSchedules.filter(s => s.type === 'blocked');
+        const specialWork = empSpecialSchedules.filter(s => s.type === 'work');
+        const specialLunch = empSpecialSchedules.filter(s => s.type === 'lunch');
+        const specialBlocked = empSpecialSchedules.filter(s => s.type === 'blocked');
+
+        const empSchedules = allRegularSchedules.filter(s => String(s.employeeId) === String(emp.id));
+        const regularWork = empSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
+        const regularLunch = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'lunch');
+        const regularBlocked = empSchedules.filter(s => (s.type || '').trim().toLowerCase() === 'blocked');
+
+        // Work especial (festivo) si existe; si no, work regular
+        workSchedules = specialWork.length > 0 ? specialWork : regularWork;
+        // Descansos del festivo + descansos regulares del empleado
+        lunchRanges = [...specialLunch, ...regularLunch];
+        blockedRanges = [...specialBlocked, ...regularBlocked];
       } else {
         const empSchedules = allRegularSchedules.filter(s => String(s.employeeId) === String(emp.id));
         workSchedules = empSchedules.filter(s => (s.type || 'work').trim().toLowerCase() === 'work');
@@ -513,7 +524,10 @@ exports.getAvailability = async (req, res) => {
         let current = workStart;
         const safeDuration = (duration && duration > 0) ? Number(duration) : 30;
 
-        while (current + safeDuration <= workEnd) {
+        while (current < workEnd) {
+          // No ofrecer la hora exacta de cierre como inicio
+          if (current >= workEnd) break;
+
           const hh = String(Math.floor(current / 60)).padStart(2, '0');
           const mm = String(current % 60).padStart(2, '0');
           const timeStr = `${hh}:${mm}`;
@@ -533,34 +547,35 @@ exports.getAvailability = async (req, res) => {
           );
 
           if (conflictRange) {
-            // Saltar al final del tramo ocupado
+            if (conflictRange.end >= workEnd) break;
             current = conflictRange.end;
             continue;
           }
 
-          // 3. Verificar almuerzo y bloqueos
+          // 3. Verificar almuerzo y bloqueos (solo dentro del horario laboral;
+          //    se permite que la última cita termine después del cierre)
           const conflictBlock = [...lunchRanges, ...blockedRanges].find(r => 
-            overlaps(current, current + safeDuration, toMinutes(r.startTime), toMinutes(r.endTime))
+            overlaps(current, Math.min(current + safeDuration, workEnd), toMinutes(r.startTime), toMinutes(r.endTime))
           );
 
           if (conflictBlock) {
             const blockEnd = toMinutes(conflictBlock.endTime);
             if (blockEnd >= workEnd) break;
-            // Saltar exactamente al final del bloqueo
             current = blockEnd;
             continue;
           }
 
-          // 4. Slot libre
           slots.push({
             employeeId: emp.id,
-            employeeName: emp.User.name,
+            employeeName: emp.User?.name || 'Profesional',
             startTime: slotStart,
             endTime: slotEnd,
             localTime: timeStr,
           });
 
-          current += SLOT_INTERVAL;
+          const next = current + SLOT_INTERVAL;
+          if (next >= workEnd) break;
+          current = next;
         }
       }
     }
