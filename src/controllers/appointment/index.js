@@ -53,10 +53,12 @@ module.exports = {
   },
   updateClient: async (req, res) => {
     try {
-      const result = await clients.updateClient(req.body);
+      const { businessId } = req.query;
+      const { originalPhone, originalEmail, newName, newPhone, newEmail, birthday } = req.body;
+      const result = await clients.updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail, birthday);
       res.json(result);
     } catch (e) {
-      res.status(500).json({ error: e.message });
+      res.status(400).json({ error: e.message });
     }
   },
   getClientTags: async (req, res) => {
@@ -109,11 +111,12 @@ module.exports = {
       res.status(400).json({ error: e.message });
     }
   },
-  updateClient: async (req, res) => {
+  mergeClients: async (req, res) => {
     try {
-      const { businessId } = req.query;
-      const { originalPhone, originalEmail, newName, newPhone, newEmail, birthday } = req.body;
-      const result = await clients.updateClientData(businessId, originalPhone, originalEmail, newName, newPhone, newEmail, birthday);
+      const businessId = req.query.businessId || req.body.businessId;
+      if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+      const { source, target } = req.body;
+      const result = await clients.mergeClients(businessId, source, target);
       res.json(result);
     } catch (e) {
       res.status(400).json({ error: e.message });

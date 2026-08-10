@@ -201,6 +201,7 @@ router.get('/', role('admin', 'admin_suc', 'superadmin'), ctrl.getByBusiness);
 router.get('/consolidated', role('admin', 'admin_suc'), ctrl.getConsolidated);
 router.get('/clients', role('admin', 'admin_suc', 'superadmin', 'employee'), ctrl.getClientsByBusiness);
 router.put('/clients', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClient);
+router.post('/clients/merge', role('admin', 'admin_suc', 'superadmin'), ctrl.mergeClients);
 router.get('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.getClientTags);
 router.post('/client-tags', role('admin', 'admin_suc', 'superadmin'), ctrl.createClientTag);
 router.put('/client-tags/:id', role('admin', 'admin_suc', 'superadmin'), ctrl.updateClientTag);

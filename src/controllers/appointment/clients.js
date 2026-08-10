@@ -315,6 +315,171 @@ async function updateClientData(businessId, originalPhone, originalEmail, newNam
   return { updatedCount };
 }
 
+/**
+ * Construye el where para identificar citas de un cliente virtual
+ * (teléfono → email → nombre sin contacto)
+ */
+function buildClientAppointmentWhere(businessId, client) {
+  const where = { businessId };
+  const rawPhone = client?.phone ? String(client.phone).replace(/\D/g, '') : '';
+  const phone = rawPhone ? rawPhone.slice(-10) : null;
+  const email = client?.email ? String(client.email).toLowerCase().trim() : null;
+  const name = client?.name ? String(client.name).trim() : null;
+
+  if (phone) {
+    // Coincidir teléfono completo o últimos 10 dígitos
+    where[Op.or] = [
+      { clientPhone: phone },
+      { clientPhone: { [Op.like]: `%${phone}` } }
+    ];
+  } else if (email) {
+    where.clientEmail = email;
+  } else if (name) {
+    where.clientName = name;
+    where[Op.and] = [
+      {
+        [Op.or]: [
+          { clientPhone: null },
+          { clientPhone: '' }
+        ]
+      },
+      {
+        [Op.or]: [
+          { clientEmail: null },
+          { clientEmail: '' }
+        ]
+      }
+    ];
+  } else {
+    throw new Error('Se requiere teléfono, email o nombre del cliente');
+  }
+  return where;
+}
+
+function clientIdentityKey(client) {
+  const phone = client?.phone ? String(client.phone).replace(/\D/g, '').slice(-10) : '';
+  const email = client?.email ? String(client.email).toLowerCase().trim() : '';
+  const name = client?.name ? String(client.name).trim().toLowerCase() : '';
+  if (phone) return `p:${phone}`;
+  if (email) return `e:${email}`;
+  if (name) return `n:${name}`;
+  return null;
+}
+
+/**
+ * Fusiona un cliente duplicado en otro.
+ * Las citas (incluidas las atendidas) se conservan y pasan al cliente destino.
+ * El duplicado desaparece de la lista porque ya no quedan citas con su clave.
+ */
+async function mergeClients(businessId, source, target) {
+  if (!businessId) throw new Error('businessId es requerido');
+  if (!source || !target) throw new Error('Cliente origen y destino son requeridos');
+
+  const sourceKey = clientIdentityKey(source);
+  const targetKey = clientIdentityKey(target);
+  if (!sourceKey) throw new Error('El cliente a eliminar no tiene identificación válida');
+  if (!targetKey) throw new Error('Selecciona el cliente que se conservará');
+  if (sourceKey === targetKey) throw new Error('No puedes fusionar un cliente consigo mismo');
+
+  const sourceWhere = buildClientAppointmentWhere(businessId, source);
+  const targetWhere = buildClientAppointmentWhere(businessId, target);
+
+  const targetAppt = await Appointment.findOne({
+    where: targetWhere,
+    attributes: ['clientId', 'clientName', 'clientPhone', 'clientEmail']
+  });
+
+  const cleanPhone = target.phone
+    ? String(target.phone).replace(/\D/g, '').slice(-10)
+    : (targetAppt?.clientPhone || null);
+  const cleanEmail = target.email
+    ? String(target.email).toLowerCase().trim()
+    : (targetAppt?.clientEmail || null);
+  const cleanName = (target.name || targetAppt?.clientName || source.name || 'Sin nombre').trim();
+
+  const updateData = {
+    clientName: cleanName,
+    clientPhone: cleanPhone || null,
+    clientEmail: cleanEmail || null
+  };
+  if (targetAppt?.clientId) {
+    updateData.clientId = targetAppt.clientId;
+  }
+
+  const [updatedCount] = await Appointment.update(updateData, { where: sourceWhere });
+
+  // Mover etiquetas del origen al destino (si el origen tenía teléfono/email)
+  const tagWhere = { businessId };
+  if (source.phone) {
+    const p = String(source.phone).replace(/\D/g, '');
+    tagWhere.clientPhone = p.length >= 10 ? p.slice(-10) : p;
+  } else if (source.email) {
+    tagWhere.clientEmail = String(source.email).toLowerCase().trim();
+  }
+
+  if (tagWhere.clientPhone || tagWhere.clientEmail) {
+    const assignments = await ClientTagAssignment.findAll({ where: tagWhere });
+    for (const assignment of assignments) {
+      const existsWhere = {
+        businessId,
+        clientTagId: assignment.clientTagId,
+        clientPhone: cleanPhone || null,
+        clientEmail: cleanEmail || null
+      };
+      const exists = await ClientTagAssignment.findOne({ where: existsWhere });
+      if (exists) {
+        await assignment.destroy();
+      } else {
+        await assignment.update({
+          clientPhone: cleanPhone || null,
+          clientEmail: cleanEmail || null,
+          clientName: cleanName
+        });
+      }
+    }
+  }
+
+  // Perfil/cumpleaños: si el origen tenía y el destino no, moverlo
+  if (source.phone || source.email) {
+    const profileWhere = { businessId };
+    if (source.phone) profileWhere.clientPhone = String(source.phone).replace(/\D/g, '').slice(-10);
+    else profileWhere.clientEmail = String(source.email).toLowerCase().trim();
+
+    const sourceProfile = await ClientProfile.findOne({ where: profileWhere });
+    if (sourceProfile) {
+      const destWhere = { businessId };
+      if (cleanPhone) destWhere.clientPhone = cleanPhone;
+      else if (cleanEmail) destWhere.clientEmail = cleanEmail;
+
+      let destProfile = null;
+      if (cleanPhone || cleanEmail) {
+        destProfile = await ClientProfile.findOne({ where: destWhere });
+      }
+
+      if (destProfile) {
+        if (!destProfile.birthday && sourceProfile.birthday) {
+          await destProfile.update({ birthday: sourceProfile.birthday });
+        }
+        await sourceProfile.destroy();
+      } else if (cleanPhone || cleanEmail) {
+        await sourceProfile.update({
+          clientPhone: cleanPhone || sourceProfile.clientPhone,
+          clientEmail: cleanEmail || sourceProfile.clientEmail
+        });
+      } else {
+        await sourceProfile.destroy();
+      }
+    }
+  }
+
+  return {
+    updatedCount,
+    message: updatedCount > 0
+      ? `Cliente fusionado. ${updatedCount} cita(s) conservada(s) en el cliente destino.`
+      : 'No se encontraron citas del cliente duplicado para fusionar.'
+  };
+}
+
 module.exports = {
   getClientsByBusiness,
   getClientTags,
@@ -323,5 +488,6 @@ module.exports = {
   deleteClientTag,
   assignTagToClient,
   removeTagFromClient,
-  updateClientData
+  updateClientData,
+  mergeClients
 };
