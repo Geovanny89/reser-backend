@@ -539,7 +539,7 @@ async function anonymizeClient(businessId, source) {
   return {
     updatedCount,
     message: updatedCount > 0
-      ? `Cliente quitado de la lista. ${updatedCount} cita(s) conservada(s) como "${ANONYMIZED_CLIENT_NAME}".`
+      ? `Cliente eliminadpo de la lista. ${updatedCount} cita(s) conservada(s) como "${ANONYMIZED_CLIENT_NAME}".`
       : 'No se encontraron citas de este cliente.'
   };
 }
