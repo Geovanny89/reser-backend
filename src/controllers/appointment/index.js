@@ -122,6 +122,17 @@ module.exports = {
       res.status(400).json({ error: e.message });
     }
   },
+  anonymizeClient: async (req, res) => {
+    try {
+      const businessId = req.query.businessId || req.body.businessId;
+      if (!businessId) return res.status(400).json({ error: 'businessId es requerido' });
+      const { source } = req.body;
+      const result = await clients.anonymizeClient(businessId, source);
+      res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: e.message });
+    }
+  },
   
   // Handlers de cumpleaños
   getBirthdayTemplates: async (req, res) => {

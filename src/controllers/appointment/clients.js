@@ -4,6 +4,9 @@
 
 const { Appointment, Service, Employee, User, Business, ClientTag, ClientTagAssignment, ClientProfile, Op } = require('../../models');
 
+/** Nombre usado al anonimizar; se oculta de la lista de clientes */
+const ANONYMIZED_CLIENT_NAME = 'Cliente eliminado';
+
 /**
  * Obtiene lista de clientes únicos con estadísticas para un negocio
  */
@@ -166,7 +169,14 @@ async function getClientsByBusiness(businessId, search = null) {
     }
   });
 
-  const clients = Array.from(clientsMap.values());
+  const clients = Array.from(clientsMap.values())
+    // No mostrar clientes anonimizados / eliminados de la lista
+    .filter(c => {
+      const isAnon = (c.name || '').trim() === ANONYMIZED_CLIENT_NAME;
+      const noContact = !c.phone && !c.email;
+      return !(isAnon && noContact);
+    });
+
   return {
     total: clients.length,
     availableTags,
@@ -480,6 +490,60 @@ async function mergeClients(businessId, source, target) {
   };
 }
 
+/**
+ * Quita un cliente de la lista anonimizando sus datos de contacto.
+ * Las citas se conservan (trazabilidad de servicio/pagos) como "Cliente eliminado".
+ */
+async function anonymizeClient(businessId, source) {
+  if (!businessId) throw new Error('businessId es requerido');
+  if (!source) throw new Error('Cliente es requerido');
+
+  const sourceKey = clientIdentityKey(source);
+  if (!sourceKey) throw new Error('El cliente no tiene identificación válida');
+  if ((source.name || '').trim() === ANONYMIZED_CLIENT_NAME && !source.phone && !source.email) {
+    throw new Error('Este cliente ya está eliminado de la lista');
+  }
+
+  const sourceWhere = buildClientAppointmentWhere(businessId, source);
+
+  const [updatedCount] = await Appointment.update({
+    clientName: ANONYMIZED_CLIENT_NAME,
+    clientPhone: null,
+    clientEmail: null,
+    clientId: null
+  }, { where: sourceWhere });
+
+  // Quitar etiquetas del cliente
+  const tagWhere = { businessId };
+  if (source.phone) {
+    const p = String(source.phone).replace(/\D/g, '');
+    tagWhere.clientPhone = p.length >= 10 ? p.slice(-10) : p;
+  } else if (source.email) {
+    tagWhere.clientEmail = String(source.email).toLowerCase().trim();
+  }
+  if (tagWhere.clientPhone || tagWhere.clientEmail) {
+    await ClientTagAssignment.destroy({ where: tagWhere });
+  }
+
+  // Quitar perfil / cumpleaños
+  if (source.phone || source.email) {
+    const profileWhere = { businessId };
+    if (source.phone) {
+      profileWhere.clientPhone = String(source.phone).replace(/\D/g, '').slice(-10);
+    } else {
+      profileWhere.clientEmail = String(source.email).toLowerCase().trim();
+    }
+    await ClientProfile.destroy({ where: profileWhere });
+  }
+
+  return {
+    updatedCount,
+    message: updatedCount > 0
+      ? `Cliente quitado de la lista. ${updatedCount} cita(s) conservada(s) como "${ANONYMIZED_CLIENT_NAME}".`
+      : 'No se encontraron citas de este cliente.'
+  };
+}
+
 module.exports = {
   getClientsByBusiness,
   getClientTags,
@@ -489,5 +553,7 @@ module.exports = {
   assignTagToClient,
   removeTagFromClient,
   updateClientData,
-  mergeClients
+  mergeClients,
+  anonymizeClient,
+  ANONYMIZED_CLIENT_NAME
 };
