@@ -2,7 +2,7 @@
  * Agenda y calendario de empleados - Versión Original
  */
 
-const { Appointment, Service, Business } = require('../../models');
+const { Appointment, Service, Business, Employee, User, AppointmentEmployee } = require('../../models');
 const { Op } = require('sequelize');
 
 /**
@@ -23,15 +23,21 @@ async function getTodayAppointments(req, res) {
 
     const appointments = await Appointment.findAll({
       where: {
-        employeeId,
+        [Op.or]: [
+          { employeeId },
+          { '$AdditionalEmployees.employeeId$': employeeId }
+        ],
         startTime: { [Op.between]: [today, tomorrow] },
         status: { [Op.in]: ['pending', 'confirmed', 'attention', 'done', 'cancelled'] }
       },
       include: [
         { model: Service, attributes: ['name', 'price', 'durationMin'] },
-        { model: Business, attributes: ['name', 'slug'] }
+        { model: Business, attributes: ['name', 'slug'] },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
       ],
-      order: [['startTime', 'ASC']]
+      order: [['startTime', 'ASC']],
+      subQuery: false
     });
 
     // Ordenar: primero 'attention' (en atención), luego pendientes/confirmadas por hora, al final terminadas/canceladas
@@ -73,15 +79,21 @@ async function getAppointmentsByDateRange(req, res) {
 
     const appointments = await Appointment.findAll({
       where: {
-        employeeId,
+        [Op.or]: [
+          { employeeId },
+          { '$AdditionalEmployees.employeeId$': employeeId }
+        ],
         startTime: { [Op.between]: [new Date(`${startDate}T00:00:00-05:00`), new Date(`${endDate}T23:59:59-05:00`)] },
         status: { [Op.in]: ['pending', 'confirmed', 'attention', 'done', 'cancelled'] }
       },
       include: [
         { model: Service, attributes: ['name', 'price', 'durationMin'] },
-        { model: Business, attributes: ['name', 'slug'] }
+        { model: Business, attributes: ['name', 'slug'] },
+        { model: Employee, include: [{ model: User, attributes: ['name'] }] },
+        { model: AppointmentEmployee, as: 'AdditionalEmployees', include: [{ model: Employee, include: [{ model: User, attributes: ['name'] }] }] }
       ],
-      order: [['startTime', 'ASC']]
+      order: [['startTime', 'ASC']],
+      subQuery: false
     });
 
     // Ordenar: primero 'attention' (en atención), luego pendientes/confirmadas por hora, al final terminadas/canceladas
