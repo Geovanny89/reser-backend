@@ -28,6 +28,16 @@ async function fetchAllInstances() {
       const status = inst.connectionStatus || inst.state || 'unknown';
 
       const existing = state.getInstance(businessId);
+      const existingName = existing?.instanceName || '';
+      const existingTs = parseInt(existingName.split('_')[1] || 0);
+      const newTs = parseInt(fullName.split('_')[1] || 0);
+
+      // Si tenemos en memoria una instancia más reciente (ej: recién creada esperando QR),
+      // evitar que una instancia vieja la sobrescriba
+      if (existingTs > newTs) {
+        continue;
+      }
+
       const isNewActive = status === 'open' || status === 'connected';
       const isExistingActive = existing && (existing.status === 'open' || existing.status === 'connected');
 
@@ -133,17 +143,29 @@ async function hasValidSession(businessId) {
       if (activeInst) {
         const s = activeInst.connectionStatus || activeInst.status || activeInst.state;
         if (s === 'open' || s === 'connected') {
-          console.log(`[Evolution API] ✅ Instancia actual ${current.instanceName} está conectada.`);
-          return true;
+          // Verificar en vivo con Baileys para no engañar al frontend si el socket está en 'connecting'
+          const liveState = await getConnectionState(current.instanceName);
+          if (liveState === 'open' || liveState === 'connected') {
+            console.log(`[Evolution API] ✅ Instancia actual ${current.instanceName} está conectada (verificado en vivo).`);
+            return true;
+          } else {
+            console.log(`[Evolution API] ⚠️ Instancia actual ${current.instanceName} reporta '${s}' en lista pero en vivo está: '${liveState}'`);
+            return false;
+          }
         }
       }
     }
 
-    // 2. Si no hay una "actual" conectada, buscar por nombre (incluyendo sufijos)
-    // Pero solo si no estamos en medio de una creación (si hay un lock, no deberíamos confiar en sesiones viejas)
+    // 2. Si no hay una "actual" conectada, buscar por nombre (priorizando la más reciente por timestamp)
     const matching = allInstances.filter(inst => {
       const name = inst.name || inst.instanceName;
       return name === businessId || (name && name.startsWith(businessId + '_'));
+    });
+
+    matching.sort((a, b) => {
+      const tsA = parseInt((a.name || a.instanceName || '').split('_')[1] || 0);
+      const tsB = parseInt((b.name || b.instanceName || '').split('_')[1] || 0);
+      return tsB - tsA;
     });
 
     for (const inst of matching) {
@@ -151,17 +173,18 @@ async function hasValidSession(businessId) {
       const name = inst.name || inst.instanceName;
       console.log(`[Evolution API] 💓 Instancia encontrada ${name} está en estado: ${s}`);
       if (s === 'open' || s === 'connected') {
-        // Si encontramos una abierta que NO es la que tenemos en memoria, 
-        // probablemente es una sesión antigua que sobrevivió. Sincronizar.
-        if (current?.instanceName !== name) {
-          console.log(`[Evolution API] 🔄 Sincronizando instancia activa encontrada: ${name}`);
-          state.setInstance(businessId, {
-            instanceName: name,
-            status: s,
-            phone: extractPhoneFromInstance(inst)
-          });
+        const liveState = await getConnectionState(name);
+        if (liveState === 'open' || liveState === 'connected') {
+          if (current?.instanceName !== name) {
+            console.log(`[Evolution API] 🔄 Sincronizando instancia activa confirmada en vivo: ${name}`);
+            state.setInstance(businessId, {
+              instanceName: name,
+              status: 'connected',
+              phone: extractPhoneFromInstance(inst)
+            });
+          }
+          return true;
         }
-        return true;
       }
     }
 

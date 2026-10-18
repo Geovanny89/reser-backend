@@ -65,9 +65,9 @@ async function stopInstance(businessId, shouldLogout = true) {
       } catch (err) { }
     }
 
-    // ESPERA CRÍTICA: Aumentada a 3s para asegurar que la API libere todas las instancias
+    // ESPERA CRÍTICA: Aumentada a 5s para asegurar que la API libere completamente todas las instancias
     if (matching.length > 0) {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 5000));
     }
 
     state.deleteInstance(businessId);
@@ -99,16 +99,21 @@ async function createInstance(businessId, forceFresh = false) {
 
     const existingOpen = matching.find(i => i.connectionStatus === 'open' || i.status === 'open' || i.state === 'open');
 
-    // Si NO es forceFresh y hay una conectada, la usamos directamente
+    // Si NO es forceFresh y hay una conectada, verificamos si realmente está conectada en vivo
     if (existingOpen && !forceFresh) {
       const activeName = existingOpen.name || existingOpen.instanceName;
-      console.log(`[Evolution API] ✅ Reutilizando instancia abierta: ${activeName}`);
-      state.setInstance(businessId, {
-        status: 'open',
-        instanceName: activeName,
-        phone: extractPhoneFromInstance(existingOpen)
-      });
-      return { success: true, status: 'open', existing: true, instanceName: activeName };
+      const { getConnectionState } = require('./instance.queries');
+      const liveState = await getConnectionState(activeName).catch(() => null);
+
+      if (liveState === 'open' || liveState === 'connected') {
+        console.log(`[Evolution API] ✅ Reutilizando instancia abierta y confirmada: ${activeName}`);
+        state.setInstance(businessId, {
+          status: 'open',
+          instanceName: activeName,
+          phone: extractPhoneFromInstance(existingOpen)
+        });
+        return { success: true, status: 'open', existing: true, instanceName: activeName };
+      }
     }
 
     // 2. Preparar nombre dinámico (SIEMPRE si es forceFresh para evitar 403)
@@ -128,6 +133,9 @@ async function createInstance(businessId, forceFresh = false) {
       // Breve espera para que la API procese las eliminaciones antes de crear la nueva
       await new Promise(r => setTimeout(r, 1000));
     }
+
+    // Limpiamos el QR anterior de la memoria explícitamente antes de crear
+    state.deleteQR(businessId);
 
     const proxy = require('./proxy');
     const proxyConfig = await proxy.getBestProxy(businessId);
@@ -153,11 +161,22 @@ async function createInstance(businessId, forceFresh = false) {
     if (proxyConfig && proxyConfig.host) {
       await configureProxy(instanceNameToUse).catch(() => { });
     } else {
-      // Si no hay proxyConfig o falló la conexión del proxy, asegurar que se desactive en la API
       await configureProxy(instanceNameToUse).catch(() => { });
     }
 
-    const qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
+    let qrData = data.qrcode?.base64 || data.qrcode?.code || data.code;
+
+    // RESPALDO: Si la instancia se creó pero no devolvió el QR en el body, lo pedimos explícitamente
+    if (!qrData) {
+      console.log(`[Evolution API] 🔄 Solicitando QR explícito para ${instanceNameToUse}...`);
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const qrResponse = await api.get(`/instance/connect/${instanceNameToUse}`);
+        qrData = qrResponse.data?.base64 || qrResponse.data?.code || null;
+      } catch (e) {
+        console.warn(`[Evolution API] ⚠️ No se pudo obtener el QR explícito:`, e.message);
+      }
+    }
 
     state.setInstance(businessId, {
       status: 'connecting',

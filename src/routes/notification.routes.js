@@ -354,10 +354,14 @@ router.post('/evolution/webhook', async (req, res) => {
         const { getInstance, setInstance } = require('../services/evolution/state');
         const current = getInstance(businessId);
 
-        // VALIDACIÓN: Solo procesar si es la instancia que esperamos o si no tenemos ninguna activa
+        // VALIDACIÓN: Solo descartar si viene de una instancia verdaderamente más vieja
         if (current && current.instanceName && incomingInstance !== current.instanceName) {
-          console.log(`[Evolution Webhook] ℹ️ Conexión ignorada para ${businessId} (instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
-          return res.status(200).json({ message: 'Connection ignored (stale instance)' });
+          const incomingTs = parseInt((incomingInstance || '').split('_')[1] || 0);
+          const currentTs = parseInt((current.instanceName || '').split('_')[1] || 0);
+          if (incomingTs < currentTs && current.status === 'connected') {
+            console.log(`[Evolution Webhook] ℹ️ Conexión ignorada para ${businessId} (instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
+            return res.status(200).json({ message: 'Connection ignored (stale instance)' });
+          }
         }
 
         console.log(`[Evolution Webhook] ✅ Instancia ${businessId} conectada (${incomingInstance}), guardando sesión...`);
@@ -444,13 +448,26 @@ router.post('/evolution/webhook', async (req, res) => {
       const qrBase64 = data?.base64 || data?.qrcode?.base64 || data?.code;
       if (qrBase64) {
         // VALIDACIÓN CRÍTICA: Solo aceptar QR de la instancia que consideramos activa en memoria
-        const { getInstance } = require('../services/evolution/state');
+        const { getInstance, setInstance } = require('../services/evolution/state');
         const current = getInstance(businessId);
         const incomingInstance = req.body.instance || req.body.instanceName;
 
         if (current && current.instanceName && incomingInstance !== current.instanceName) {
-          console.log(`[Evolution Webhook] ℹ️ QR ignorado para ${businessId} (proviene de instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
-          return res.status(200).json({ message: 'QR ignored (stale instance)' });
+          const incomingTs = parseInt((incomingInstance || '').split('_')[1] || 0);
+          const currentTs = parseInt((current.instanceName || '').split('_')[1] || 0);
+
+          // Si la instancia entrante es más nueva o la actual no está conectada
+          if (incomingTs >= currentTs || current.status !== 'connected') {
+            console.log(`[Evolution Webhook] 🔄 Aceptando QR de instancia nueva: ${incomingInstance}`);
+            setInstance(businessId, {
+              ...current,
+              instanceName: incomingInstance,
+              status: 'connecting'
+            });
+          } else {
+            console.log(`[Evolution Webhook] ℹ️ QR ignorado para ${businessId} (proviene de instancia antigua: ${incomingInstance}, activa: ${current.instanceName})`);
+            return res.status(200).json({ message: 'QR ignored (stale instance)' });
+          }
         }
 
         console.log(`[Evolution Webhook] 📲 QR capturado para ${businessId}`);
