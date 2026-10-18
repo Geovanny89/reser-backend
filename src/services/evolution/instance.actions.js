@@ -33,26 +33,41 @@ async function stopInstance(businessId, shouldLogout = true) {
 
       console.log(`[Evolution API] ⏳ Procesando detención de: ${targetName} (${targetId})`);
 
-      // 2. Intentar desconectar y CERRAR (silencioso)
+      // 2. Intentar desconectar y CERRAR — intentar por id Y por name
       try {
         if (shouldLogout) {
           await api.delete(`/instance/logout/${targetId}`).catch(() => { });
+          if (targetName !== targetId) {
+            await api.delete(`/instance/logout/${targetName}`).catch(() => { });
+          }
         }
         await api.post(`/instance/disconnect/${targetId}`).catch(() => { });
+        if (targetName !== targetId) {
+          await api.post(`/instance/disconnect/${targetName}`).catch(() => { });
+        }
       } catch (e) { }
 
-      // 3. Intentar borrar físicamente
+      // 3. Intentar borrar físicamente — por id Y por name para asegurar eliminación
       try {
         await api.delete(`/instance/delete/${targetId}?force=true`, {
           data: { instanceName: targetName },
           timeout: 5000
         }).catch(() => { });
       } catch (err) { }
+
+      try {
+        if (targetName !== targetId) {
+          await api.delete(`/instance/delete/${targetName}?force=true`, {
+            data: { instanceName: targetName },
+            timeout: 5000
+          }).catch(() => { });
+        }
+      } catch (err) { }
     }
 
-    // ESPERA CRÍTICA: Darle tiempo a la API para liberar archivos si hubo varias
+    // ESPERA CRÍTICA: Aumentada a 3s para asegurar que la API libere todas las instancias
     if (matching.length > 0) {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 3000));
     }
 
     state.deleteInstance(businessId);
