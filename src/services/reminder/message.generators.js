@@ -14,7 +14,7 @@ function buildServicesText(appt) {
   const extras = Array.isArray(appt.extraServices) && appt.extraServices.length > 0
     ? appt.extraServices.map(s => s.name).filter(Boolean)
     : [];
-  return extras.length > 0 ? `${main}, ${extras.join(', ')}` : main;
+  return extras.length > 0 ? `${main} - ${extras.join(' - ')}` : main;
 }
 
 /**
@@ -52,7 +52,10 @@ function addUniqueFingerprint(text) {
 
 function getRandomTemplate(templates) {
   const template = templates[Math.floor(Math.random() * templates.length)];
-  return addUniqueFingerprint(processSpintax(template));
+  const processed = addUniqueFingerprint(processSpintax(template));
+  // WhatsApp usa un solo asterisco (*) para negrita.
+  // Reemplazamos cualquier doble asterisco accidental (**) por uno solo (*)
+  return processed.replace(/\*\*/g, '*');
 }
 
 function generateConfirmedReminder24h(appt, timeStr) {
@@ -170,9 +173,9 @@ function generateAppointmentCreatedMessage(appt) {
 
   const templates = [
     `{✅|🗓️} *Cita Agendada* 🎉\n\n*${appt.clientName}*, tu cita para *${serviceName}* en *${businessName}* ha sido programada.\n\n📅 ${dateStr}\n⏰ ${timeStr}\n\n¡Te esperamos!`,
-    `📅 *¡Listo! Tu cita está agendada*\n\n*${appt.clientName}*, te esperamos para *${serviceName}* en *${businessName}*.\n\n🗓️ ${dateStr}\n🕐 ${timeStr}`,
+    `📅 *¡Listo! Tu cita está agendada*\n\n*${appt.clientName}*, te esperamos para *${serviceName}* en *${businessName}*.\n\n🗓️ ${dateStr}\n🕐 ${timeStr}\n\n¡Te esperamos!`,
     `🌟 *Reserva Confirmada* ✅\n\n*${appt.clientName}*, hemos registrado tu cita de *${serviceName}*:\n\n📆 ${dateStr}\n⏰ ${timeStr}\n\n¡Gracias por preferir *${businessName}*!`,
-    `Tu cita para *${serviceName}* ya está en nuestra agenda. *${appt.clientName}*, nos vemos el ${dateStr} a las ${timeStr}.`
+    `🗓️ *Cita Programada*\n\n*${appt.clientName}*, tu cita para *${serviceName}* en *${businessName}* ya está en nuestra agenda.\n\n📅 ${dateStr}\n⏰ ${timeStr}\n\n¡Nos vemos pronto!`
   ];
 
   return getRandomTemplate(templates);
