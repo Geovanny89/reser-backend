@@ -65,9 +65,28 @@ async function stopInstance(businessId, shouldLogout = true) {
       } catch (err) { }
     }
 
-    // ESPERA CRÍTICA: Aumentada a 5s para asegurar que la API libere completamente todas las instancias
+    // ESPERA CRÍTICA + verificación con reintentos para asegurar la eliminación REAL
     if (matching.length > 0) {
       await new Promise(r => setTimeout(r, 5000));
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const still = await fetchAllInstances().catch(() => []);
+      const remains = still.filter(i => {
+        const n = i.name || i.instanceName;
+        return n === businessId || (n && n.startsWith(businessId + '_'));
+      });
+      if (remains.length === 0) break;
+
+      const names = remains.map(r => r.name || r.instanceName).join(', ');
+      console.log(`[Evolution API] ⏳ Reintentando eliminación de ${names} (${attempt + 1}/3)`);
+      for (const inst of remains) {
+        const name = inst.name || inst.instanceName;
+        await api.delete(`/instance/delete/${name}?force=true`, {
+          data: { instanceName: name },
+          timeout: 8000
+        }).catch(() => { });
+      }
+      await new Promise(r => setTimeout(r, 3000));
     }
 
     state.deleteInstance(businessId);
@@ -182,8 +201,25 @@ async function createInstance(businessId, forceFresh = false) {
       } : undefined
     };
 
-    const response = await api.post('/instance/create', createPayload);
+    let response;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        response = await api.post('/instance/create', createPayload);
+        break;
+      } catch (err) {
+        const status = err.response?.status;
+        // 403/409 => el nombre sigue ocupado (instancia previa no eliminada del todo)
+        if ((status === 403 || status === 409) && attempt < 3) {
+          console.warn(`[Evolution API] ⚠️ Creación rechazada (${status}) para ${instanceNameToUse}; limpiando y reintentando... (${attempt}/3)`);
+          await stopInstance(businessId, true).catch(() => { });
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        throw err;
+      }
+    }
     const data = response.data;
+    console.log(`[Evolution API] 📥 Respuesta create (${response.status}): instance=${data?.instance?.instanceName || data?.instance?.name || 'n/a'}`);
 
     // Forzar configuración de proxy por si la creación lo ignoró
     if (proxyConfig && proxyConfig.host) {
