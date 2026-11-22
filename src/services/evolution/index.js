@@ -19,14 +19,28 @@ async function initWhatsAppManager() {
   
   try {
     // PASO 1: Obtener instancias desde Evolution API
-    const evolutionInstances = await instanceManager.fetchAllInstances();
+    let evolutionInstances = await instanceManager.fetchAllInstances();
+
+    // PASO 1b: Eliminar instancias fantasma (varias instancias para el mismo negocio),
+    // conservando solo la conectada / más reciente de cada uno.
+    try {
+      const removed = await instanceManager.reapDuplicateInstances(evolutionInstances);
+      if (removed > 0) {
+        evolutionInstances = await instanceManager.fetchAllInstances(); // resincronizar memoria
+      }
+    } catch (reapErr) {
+      console.error('[Evolution API] ⚠️ Error limpiando instancias fantasma:', reapErr.message);
+    }
+
     const validInstances = evolutionInstances.filter(inst => inst.name);
     console.log(`[Evolution API] 📊 ${validInstances.length} instancias válidas en Evolution API`);
-    
-    // PASO 2: Cargar instancias conectadas en memoria
+
+    // PASO 2: Cargar instancias en memoria usando el businessId base como clave
+    const { getBaseBusinessId } = require('./instance.utils');
     for (const instance of validInstances) {
+      const baseId = getBaseBusinessId(instance.name);
       const status = instance.connectionStatus || instance.state || 'unknown';
-      state.setInstance(instance.name, {
+      state.setInstance(baseId, {
         instanceName: instance.name,
         status: status,
         createdAt: instance.createdAt

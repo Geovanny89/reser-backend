@@ -28,6 +28,7 @@ module.exports = {
   getConnectionState: queries.getConnectionState,
   getInstanceInfo: queries.getInstanceInfo,
   hasValidSession: queries.hasValidSession,
+  reapDuplicateInstances: queries.reapDuplicateInstances,
 
   // Mensajería
   sendMessageDirect: messaging.sendMessageDirect,

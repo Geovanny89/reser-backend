@@ -4,7 +4,7 @@
  */
 const api = require('./api');
 const state = require('./state');
-const { extractPhoneFromInstance } = require('./instance.utils');
+const { extractPhoneFromInstance, getBaseBusinessId } = require('./instance.utils');
 
 async function fetchAllInstances() {
   try {
@@ -212,9 +212,79 @@ async function hasValidSession(businessId) {
   }
 }
 
+/**
+ * Elimina instancias fantasma: por cada negocio se conserva SOLO la mejor instancia
+ * (la conectada o, si no hay, la más reciente) y se eliminan las demás.
+ */
+async function reapDuplicateInstances(instances = null) {
+  try {
+    const all = instances || await fetchAllInstances().catch(() => []);
+
+    const groups = new Map();
+    for (const inst of all) {
+      const fullName = inst.name || inst.instanceName;
+      if (!fullName) continue;
+      const base = getBaseBusinessId(fullName);
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(inst);
+    }
+
+    const isOpen = (i) => i.connectionStatus === 'open' || i.status === 'open' || i.state === 'open';
+    const tsFromName = (i) => parseInt((i.name || i.instanceName || '').split('_')[1] || 0);
+    const createdTs = (i) => new Date(i.createdAt || 0).getTime();
+
+    let removed = 0;
+    for (const [base, list] of groups.entries()) {
+      if (list.length <= 1) continue;
+      // No tocar si hay un QR pendiente (el usuario podría estar escaneando)
+      if (state.hasQR && state.hasQR(base)) continue;
+
+      const sorted = [...list].sort((a, b) => {
+        const aOpen = isOpen(a) ? 1 : 0;
+        const bOpen = isOpen(b) ? 1 : 0;
+        if (aOpen !== bOpen) return bOpen - aOpen;
+        return (tsFromName(b) || createdTs(b)) - (tsFromName(a) || createdTs(a));
+      });
+
+      const keep = sorted[0].name || sorted[0].instanceName;
+      for (const inst of sorted.slice(1)) {
+        const name = inst.name || inst.instanceName;
+        console.log(`[Evolution API] 🧹 Eliminando instancia fantasma ${name} (se conserva ${keep})`);
+        await deleteInstanceByName(name);
+        removed++;
+      }
+    }
+
+    if (removed > 0) {
+      console.log(`[Evolution API] 🧹 ${removed} instancia(s) fantasma eliminada(s)`);
+    }
+    return removed;
+  } catch (err) {
+    console.error('[Evolution API] ❌ Error limpiando instancias fantasma:', err.message);
+    return 0;
+  }
+}
+
+/**
+ * Elimina una instancia concreta por su nombre real
+ */
+async function deleteInstanceByName(name) {
+  try {
+    await api.delete(`/instance/logout/${name}`).catch(() => { });
+    await api.post(`/instance/disconnect/${name}`).catch(() => { });
+    await api.delete(`/instance/delete/${name}?force=true`, {
+      data: { instanceName: name },
+      timeout: 8000
+    }).catch((e) => {
+      console.warn(`[Evolution API] ⚠️ No se pudo eliminar ${name}: ${e.response?.status || e.message}`);
+    });
+  } catch (e) { }
+}
+
 module.exports = {
   fetchAllInstances,
   getConnectionState,
   getInstanceInfo,
-  hasValidSession
+  hasValidSession,
+  reapDuplicateInstances
 };

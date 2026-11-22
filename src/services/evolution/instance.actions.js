@@ -116,22 +116,50 @@ async function createInstance(businessId, forceFresh = false) {
       }
     }
 
-    // 2. Preparar nombre dinámico (SIEMPRE si es forceFresh para evitar 403)
-    let instanceNameToUse = businessId;
-    if (forceFresh) {
-      // Usar timestamp para asegurar que el nombre sea único y no choque con basura vieja
-      instanceNameToUse = `${businessId}_${Date.now()}`;
-      console.log(`[Evolution API] 🚀 Forzando instancia nueva única: ${instanceNameToUse}`);
+    // 2. Nombre de instancia ESTABLE (businessId): así existe SIEMPRE una sola instancia por negocio.
+    //    Antes se usaba `${businessId}_${timestamp}` en forceFresh, lo que generaba instancias
+    //    fantasma acumuladas cuando la eliminación previa no se completaba a tiempo.
+    const instanceNameToUse = businessId;
 
-      // Limpieza profunda de instancias previas (incluyendo sufijos)
+    if (forceFresh) {
+      console.log(`[Evolution API] 🚀 Recreando instancia limpia estable: ${instanceNameToUse}`);
+
+      // Limpieza profunda de instancias previas (con o sin sufijo)
       try {
         await stopInstance(businessId, true);
       } catch (err) {
         console.warn(`[Evolution API] ⚠️ Error en limpieza previa de ${businessId}:`, err.message);
       }
 
-      // Breve espera para que la API procese las eliminaciones antes de crear la nueva
-      await new Promise(r => setTimeout(r, 1000));
+      // Verificar que realmente se eliminó antes de recrear (evita 403 por nombre ocupado)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const still = await fetchAllInstances().catch(() => []);
+        const remains = still.some(i => {
+          const n = i.name || i.instanceName;
+          return n === businessId || (n && n.startsWith(businessId + '_'));
+        });
+        if (!remains) break;
+        console.log(`[Evolution API] ⏳ Instancia ${businessId} aún presente, esperando liberación... (${attempt + 1}/5)`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    } else if (matching.length > 0) {
+      // Ya existe una instancia para este negocio: NO crear duplicados (evita instancias fantasma).
+      const best = matching.find(i => i.connectionStatus === 'open' || i.status === 'open' || i.state === 'open') || matching[0];
+      const activeName = best.name || best.instanceName;
+      console.log(`[Evolution API] ♻️ Reutilizando instancia existente ${activeName} (sin crear duplicado)`);
+
+      // Reconexión suave solo si no hay un QR pendiente de escaneo
+      if (!state.hasQR(businessId)) {
+        await api.post(`/instance/restart/${activeName}`).catch(() => { });
+        await api.get(`/instance/connect/${activeName}`).catch(() => { });
+      }
+
+      state.setInstance(businessId, {
+        status: best.connectionStatus || best.status || best.state || 'connecting',
+        instanceName: activeName,
+        phone: extractPhoneFromInstance(best)
+      });
+      return { success: true, status: 'connecting', existing: true, instanceName: activeName };
     }
 
     // Limpiamos el QR anterior de la memoria explícitamente antes de crear
@@ -215,9 +243,13 @@ async function configureProxy(businessId) {
 
 async function configureWebhook(businessId) {
   try {
-    // Usar el nombre real de la instancia (con sufijo) desde el estado en memoria
-    const current = state.getInstance(businessId);
-    const instanceName = current?.instanceName || businessId;
+    // Usar el nombre real de la instancia (con sufijo) desde el estado en memoria.
+    // Si no lo tenemos (ej: backend reiniciado), reconstruirlo consultando la API.
+    let instanceName = state.getInstance(businessId)?.instanceName;
+    if (!instanceName) {
+      await fetchAllInstances().catch(() => { });
+      instanceName = state.getInstance(businessId)?.instanceName || businessId;
+    }
 
     const backendUrl = process.env.BACKEND_URL || `http://127.0.0.1:${process.env.PORT || 4000}`;
     const webhookUrl = `${backendUrl}/api/notifications/evolution/webhook`;
@@ -229,10 +261,12 @@ async function configureWebhook(businessId) {
         enabled: true,
         url: webhookUrl,
         webhookByEvents: false,
+        base64: true,
         events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE", "QRCODE_UPDATED"]
       }
     };
-    await api.post(`/webhook/instance/${instanceName}`, payload);
+    // En Evolution API v2 el endpoint correcto es POST /webhook/set/{instance}
+    await api.post(`/webhook/set/${instanceName}`, payload);
     console.log(`[Evolution API] ✅ Webhook configurado para ${instanceName}`);
     return true;
   } catch (err) {
@@ -243,8 +277,28 @@ async function configureWebhook(businessId) {
 
 async function getQR(businessId) {
   try {
-    const response = await api.get(`/instance/connect/${businessId}`);
-    return response.data?.base64 || response.data?.code || null;
+    const { getBaseBusinessId } = require('./instance.utils');
+    const baseId = getBaseBusinessId(businessId);
+    const realName = state.getRealInstanceName(baseId);
+
+    // Probar primero con el nombre real (con sufijo) y luego con el businessId base
+    const candidates = realName && realName !== baseId ? [realName, baseId] : [baseId];
+
+    for (const name of candidates) {
+      try {
+        const response = await api.get(`/instance/connect/${name}`);
+        const qr = response.data?.base64 || response.data?.code || response.data?.qrcode?.base64 || null;
+        if (qr) {
+          if (name !== realName) {
+            state.setInstance(baseId, { ...(state.getInstance(baseId) || {}), instanceName: name });
+          }
+          return qr;
+        }
+      } catch (e) {
+        // Probar el siguiente candidato
+      }
+    }
+    return null;
   } catch (err) {
     return null;
   }
@@ -254,6 +308,40 @@ async function forceReconnect(businessId, shouldLogout = false) {
   const { getBaseBusinessId } = require('./instance.utils');
   businessId = getBaseBusinessId(businessId);
 
+  // RECONEXIÓN SUAVE (sin logout): reiniciar la instancia en su lugar para CONSERVAR la sesión
+  // de WhatsApp. Antes se eliminaba y recreaba la instancia, lo que destruía la sesión y obligaba
+  // a re-escanear el QR ante cualquier desconexión temporal (causa de las caídas cada 3-5 días).
+  if (!shouldLogout) {
+    const realName = state.getRealInstanceName(businessId);
+    try {
+      const all = await fetchAllInstances().catch(() => []);
+      const exists = all.some(i => (i.name || i.instanceName) === realName);
+
+      if (exists) {
+        console.log(`[Evolution API] ♻️ Reconexión suave para ${realName} (conservando sesión)...`);
+        // v2 usa POST /instance/restart/{instance}; versiones antiguas usan PUT
+        const restartRes = await api.post(`/instance/restart/${realName}`).catch((e) => e);
+        if (restartRes instanceof Error) {
+          await api.put(`/instance/restart/${realName}`).catch((e) =>
+            console.warn(`[Evolution API] ⚠️ restart falló (${e.message}), intentando connect...`)
+          );
+        }
+        // Forzar la reconexión del socket sin eliminar la instancia
+        await api.get(`/instance/connect/${realName}`).catch(() => { });
+        await new Promise(r => setTimeout(r, 3000));
+
+        const newState = await getConnectionState(businessId).catch(() => null);
+        console.log(`[Evolution API] ℹ️ Estado tras reconexión suave de ${realName}: ${newState}`);
+        return { success: true, status: newState || 'connecting', instanceName: realName, soft: true };
+      }
+
+      console.log(`[Evolution API] ℹ️ No existe instancia recuperable para ${businessId}, se creará una nueva.`);
+    } catch (err) {
+      console.warn(`[Evolution API] ⚠️ Falló la reconexión suave de ${businessId}: ${err.message}`);
+    }
+  }
+
+  // Recreación limpia (requiere nuevo QR): solo en logout explícito o cuando no hay instancia recuperable
   await stopInstance(businessId, shouldLogout);
   return createInstance(businessId, true);
 }
