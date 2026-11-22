@@ -18,8 +18,10 @@ router.get('/whatsapp/qr', auth, async (req, res) => {
       return res.json({ status: 'connected' });
     }
 
-    // Forzamos forceFresh=true para asegurar que se aplique el nuevo nombre y nos dé un QR fresco
-    const createResult = await whatsappService.createInstance(businessId, true);
+    // NO forzamos recreación: reutilizamos la instancia existente y solo creamos si no hay.
+    // forceFresh=true eliminaba y recreaba la instancia en cada solicitud de QR, lo que
+    // impedía escanear a tiempo (se borraba antes) y producía los 404 durante la recreación.
+    const createResult = await whatsappService.createInstance(businessId, false);
 
     // Configurar webhook explícitamente para asegurar que QRCODE_UPDATED llegue
     try {
